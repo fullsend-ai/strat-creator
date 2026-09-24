@@ -18,7 +18,7 @@ from artifact_utils import read_frontmatter
 from strat_side_effects import HumanGateChanged, checked_labels, digest
 
 CONTRACT = "strat-freshness-v1"
-SOURCE_TREES = ("scripts", "config", "workflows", ".claude/skills", ".claude/agents",
+SOURCE_TREES = ("scripts", "config", "workflows", "types", ".claude/skills", ".claude/agents",
                 ".fullsend/shared", ".fullsend/plugins", ".fullsend/strat-single", ".fullsend/strat-batch",
                 ".fullsend/strat-resume")
 SOURCE_FILES = ("CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md", ".claude-plugin/plugin.json", "hooks/hooks.json")
