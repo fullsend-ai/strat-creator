@@ -8,6 +8,10 @@
 # Manually triggered by a maintainer from the Actions tab. Enter the PR
 # number to evaluate. Only users with write access can run this workflow.
 #
+# PR-triggered runs are opt-in: a user with write, maintain, or admin access
+# adds the run-eval label. The label is consumed immediately, and that path
+# always runs the one-case quick evaluation. Full evaluations remain manual.
+#
 # Everything else — eval config, model — comes from the GitLab project's CI/CD
 # variable defaults, which are editable in GitLab's own "Run pipeline" form for
 # one-off runs. Overriding them from here would mean duplicating those defaults
@@ -17,8 +21,7 @@
 # eval/eval.yaml (the create → refine → review pipeline eval) inside an
 # OpenShell sandbox, then posts eval results back to the PR as a comment.
 # That comment is posted with a GitHub App whose credentials live only on the
-# GitLab side and never enter the OpenShell sandbox, so no token for writing
-# back to this repo is needed here — the permissions below stay read-only.
+# GitLab side and never enter the OpenShell sandbox.
 #
 # Note: eval/dataset/cases/ is git-ignored (it holds internal RFE and strategy
 # content), so the GitLab side builds it with eval/scripts/build_dataset.py from
@@ -38,41 +41,100 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: read
-  pull-requests: read
+  # This workflow is evaluated from the default branch. It never checks out
+  # or executes PR-controlled content on the Actions runner.
+  pull_request_target:
+    branches: [main]
+    types: [labeled]
+
+permissions: {}
 
 jobs:
   trigger-eval:
     name: Trigger GitLab eval pipeline
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-eval' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    # Prevent two rapid label additions from launching duplicate GitHub
+    # wrapper jobs. This cannot cancel a GitLab pipeline after it is launched.
+    concurrency:
+      group: strat-creator-eval-${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || format('dispatch-{0}', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
     steps:
+      - name: Authorize and consume run-eval label
+        id: authorize
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ACTOR: ${{ github.event.sender.login }}
+        run: |
+          set -euo pipefail
+
+          PERMISSION_JSON=$(gh api \
+            "repos/${REPO}/collaborators/${ACTOR}/permission" \
+            2>/dev/null || true)
+          PERMISSION=$(jq -r '.permission // "none"' <<<"${PERMISSION_JSON}" 2>/dev/null || echo none)
+          ROLE_NAME=$(jq -r '.role_name // ""' <<<"${PERMISSION_JSON}" 2>/dev/null || true)
+
+          # GitHub maps maintain to the legacy permission value write and
+          # triage to read. Accept the base permission and role name forms.
+          AUTHORIZED=false
+          if [[ "${PERMISSION}" == "write" || "${PERMISSION}" == "admin" \
+             || "${ROLE_NAME}" == "maintain" || "${ROLE_NAME}" == "admin" ]]; then
+            AUTHORIZED=true
+          fi
+
+          # Consume the label before doing any external work. If this fails,
+          # do not launch an evaluation that can be retried accidentally.
+          gh api --method DELETE \
+            "repos/${REPO}/issues/${PR_NUMBER}/labels/run-eval" >/dev/null
+
+          if [[ "${AUTHORIZED}" != true ]]; then
+            BODY=$(printf '%s\n' \
+              '<!-- strat-creator-eval -->' \
+              "The run-eval label was removed because @${ACTOR} does not have write, maintain, or admin access to this repository.")
+            gh api --method POST \
+              "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              -f "body=${BODY}" >/dev/null || true
+            echo "::error::@${ACTOR} is not authorized to run the strat-creator evaluation."
+            exit 1
+          fi
+
+          echo "authorized=true" >> "${GITHUB_OUTPUT}"
+
       - name: Fetch PR details
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
-          # Through env, not `${{ }}` in the script: a workflow_dispatch input is
-          # expanded into the shell before bash sees it, and `type: number` is a
-          # UI hint rather than a constraint the API enforces. The step below
-          # already reads its values this way.
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
         run: |
+          set -euo pipefail
           PR_JSON=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}")
-          echo "sha=$(echo "$PR_JSON" | jq -r '.head.sha')" >> "$GITHUB_OUTPUT"
-          echo "ref=$(echo "$PR_JSON" | jq -r '.head.ref')" >> "$GITHUB_OUTPUT"
+          echo "sha=$(jq -er '.head.sha' <<<"${PR_JSON}")" >> "${GITHUB_OUTPUT}"
+          echo "ref=$(jq -er '.head.ref' <<<"${PR_JSON}")" >> "${GITHUB_OUTPUT}"
 
       - name: Trigger strat-creator-eval on GitLab
+        id: trigger
         env:
+          GH_TOKEN: ${{ github.token }}
           GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
           GITLAB_TRIGGER_URL: ${{ secrets.GITLAB_TRIGGER_URL }}
-          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
           PR_SHA: ${{ steps.pr.outputs.sha }}
           PR_REF: ${{ steps.pr.outputs.ref }}
           REPO: ${{ github.repository }}
-          QUICK_MODE: ${{ inputs.quick_mode }}
+          QUICK_MODE: ${{ github.event_name == 'pull_request_target' && 'true' || inputs.quick_mode }}
         run: |
-          curl --fail-with-body \
+          set -euo pipefail
+          RESPONSE_FILE=$(mktemp)
+          trap 'rm -f "${RESPONSE_FILE}"' EXIT
+
+          if ! curl --fail-with-body \
             --request POST \
             --form-string "token=${GITLAB_TRIGGER_TOKEN}" \
             --form-string "ref=main" \
@@ -81,13 +143,77 @@ jobs:
             --form-string "variables[GITHUB_HEAD_REF]=${PR_REF}" \
             --form-string "variables[GITHUB_REPO]=${REPO}" \
             --form-string "variables[QUICK_MODE]=${QUICK_MODE}" \
-            --output response.json \
-            "${GITLAB_TRIGGER_URL}" || { cat response.json; exit 1; }
+            --output "${RESPONSE_FILE}" \
+            "${GITLAB_TRIGGER_URL}"; then
+            echo "::error::GitLab eval trigger failed."
+            if [[ -s "${RESPONSE_FILE}" ]]; then
+              sed -n '1,20p' "${RESPONSE_FILE}"
+            fi
+            exit 1
+          fi
 
-          # The eval takes hours and reports back on the PR, so surface the
-          # pipeline link here rather than leaving the maintainer to find it.
-          PIPELINE_URL=$(jq -r '.web_url // empty' response.json 2>/dev/null || true)
-          echo "Triggered ${PIPELINE_URL:-(pipeline URL not in response)}"
-          if [ -n "${PIPELINE_URL}" ]; then
-            echo "[GitLab pipeline for PR #${PR_NUMBER}](${PIPELINE_URL})" >> "$GITHUB_STEP_SUMMARY"
+          PIPELINE_URL=$(jq -er '.web_url // empty' "${RESPONSE_FILE}") || {
+            echo "::error::GitLab returned no pipeline URL."
+            exit 1
+          }
+          case "${PIPELINE_URL}" in
+            https://gitlab.com/*) ;;
+            *)
+              echo "::error::GitLab returned an unexpected pipeline URL."
+              exit 1
+              ;;
+          esac
+
+          echo "pipeline_url=${PIPELINE_URL}" >> "${GITHUB_OUTPUT}"
+          echo "Triggered ${PIPELINE_URL}"
+          echo "[GitLab pipeline for PR #${PR_NUMBER}](${PIPELINE_URL})" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Report trigger failure on the PR
+        if: ${{ failure() && github.event_name == 'pull_request_target' && steps.authorize.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ steps.pr.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          BODY=$(printf '%s\n' \
+            '<!-- strat-creator-eval -->' \
+            "The strat-creator quick evaluation could not be triggered for commit ${PR_SHA:-unknown}." \
+            '' \
+            "See the failed GitHub Actions run: ${RUN_URL}")
+          gh api --method POST \
+            "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            -f "body=${BODY}" >/dev/null
+
+      - name: Comment the GitLab pipeline on the PR
+        if: ${{ github.event_name == 'pull_request_target' && steps.trigger.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ steps.pr.outputs.sha }}
+          PIPELINE_URL: ${{ steps.trigger.outputs.pipeline_url }}
+          ACTOR: ${{ github.event.sender.login }}
+        run: |
+          set -euo pipefail
+          BODY=$(printf '%s\n' \
+            '<!-- strat-creator-eval -->' \
+            "The strat-creator quick evaluation was triggered for commit ${PR_SHA} by @${ACTOR}." \
+            '' \
+            "View the GitLab pipeline: ${PIPELINE_URL}")
+
+          COMMENT_ID=$(gh api --paginate \
+            "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- strat-creator-eval -->"))) | .id' \
+            | tail -n 1)
+          if [[ -n "${COMMENT_ID}" ]]; then
+            gh api --method PATCH \
+              "repos/${REPO}/issues/comments/${COMMENT_ID}" \
+              -f "body=${BODY}" >/dev/null
+          else
+            gh api --method POST \
+              "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              -f "body=${BODY}" >/dev/null
           fi
