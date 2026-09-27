@@ -54,6 +54,7 @@ jobs:
     name: Trigger GitLab eval pipeline
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-eval' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: write
@@ -97,9 +98,19 @@ jobs:
             BODY=$(printf '%s\n' \
               '<!-- strat-creator-eval -->' \
               "The run-eval label was removed because @${ACTOR} does not have write, maintain, or admin access to this repository.")
-            gh api --method POST \
+            COMMENT_ID=$(gh api --paginate \
               "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              -f "body=${BODY}" >/dev/null || true
+              --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- strat-creator-eval -->"))) | .id' \
+              | tail -n 1) || true
+            if [[ -n "${COMMENT_ID}" ]]; then
+              gh api --method PATCH \
+                "repos/${REPO}/issues/comments/${COMMENT_ID}" \
+                -f "body=${BODY}" >/dev/null || true
+            else
+              gh api --method POST \
+                "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+                -f "body=${BODY}" >/dev/null || true
+            fi
             echo "::error::@${ACTOR} is not authorized to run the strat-creator evaluation."
             exit 1
           fi
@@ -121,7 +132,6 @@ jobs:
       - name: Trigger strat-creator-eval on GitLab
         id: trigger
         env:
-          GH_TOKEN: ${{ github.token }}
           GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
           GITLAB_TRIGGER_URL: ${{ secrets.GITLAB_TRIGGER_URL }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
