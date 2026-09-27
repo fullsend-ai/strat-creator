@@ -1,5 +1,6 @@
 """Unit tests for scripts/type_registry.py and scripts/validate_types.py."""
 
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 
+import jira_utils  # noqa: E402
 import type_registry  # noqa: E402
 import validate_types  # noqa: E402
 
@@ -284,3 +286,20 @@ def test_gate1_no_types_is_a_finding(tmp_path):
 def test_default_root_is_file_relative():
     assert type_registry.DEFAULT_ROOT == REPO / "types"
     assert os.path.isdir(type_registry.DEFAULT_ROOT)
+
+
+# ── the first consumer ────────────────────────────────────────────────────────────────────
+
+
+def test_jira_utils_derives_the_4c6ae1c_literals():
+    """The first consumer composes what used to be literals; equality with the text on main at
+    4c6ae1c is the byte-identical check (their pins were deleted with that change)."""
+    assert jira_utils._TYPE.name == SHIPPED
+    assert jira_utils._TITLE_KEY_RE.pattern == r"^#\s+(RFE-\d+|RHAIRFE-\d+|STRAT-\d+|RHAISTRAT-\d+):"
+    assert inspect.signature(jira_utils.find_processed_rfe_ids).parameters["strat_project"].default == "RHAISTRAT"
+    link = {"type": {"name": "Cloners"}, "outwardIssue": {"key": "RHAIRFE-1"}, "inwardIssue": {"key": "RHAISTRAT-2"}}
+    assert jira_utils._linked_input_key(link) == "RHAIRFE-1"
+    assert jira_utils._linked_input_key({**link, "type": {"name": "Blocks"}}) is None
+    inward_only = {"type": {"name": "Cloners"}, "inwardIssue": {"key": "RHAIRFE-3"}}
+    assert jira_utils._linked_input_key(inward_only) == "RHAIRFE-3"
+    assert jira_utils._linked_input_key({"type": {"name": "Cloners"}, "inwardIssue": None}) is None

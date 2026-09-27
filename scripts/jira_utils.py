@@ -23,7 +23,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import type_registry  # sibling module: scripts/ is on sys.path wherever jira_utils is
 from strat_side_effects import check_owner, digest, perform
+
+# The work-item type whose values this module reads: the default, rfe-strategy (today's only
+# production type). Every _TYPE read below used to
+# be a literal here; tests/test_type_registry_pins.py pins the ones that still are.
+# For now: one module-wide type; a function takes a descriptor once a caller runs another type
+# (the entry script resolves it with type_registry.resolve).
+_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
 
 ssl_ctx = ssl.create_default_context()
 try:
@@ -215,7 +223,7 @@ def build_jql_from_config(config_path):
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
     jql_cfg = cfg.get("jql", {})
-    project = jql_cfg.get("project", "RHAIRFE")
+    project = jql_cfg.get("project", _TYPE.get("inputs.0.jira.project"))
     required = jql_cfg.get("required_labels", [])
     target_versions = jql_cfg.get("target_versions", [])
     quality = jql_cfg.get("quality_labels", [])
@@ -254,49 +262,43 @@ def build_jql_from_config(config_path):
     return jql
 
 
-def _extract_rfe_keys_from_issues(issues):
-    """Extract RHAIRFE keys from Cloners links on a list of RHAISTRAT issues."""
-    rfe_keys = set()
+def _linked_input_key(link):
+    """The input-side key on one issue link of the descriptor's relation type, else None.
+
+    Both link directions are searched (inputs[0].relation.direction is advisory; the live data
+    has links created from either side).
+    """
+    if link.get("type", {}).get("name") != _TYPE.get("inputs.0.relation.link_type"):
+        return None
+    prefix = _TYPE.get("inputs.0.jira.key_prefixes.0")
+    for side in ("outwardIssue", "inwardIssue"):
+        key = (link.get(side) or {}).get("key", "")
+        if key.startswith(prefix):
+            return key
+    return None
+
+
+def _linked_input_keys(issues):
     for issue in issues:
-        links = issue.get("fields", {}).get("issuelinks", [])
-        for link in links:
-            if link.get("type", {}).get("name") != "Cloners":
-                continue
-            outward = link.get("outwardIssue", {})
-            inward = link.get("inwardIssue", {})
-            rfe_key = None
-            if outward and outward.get("key", "").startswith("RHAIRFE"):
-                rfe_key = outward["key"]
-            elif inward and inward.get("key", "").startswith("RHAIRFE"):
-                rfe_key = inward["key"]
-            if rfe_key:
-                rfe_keys.add(rfe_key)
-    return rfe_keys
+        for link in issue.get("fields", {}).get("issuelinks", []):
+            key = _linked_input_key(link)
+            if key:
+                yield key
+
+
+def _extract_rfe_keys_from_issues(issues):
+    """Input (source) keys linked from a list of this type's issues."""
+    return set(_linked_input_keys(issues))
 
 
 def _count_rfe_clones_from_issues(issues):
-    """Count RHAISTRAT clones per RHAIRFE key from Cloners links."""
-    counts = collections.Counter()
-    for issue in issues:
-        links = issue.get("fields", {}).get("issuelinks", [])
-        for link in links:
-            if link.get("type", {}).get("name") != "Cloners":
-                continue
-            outward = link.get("outwardIssue", {})
-            inward = link.get("inwardIssue", {})
-            rfe_key = None
-            if outward and outward.get("key", "").startswith("RHAIRFE"):
-                rfe_key = outward["key"]
-            elif inward and inward.get("key", "").startswith("RHAIRFE"):
-                rfe_key = inward["key"]
-            if rfe_key:
-                counts[rfe_key] += 1
-    return counts
+    """Count this type's issues per input key, one per relation link."""
+    return collections.Counter(_linked_input_keys(issues))
 
 
 def find_processed_rfe_ids(server, user, token, skip_labels,
                            excluded_strat_statuses=None,
-                           strat_project="RHAISTRAT"):
+                           strat_project=_TYPE.get("identity.jira.project")):
     """Find RHAIRFE IDs that should be excluded from batching.
 
     Excludes RFEs whose RHAISTRAT clones either:
@@ -1160,12 +1162,29 @@ def adf_to_markdown(node, list_depth=0):
 
 # ─── Content Processing ──────────────────────────────────────────────────────
 
+def _bare(pattern):
+    """'^(A|B)$' or '^A$' -> 'A|B' / 'A': the alternatives without anchors or group parens."""
+    return pattern.strip("^$()")
+
+
+# A title heading keyed by an input id or one of this type's ids: the input's id grammar
+# (schema.task.extra_fields.source_rfe), then this type's local and tracker grammars.
+_TITLE_KEY_RE = re.compile(
+    r"^#\s+("
+    + _bare(_TYPE.get("schema.task.extra_fields.source_rfe.pattern"))
+    + "|" + _bare(_TYPE.local_id_pattern)
+    + "|" + _TYPE.write_prefix + r"\d+"
+    + "):"
+)
+
+
 def strip_metadata(markdown):
     """Remove artifact metadata and revision notes from RFE markdown.
 
     Strips content that should not be pushed to Jira:
     - YAML frontmatter (--- delimited block at start of file)
-    - Title headings (# RFE-NNN: / # RHAIRFE-NNN: / # STRAT-NNN: / # RHAISTRAT-NNN:)
+    - Title headings keyed by an input or strategy id (`# RHAIRFE-NNN:`, `# RHAISTRAT-NNN:`,
+      the local forms) — see _TITLE_KEY_RE
       — title is in frontmatter and Jira's summary field
     - Legacy inline metadata lines (now in frontmatter):
       **Jira Key**, **Size**, **Split from**, **Priority**, **Source RFE**
@@ -1189,8 +1208,7 @@ def strip_metadata(markdown):
 
     for line in lines:
         # Skip title heading — duplicates Summary
-        if re.match(r'^#\s+(RFE-\d+|RHAIRFE-\d+|STRAT-\d+|RHAISTRAT-\d+):',
-                    line):
+        if _TITLE_KEY_RE.match(line):
             continue
 
         # Skip metadata lines (legacy inline format, now in frontmatter)
