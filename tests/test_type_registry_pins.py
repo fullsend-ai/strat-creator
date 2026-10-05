@@ -110,9 +110,15 @@ def test_find_strat_for_rfe_source_form():
 
 
 def test_removed_context_marker():
+    """rfe-strategy's marker is spelled in the refine steps; every type's is read from the field the skill's
+    Work-Item Type table names, so every type must carry one."""
+    refine = src(".claude/skills/strategy-refine/SKILL.md")
     marker = D.get("inputs.0.removed_context_marker")
-    line = src(".claude/skills/strategy-refine/SKILL.md")
-    assert f"`{marker['comment_prefix']}`" in line and marker["phrase"] in line, "strategy-refine/SKILL.md:123"
+    assert f"`{marker['comment_prefix']}`" in refine and marker["phrase"] in refine, "strategy-refine/SKILL.md:123"
+    assert "`inputs[0].removed_context_marker`: `comment_prefix`, then `phrase`" in refine
+    for desc in REG:
+        marker = desc.get("inputs.0.removed_context_marker", None)
+        assert marker and marker["comment_prefix"] and marker["phrase"], desc.name
 
 
 # ── dirs / workspace / files ──────────────────────────────────────────────────────────────
@@ -243,3 +249,28 @@ def test_create_skill_binding_prose():
     gate_values = jql["required_labels"] + jql["quality_labels"]
     assert D.get("discovery.settings") in create and not [v for v in gate_values if v in create], "strategy-create/SKILL.md Step 2a"
     assert create.count(f"    type={D.name}\n") == 2, "strategy-create/SKILL.md: both strat-tasks set blocks stamp the type"
+
+
+def _section(text, heading):
+    """The body of one `## ` section of a skill."""
+    return text.split(f"\n## {heading}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def test_same_ticket_branches_read_the_type():
+    """A relation-self type's create and refine steps take its values from the descriptor: they name the fields,
+    every type carries them, and the create branch spells none of rfe-strategy's values."""
+    create = _section(src(".claude/skills/strategy-create/SKILL.md"), "Same-Ticket Types")
+    refine = _section(src(".claude/skills/strategy-refine/SKILL.md"), "Work-Item Type")
+    fields = ["inputs[0].source_ref_field", "pipeline.section_ownership[0].heading"]
+    for text in (create, refine):
+        assert [f for f in fields if f"`{f}`" not in text] == []
+    assert "`inputs[0].relation.kind`" in create and "`discovery.settings`" in create
+    assert "type=<type>\n" in create and "<source_ref_field>=<KEY>" in create
+    rfe_values = [D.get("inputs.0.jira.project"), D.write_prefix, D.local_prefix, D.get("inputs.0.source_ref_field"),
+                  D.get("pipeline.section_ownership.0.heading"), D.get("inputs.0.removed_context_marker.comment_prefix"),
+                  D.labels["auto_created"], os.path.basename(D.get("files.tickets"))]
+    assert [v for v in rfe_values if v in create] == []
+    for desc in REG:
+        for path in ("inputs.0.relation.kind", "inputs.0.source_ref_field", "discovery.settings",
+                     "pipeline.section_ownership.0.heading"):
+            assert desc.get(path, None), (desc.name, path)

@@ -18,6 +18,41 @@ If `--dry-run` is in `$ARGUMENTS`, skip ALL external writes:
 - For **Path A** (existing STRAT found via Cloners link): Use the real `RHAISTRAT-NNNN` key as filename and `jira_key` — the ticket already exists, we're importing it
 - Print `[DRY RUN] Skipping Jira clone for <RFE key>` for each Path B RFE
 
+## Work-Item Type
+
+The work-item type is `types/<type>/type.yaml`, `<type>` being the `--type` value in `$ARGUMENTS`, default `rfe-strategy`. Read one of its values with:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py get <type> <dotted.path> --json
+```
+
+If the type's `inputs[0].relation.kind` is `clones` (`rfe-strategy`), skip **Same-Ticket Types** and follow Steps 1–8. If it is `self`, follow **Same-Ticket Types** instead of Steps 1–7, then Step 8.
+
+## Same-Ticket Types
+
+For a type whose `inputs[0].relation.kind` is `self`, the strategy is written for the input ticket itself: nothing is cloned. Each key in `$ARGUMENTS` is such a ticket (`inputs[0].jira.key_prefixes`); if none is given, stop and ask for one. The Path A / Path B bullets of Dry Run Mode do not apply. For each key, written `<KEY>` below:
+
+1. **Fetch** it as Step 1 does: `python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_issue.py <KEY> --fields summary,description,priority,labels,status --markdown`.
+2. **Gate.** Read the settings file the type names in `discovery.settings`, the one `list-rfe-ids.py --jql-default --type <type>` used when it selected the key, and check the ticket against its `jql` settings: its status is not in `excluded_statuses`; it has a label from `quality_labels` when that list is non-empty; when `required_labels` or `target_versions` is non-empty, it has one of those labels or Target Versions. Do not check `excluded_labels`: it holds the lock label (`pipeline.lock.label`) the batch job puts on this same ticket before this skill runs. Treat each list as data; do not copy its values into this skill. A ticket that already has the type's `conventions.labels.rubric_pass` or `needs_attention` was processed. Skip a failing or processed key as Step 2a does: append a row with the reason to `artifacts/strat-skipped.md` and print `[SKIPPED] <KEY> — <reason>`.
+3. **Originals.** Run Steps 4 and 4a with `<KEY>` in place of the RFE key.
+4. **Stub.** Write `artifacts/strat-tasks/<KEY>.md`, with and without `--dry-run`: the type's `pipeline.section_ownership[0].heading`, the ticket's description under it VERBATIM, character-for-character, then the Strategy and Staff Engineer / SME Input template sections exactly as Path B writes them.
+5. **Frontmatter.** Read the field names with `python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py schema <type>-task`, then set them; `<source_ref_field>` is the type's `inputs[0].source_ref_field`:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-tasks/<KEY>.md \
+    strat_id=<KEY> \
+    title="<summary from Jira>" \
+    <source_ref_field>=<KEY> \
+    jira_key=<KEY> \
+    priority=<priority from Jira> \
+    status=Draft \
+    type=<type>
+```
+
+6. Print `[CREATE] <KEY> — strategy stub for the ticket itself`.
+
+There is no clone (Step 3), no `find_strat_for_rfe.py` lookup (Step 5a), no provenance label (Step 6) and no tickets file (Step 7), and the file never takes a local-prefix name, dry run or not. This section writes nothing to Jira.
+
 ## Step 1: Find RFE Source Data
 
 Check for available RFE sources:

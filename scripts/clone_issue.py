@@ -32,9 +32,10 @@ from strat_side_effects import OWNER_PREFIX
 # The default work type, rfe-strategy: the issue type a clone gets, the fields it copies, the
 # parent gate, the [DRAFT] prefix, the lock label it drops and the link it creates.
 # For now: one type; resolve per call from source_key (type_registry.resolve(ids=[source_key]))
-# once a second clones type ships. A self relation (initiative-strategy) must never clone; nothing
-# enforces that yet.
-_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+# once a second clones type ships. A self relation (initiative-strategy) must never clone: main()
+# refuses a source key whose type has one.
+_TYPES = type_registry.load()
+_TYPE = _TYPES.get(type_registry.LEGACY_DEFAULT_TYPE)
 _PARENT = _TYPE.get("inputs.0.parent_gate")
 ISSUE_TYPE = _TYPE.get("identity.jira.issue_type")
 COPY_FIELDS = _TYPE.get("inputs.0.copy_fields")
@@ -109,6 +110,12 @@ def main():
     parser.add_argument("--issue-type", default=ISSUE_TYPE,
                         help="Issue type in target project (default: Feature)")
     args = parser.parse_args()
+
+    owner = _TYPES.detect(args.source_key)
+    if owner and owner.get("inputs.0.relation.kind", None) == "self":
+        print(f"Error: {args.source_key} is a {owner.name} item, which runs on its own ticket; "
+              "refusing to clone it.", file=sys.stderr)
+        sys.exit(1)
 
     server, user, token = require_env()
     if not all([server, user, token]):
