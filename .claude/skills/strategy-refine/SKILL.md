@@ -72,6 +72,10 @@ The work-item type is `types/<type>/type.yaml`, `<type>` being the `--type` valu
 python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py get <type> inputs.0.removed_context_marker --json
 ```
 
+If the type's `inputs[0].relation.kind` is `self`, the strategy's `jira_key` is the input ticket itself, whose summary and description stay its owner's: skip **Push Strategy to Jira** (the push and the label) and print `[SKIP] Jira push for <jira_key> — same-ticket type`.
+
+<!-- For now: no in-skill Jira push for a same-ticket type. push_strategy.py writes such a ticket only as a new append-only pipeline.body_overflow.attachment, and the batch job's push_refined_strategies.py pushes every refined file after this skill, so a push here would add a second attachment per run. A local refine of such a ticket reaches Jira only through that job; push here, as for rfe-strategy, once a local refine must reach Jira on its own. -->
+
 ## Pipeline Label Gate
 
 Read the strategy's frontmatter to get the `jira_key`. If `jira_key` is not null, run the scripted gate check:

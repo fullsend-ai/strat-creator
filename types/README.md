@@ -20,9 +20,10 @@ rfe-creator's ladder, `scripts/type_registry.py` `resolve()`: `--type <name>`, e
 else the artifact's directory, else the ids' prefixes (a type's own key prefixes, then its inputs'), else
 `rfe-strategy`. A headless or CI run (`STRAT_CREATOR_HEADLESS`, `CI` or `GITHUB_ACTIONS` set) never guesses: an id no
 type owns is an error there. `list-rfe-ids.py --type` and the create, refine, review and sign-off skills (`--type` in
-their arguments; refine falls back to the task file's `type:`) pick the type today; `generate-report.py` and
-`extract-pipeline-data.py` list every type's files; the other scripts read `rfe-strategy`'s values, and a
-comment in each says how it would pick the type per call.
+their arguments; refine falls back to the task file's `type:`) pick the type today; `push_strategy.py` and
+`pull_strategy.py` know a `relation.kind: self` type's key by its prefix; `generate-report.py`,
+`extract-pipeline-data.py` and `push_refined_strategies.py` list every type's files; the other scripts read
+`rfe-strategy`'s values, and a comment in each says how it would pick the type per call.
 
 ## Self-describing artifacts
 
@@ -44,8 +45,11 @@ is no `tracker_ref`: `jira_key` (`identity.tracker_key_field`) already holds the
 2. Change `identity` (the tracker binding must be unique across types), `inputs[0]` (upstream type, relation,
    skip_if), `discovery.settings` (a settings file in `config/pipeline-settings.yaml`'s shape: the intake gate, skip
    lists and batch size) and whatever the type does differently. Everything else is the station's — keep it. With
-   `relation.kind: self` the strategy runs on the input ticket: strategy-create names the task file by its key and
-   clones nothing.
+   `relation.kind: self` the strategy runs on the input ticket: strategy-create names the task file by its key,
+   clones nothing and starts from the newest `pipeline.body_overflow.attachment`, strategy-refine leaves the Jira
+   push to `push_refined_strategies.py`, `push_strategy.py` writes only that attachment (never the ticket's summary
+   or description), `pull_strategy.py` reads the newest one back under the `section_ownership[0]` heading and the
+   ticket's description, and strategy-signoff skips the `[DRAFT]` strip for a type without a `summary_prefix`.
 3. `make lint`, then `make test-unit`. `tests/test_type_registry.py` lists the shipped types: add yours to
    `SHIPPED_ALL` and bump the counts in `test_shipped_types` and `test_gate1_passes_on_the_shipped_types`.
 4. Select it with `--type <name>`: `list-rfe-ids.py` and the create, refine, review and sign-off skills take it. The

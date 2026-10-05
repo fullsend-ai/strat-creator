@@ -20,7 +20,9 @@ from jira_utils import get_issue, require_env, update_summary
 
 # conventions.summary_prefix of the default work type: added at create, removed here at signoff.
 # For now: one type's prefix; resolve it from the issue key once a type with its own prefix lands.
-DRAFT_PREFIX = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE).get("conventions.summary_prefix.value")
+# A key whose type has no prefix (initiative-strategy) is skipped, so its summary is never touched.
+_TYPES = type_registry.load()
+DRAFT_PREFIX = _TYPES.get(type_registry.LEGACY_DEFAULT_TYPE).get("conventions.summary_prefix.value")
 
 
 def main():
@@ -28,6 +30,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("issue_key", help="Jira issue key (e.g. RHAISTRAT-1500)")
     args = parser.parse_args()
+
+    owner = _TYPES.detect(args.issue_key)
+    if owner and owner.get("conventions.summary_prefix", None) is None:
+        print(f"[SKIP] {owner.name} has no summary prefix -- {args.issue_key} summary unchanged")
+        return
 
     server, user, token = require_env()
     if not all([server, user, token]):

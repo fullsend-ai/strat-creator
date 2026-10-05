@@ -31,9 +31,11 @@ Retired (the consumer reads the registry now, so the pin would be a tautology):
     descriptor, as do their unpinned literals and lock_issues' lock-strat walk. Equality with the
     4c6ae1c literals is tests/test_type_registry.py::test_jira_scripts_equal_the_4c6ae1c_literals.
   * The reporters: generate-report and extract-pipeline-data glob every registered type's
-    prefixes. Their globs were never pinned, so nothing retires; push_refined_strategies' RHAISTRAT-
-    glob stays literal as a guard and is pinned in test_dirs. The proof is
+    prefixes. Their globs were never pinned, so nothing retires. The proof is
     tests/test_type_registry.py::test_reporters_read_every_types_files.
+  * push_refined_strategies globs every registered type's key_prefixes, now that push_strategy writes a
+    same-ticket key only as its attachment; its RHAISTRAT- glob pin in test_dirs retires. The proof is
+    tests/test_push_refined_strategies.py::TestPushRefinedStrategies::test_pushes_same_ticket_initiative.
 """
 
 import hashlib
@@ -126,7 +128,6 @@ def test_removed_context_marker():
 
 def test_dirs():
     assert f'default="{D.dirs()["tasks"]}"' in src("scripts/push_refined_strategies.py"), "dirs.tasks — push_refined_strategies.py:60"
-    assert f'"{D.write_prefix}*.md"' in src("scripts/push_refined_strategies.py"), "identity.jira.key_prefixes — push_refined_strategies.py:70"
     claude = src("CLAUDE.md")
     for key, value in D.dirs("bare").items():
         assert f"{value}/" in claude, f"dirs.{key} — CLAUDE.md:10-24"
@@ -266,6 +267,12 @@ def test_same_ticket_branches_read_the_type():
         assert [f for f in fields if f"`{f}`" not in text] == []
     assert "`inputs[0].relation.kind`" in create and "`discovery.settings`" in create
     assert "type=<type>\n" in create and "<source_ref_field>=<KEY>" in create
+    # The strategy and Staff input live only in the attachment: create starts from the newest, refine leaves the
+    # push to push_refined_strategies, and signoff strips no [DRAFT] from a summary that is not its own.
+    assert "`pipeline.body_overflow.attachment`" in create and "download_attachment" in create
+    assert "`inputs[0].relation.kind`" in refine and "skip **Push Strategy to Jira**" in refine
+    signoff = _section(src(".claude/skills/strategy-signoff/SKILL.md"), "Step 7: Remove [DRAFT] Prefix")
+    assert "If the type has no `conventions.summary_prefix`" in signoff and "skip this step" in signoff
     rfe_values = [D.get("inputs.0.jira.project"), D.write_prefix, D.local_prefix, D.get("inputs.0.source_ref_field"),
                   D.get("pipeline.section_ownership.0.heading"), D.get("inputs.0.removed_context_marker.comment_prefix"),
                   D.labels["auto_created"], os.path.basename(D.get("files.tickets"))]

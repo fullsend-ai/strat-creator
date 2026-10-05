@@ -833,3 +833,35 @@ class TestPullRfeReconstruction:
         assert RFE_REFERENCE_MARKER not in content
         assert "Deploy vLLM with NVIDIA MPS" in content
         assert "attachment" in result.stdout.lower()
+
+
+class TestPullSameTicket:
+    """initiative-strategy runs on the Initiative itself (relation self): pull takes the Initiative's
+    description as the Business Need and the strategy from the newest {key}-strategy.md attachment."""
+
+    def test_pulls_the_newest_pushed_attachment(self, jira, tmp_path):
+        jira.create("RHOAIENG-2200", "An Initiative", "Grow the platform.",
+                    labels=["strat-creator-needs-attention"], issue_type="Initiative")
+        push_script = os.path.join(PROJECT_ROOT, "scripts", "push_strategy.py")
+        push_file = tmp_path / "RHOAIENG-2200.md"
+        for version in ("First", "Second"):
+            push_file.write_text(f"{STRATEGY_HEADING}\n\n{version} strategy.\n")
+            push = subprocess.run([sys.executable, push_script, "RHOAIENG-2200", str(push_file)],
+                                  env=_env(jira), capture_output=True, text=True, cwd=PROJECT_ROOT)
+            assert push.returncode == 0, push.stderr
+            time.sleep(0.05)
+
+        local_dir = tmp_path / "local"
+        result = _run(jira, "RHOAIENG-2200", local_dir)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        data, body = read_frontmatter(str(local_dir / "strat-tasks" / "RHOAIENG-2200.md"))
+        assert {k: data[k] for k in ("strat_id", "source_initiative", "jira_key", "type")} == {
+            "strat_id": "RHOAIENG-2200", "source_initiative": "RHOAIENG-2200",
+            "jira_key": "RHOAIENG-2200", "type": "initiative-strategy"}
+        assert "source_rfe" not in data
+        heading = "## Business Need (from Initiative)"
+        assert body.strip().startswith(f"{heading}\n\nGrow the platform.\n\n{STRATEGY_HEADING}")
+        assert "Second strategy." in body and "First strategy." not in body
+        assert "## Staff Engineer / SME Input" in body
+        assert not (local_dir / "strat-originals").exists()

@@ -51,10 +51,13 @@ After review: address findings, then remove the needs-attention label from Jira.
 
 # The default work type, rfe-strategy: the input reference its files carry, the overflow
 # attachment name and the originals dir of the pre-push backup. The body contract (the headings,
-# the Staff Input template, the notices) stays literal: both types share it.
-# For now: one type; resolve per call from the key or the file (type_registry.resolve(
-# ids=[issue_key], artifact=local_file)) once a second type pushes.
-_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+# the Staff Input template, the notices) stays literal: both types share it. A key of a type whose
+# inputs[0].relation.kind is self (initiative-strategy) takes _push_same_ticket instead.
+# For now: the key picks only that branch (TypeRegistry.detect), and the attachment name stays
+# rfe-strategy's (the self type's is equal); resolve(ids=[issue_key], artifact=local_file) per call
+# once a type's values differ.
+_TYPES = type_registry.load()
+_TYPE = _TYPES.get(type_registry.LEGACY_DEFAULT_TYPE)
 _SOURCE_PREFIX = _TYPE.get("inputs.0.jira.key_prefixes.0")
 _SOURCE_REF_RE = re.compile(_TYPE.get("inputs.0.source_ref_field") + r":\s*(" + _SOURCE_PREFIX + r"\d+)")
 NO_SOURCE_REF = _SOURCE_PREFIX + "0"  # what pull_strategy.py writes when the issue has no linked input
@@ -348,9 +351,36 @@ def _push_via_attachment(server, user, token, issue_key, existing_md,
     print(f"OK: Strategy pushed to {issue_key} as attachment {att_filename}")
 
 
+def _push_same_ticket(server, user, token, issue_key,
+                      strategy_section, staff_input_section):
+    """Push to a ticket that is its own input (relation self): the strategy and
+    the Staff Engineer / SME Input go only to a new append-only attachment.
+
+    The ticket's summary and description are its owner's (rfe-creator rewrites
+    the whole description and skips an issue edited behind it), so neither is
+    read or written.
+    """
+    att_filename = STRATEGY_ATTACHMENT_TEMPLATE.format(issue_key=issue_key)
+    with _attachment_writer_lock(issue_key):
+        with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", delete=False, encoding="utf-8") as tmp:
+            tmp.write(f"{strategy_section}\n\n"
+                      f"{staff_input_section or STAFF_INPUT_TEMPLATE}\n")
+            tmp_path = tmp.name
+        try:
+            add_attachment(server, user, token, issue_key,
+                           tmp_path, filename=att_filename)
+        finally:
+            os.unlink(tmp_path)
+
+    print(f"OK: Strategy and Staff Engineer / SME Input pushed to "
+          f"{issue_key} as attachment {att_filename}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    # For now: kept literal for byte-identical rfe-strategy output; reword when the Initiative job goes live
     parser.add_argument("issue_key", help="RHAISTRAT issue key")
     parser.add_argument("local_file", help="Local strategy file path")
     args = parser.parse_args()
@@ -374,6 +404,12 @@ def main():
         sys.exit(1)
 
     staff_input_section = extract_staff_input_section(local_content)
+
+    desc = _TYPES.detect(args.issue_key)
+    if desc and desc.get("inputs.0.relation.kind") == "self":
+        _push_same_ticket(server, user, token, args.issue_key,
+                          strategy_section, staff_input_section)
+        return
 
     issue = get_issue(server, user, token, args.issue_key,
                       fields=["description", "attachment"])

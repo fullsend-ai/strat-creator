@@ -100,7 +100,7 @@ Print `[LABEL] strat-creator-human-sign-off added to RHAISTRAT-NNNN`.
 
 ## Step 7: Remove [DRAFT] Prefix
 
-Strip the `[DRAFT]` prefix (and its trailing space; `conventions.summary_prefix`, removed at this stage) from the Jira summary if present:
+Strip the `[DRAFT]` prefix (and its trailing space; `conventions.summary_prefix`, removed at this stage) from the Jira summary if present. If the type has no `conventions.summary_prefix` (a same-ticket type, whose summary is its owner's), skip this step and print `[SKIP] No summary prefix for <type> — summary unchanged`:
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/remove_draft_prefix.py RHAISTRAT-NNNN

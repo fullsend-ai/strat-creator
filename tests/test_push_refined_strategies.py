@@ -74,6 +74,28 @@ class TestPushRefinedStrategies:
         labels = issue["fields"]["labels"]
         assert "strat-creator-auto-refined" in labels
 
+    def test_pushes_same_ticket_initiative(self, jira, art_dir):
+        """An initiative-strategy file is named by the Initiative's own key; its
+        strategy goes to the attachment, never the Initiative's description."""
+        jira.create("RHOAIENG-2100", "An Initiative", "## Objective\n\nGrow.",
+                    issue_type="Initiative")
+        before = jira.get("RHOAIENG-2100")["fields"]
+        strat_dir = art_dir / "artifacts" / "strat-tasks"
+        (strat_dir / "RHOAIENG-2100.md").write_text(
+            "---\nstrat_id: RHOAIENG-2100\ntitle: An Initiative\n"
+            "source_initiative: RHOAIENG-2100\njira_key: RHOAIENG-2100\n"
+            "priority: Major\nstatus: Refined\ntype: initiative-strategy\n---\n\n"
+            f"## Business Need (from Initiative)\n\nGrow.\n\n{STRATEGY_HEADING}\n\nThe how.\n")
+
+        result = _run(jira, strat_dir)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "[PUSH] RHOAIENG-2100" in result.stdout
+        assert "Pushed 1/1" in result.stdout
+        after = jira.get("RHOAIENG-2100")["fields"]
+        assert "strat-creator-auto-refined" in after["labels"]
+        assert after["description"] == before["description"]
+        assert [a["filename"] for a in after["attachment"]] == ["RHOAIENG-2100-strategy.md"]
+
     def test_skips_draft_status(self, jira, art_dir):
         jira.create("RHAISTRAT-2001", "Draft strat", "")
         strat_dir = art_dir / "artifacts" / "strat-tasks"
@@ -164,6 +186,7 @@ class TestPushRefinedStrategies:
     def test_ignores_non_rhaistrat_files(self, art_dir):
         strat_dir = art_dir / "artifacts" / "strat-tasks"
         (strat_dir / "STRAT-001.md").write_text("local only file\n")
+        (strat_dir / "ISTRAT-001.md").write_text("local only file\n")
 
         env = {
             **os.environ,

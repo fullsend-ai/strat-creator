@@ -35,7 +35,23 @@ For a type whose `inputs[0].relation.kind` is `self`, the strategy is written fo
 1. **Fetch** it as Step 1 does: `python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_issue.py <KEY> --fields summary,description,priority,labels,status --markdown`.
 2. **Gate.** Read the settings file the type names in `discovery.settings`, the one `list-rfe-ids.py --jql-default --type <type>` used when it selected the key, and check the ticket against its `jql` settings: its status is not in `excluded_statuses`; it has a label from `quality_labels` when that list is non-empty; when `required_labels` or `target_versions` is non-empty, it has one of those labels or Target Versions. Do not check `excluded_labels`: it holds the lock label (`pipeline.lock.label`) the batch job puts on this same ticket before this skill runs. Treat each list as data; do not copy its values into this skill. A ticket that already has the type's `conventions.labels.rubric_pass` or `needs_attention` was processed. Skip a failing or processed key as Step 2a does: append a row with the reason to `artifacts/strat-skipped.md` and print `[SKIPPED] <KEY> — <reason>`.
 3. **Originals.** Run Steps 4 and 4a with `<KEY>` in place of the RFE key.
-4. **Stub.** Write `artifacts/strat-tasks/<KEY>.md`, with and without `--dry-run`: the type's `pipeline.section_ownership[0].heading`, the ticket's description under it VERBATIM, character-for-character, then the Strategy and Staff Engineer / SME Input template sections exactly as Path B writes them.
+4. **Stub.** Write `artifacts/strat-tasks/<KEY>.md`, with and without `--dry-run`: the type's `pipeline.section_ownership[0].heading`, the ticket's description under it VERBATIM, character-for-character, then the Strategy and Staff Engineer / SME Input sections. `push_strategy.py` keeps those two sections in an attachment on the ticket, a new one per push, named by the type's `pipeline.body_overflow.attachment` with `{issue_key}` set to `<KEY>` (written `<attachment>` below). Save the newest one, if any:
+
+```bash
+python3 -c "
+import sys; sys.path.insert(0, '${CLAUDE_SKILL_DIR}/scripts')
+from jira_utils import attachment_sort_key, download_attachment, get_issue, require_env
+s, u, t = require_env()
+atts = [a for a in get_issue(s, u, t, sys.argv[1], fields=['attachment'])['fields'].get('attachment') or []
+        if a.get('filename') == sys.argv[2]]
+if atts:
+    download_attachment(s, u, t, max(atts, key=attachment_sort_key)['content'], sys.argv[3])
+    print('[IMPORT] ' + sys.argv[2])
+" <KEY> <attachment> artifacts/strat-originals/<attachment>
+```
+
+If it printed `[IMPORT]`, write that file's content VERBATIM after the description: it holds the newest Strategy and the Staff Engineer / SME Input an owner may have pushed, which a re-run must keep. Otherwise write the Strategy and Staff Engineer / SME Input template sections exactly as Path B writes them.
+
 5. **Frontmatter.** Read the field names with `python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py schema <type>-task`, then set them; `<source_ref_field>` is the type's `inputs[0].source_ref_field`:
 
 ```bash

@@ -20,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+import type_registry
 from jira_utils import add_labels, require_env
 
 REFINED_LABEL = "strat-creator-auto-refined"
@@ -81,10 +82,12 @@ def main():
               file=sys.stderr)
         return 2
 
-    # For now: rfe-strategy's tracker prefix only, on purpose: push_strategy.py is not type-aware and a twin's key is
-    # the shared Initiative. Glob every type's key_prefixes when push_strategy reads pipeline.section_ownership.
-    files = sorted(glob.glob(os.path.join(args.artifacts_dir, "RHAISTRAT-*.md")))
+    # Every registered type's tracker keys (RHAISTRAT-, RHOAIENG-); a local STRAT-/ISTRAT- draft has no issue yet.
+    # push_strategy.py writes a same-ticket key (relation self) only as its strategy attachment.
+    prefixes = [p for desc in type_registry.load() for p in desc.key_prefixes]
+    files = sorted({f for p in prefixes for f in glob.glob(os.path.join(args.artifacts_dir, f"{p}*.md"))})
     if not files:
+        # For now: kept literal for byte-identical rfe-strategy output; reword when the Initiative job goes live
         print("No RHAISTRAT files found, nothing to push.")
         return 0
 
