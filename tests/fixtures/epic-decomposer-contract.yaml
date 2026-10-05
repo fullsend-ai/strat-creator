@@ -1,0 +1,18 @@
+# What the Epic Decomposer reads from a signed-off strategy, recorded as data so a test can check a
+# strat-creator type against it without importing epic-creator. Sources: opendatahub-io/epic-creator
+# 1544ef1 and the scheduled job in gitlab.com/redhat/rhel-ai/agentic-ci/epic-decomposer 4cde3bf.
+project: RHAISTRAT                     # epic-decomposer .gitlab-ci.yml:71 JQL "project = RHAISTRAT"
+issue_type: Feature                    # same JQL, "issuetype = Feature"
+labels_all: [strat-creator-rubric-pass, strat-creator-human-sign-off]   # same JQL, "labels = ..."
+target_version_field: customfield_10855   # same JQL, "Target Version" in (...)
+id_pattern: '^RHAISTRAT-\d+$'          # epic-creator scripts/artifact_utils.py:32,76,195,231; scripts/submit.py:190
+attachment_pattern: '^RHAISTRAT-\d+-strategy\.md$'   # scripts/fetch_strategy.py:39; otherwise it reads the whole description
+headings:                              # skills/epic-decompose/prompts/decompose-agent.md Step 1 and Step 1.5
+  - "### Affected Components"
+  - "### Impacted Teams"
+  - "### High Level Requirements"
+  - "### Dependencies"
+  - "### Acceptance Criteria"
+  - "### Non-Functional Requirements"
+  - "## Staff Engineer / SME Input"
+hlr_priorities: ["[P0]", "[P1]", "[P2]"]   # decompose-agent.md:44

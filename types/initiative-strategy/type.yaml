@@ -45,6 +45,18 @@ inputs:
     skip_if:                                            # "already processed", evaluated on the same ticket; the skip labels are in discovery.settings
       single_open_unlabeled_override: false             # no clones -> nothing to re-import
 
+# The Epic Decomposer handoff: opendatahub-io/epic-creator, run by gitlab agentic-ci/epic-decomposer, decomposes a
+# signed-off strategy into RHAI Epics. The entry is the one rfe-creator's tests/fixtures/types/epic/type.yaml records
+# for the strategy side; no script reads produces yet. An Epic (hierarchy level 1) may have an Initiative (level 2, as a
+# Feature) as its parent, so the Epics hang under the Initiative itself. The strategy headings the decomposer
+# parses are in pipeline.prompts.template, and the attachment it reads first is pipeline.body_overflow.attachment.
+# epic-creator reads only RHAISTRAT Features today; AISDLC-61 widens its intake, its attachment match and its id
+# patterns to RHOAIENG Initiatives.
+produces:
+  - type: epic                                          # epic-creator's type, carried as data: (RHAI, Epic), submit.py TARGET_PROJECT / TARGET_ISSUE_TYPE
+    relation: { kind: parent, dependency_link_type: Blocks }   # submit.py create_issue(parent_key=<strategy key>); Blocks between sibling Epics (DEPENDENCY_LINK_TYPE)
+    label_on_input: epic-creator-auto-decomposed        # submit.py STRAT_LABEL, set on the strategy's ticket, here the Initiative, once every Epic exists
+
 discovery:                                              # open question (batch beside event dispatch) as for rfe-strategy
   settings: config/initiative-settings.yaml             # the intake gate, skip lists and batch size, in config/pipeline-settings.yaml's shape
 
