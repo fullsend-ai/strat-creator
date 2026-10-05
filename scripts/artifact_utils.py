@@ -6,11 +6,56 @@ use this module instead of regex-parsing markdown prose.
 Frontmatter is stored as YAML between --- delimiters at the top of markdown files.
 """
 
+import copy
 import os
 import re
 import sys
 
+import type_registry
 import yaml
+
+# The work-item type whose schemas and labels this module serves: the default, rfe-strategy. The
+# strat-task / strat-review schemas and the label vocabulary derive from its
+# descriptor; the rfe-* schemas are the upstream artifacts this station reads and stay literal.
+# For now: one type's schemas; another type's files validate once a caller picks the descriptor per
+# file (type_registry.resolve(artifact=path)), with that type's first production caller.
+_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+_LABELS = _TYPE.labels
+
+
+def _id_pattern(desc):
+    """``^(STRAT-\\d+|RHAISTRAT-\\d+)$``: the local id grammar OR'd with the tracker write prefix."""
+    return "^(" + desc.local_id_pattern.strip("^$") + "|" + desc.write_prefix + r"\d+)$"
+
+
+def _strat_schemas(desc):
+    """The ``strat-task`` / ``strat-review`` schemas from the descriptor: ``identity`` (id field and
+    grammar), ``schema.task`` (priority and status enums, extra fields) and ``schema.review``
+    (recommendation enum, score fields, total field, extra fields). Field order is today's: id and
+    title, the reference fields, the shared base (priority, status), then the type's own fields —
+    apply_defaults and the schema printer iterate in this order. Specs are deep-copied so SCHEMAS
+    never aliases registry data."""
+    task = desc.get("schema.task")
+    review = desc.get("schema.review")
+    extras = copy.deepcopy(task["extra_fields"])
+    refs = [desc.get("inputs.0.source_ref_field"), desc.tracker_key_field]
+    id_spec = {"type": "string", "required": True, "pattern": _id_pattern(desc)}
+    task_schema = {desc.id_field: dict(id_spec), "title": {"type": "string", "required": True}}
+    task_schema.update({name: extras.pop(name) for name in refs if name in extras})
+    task_schema["priority"] = {"type": "string", "required": True, "enum": list(task["priority"]["enum"])}
+    task_schema["status"] = {"type": "string", "required": True, "enum": list(task["status_enum"])}
+    task_schema.update(extras)
+    score_names = desc.score_fields + [review["total_field"]]
+    review_schema = {
+        desc.id_field: dict(id_spec),
+        "recommendation": {"type": "string", "required": True, "enum": list(review["recommendation_enum"])},
+        "needs_attention": {"type": "bool", "required": True, "default": False},
+        "scores": {"type": "dict", "required": True,
+                   "fields": {name: {"type": "int", "required": True} for name in score_names}},
+    }
+    review_schema.update(copy.deepcopy(review.get("extra_fields") or {}))
+    return {"strat-task": task_schema, "strat-review": review_schema}
+
 
 # ─── Schema Definitions ────────────────────────────────────────────────────────
 
@@ -136,125 +181,15 @@ SCHEMAS = {
             },
         },
     },
-    "strat-task": {
-        "strat_id": {
-            "type": "string",
-            "required": True,
-            "pattern": r"^(STRAT-\d+|RHAISTRAT-\d+)$",
-        },
-        "title": {
-            "type": "string",
-            "required": True,
-        },
-        "source_rfe": {
-            "type": "string",
-            "required": True,
-            "pattern": r"^(RFE-\d+|RHAIRFE-\d+)$",
-        },
-        "jira_key": {
-            "type": "string",
-            "required": False,
-            "pattern": r"^RHAISTRAT-\d+$",
-            "default": None,
-        },
-        "priority": {
-            "type": "string",
-            "required": True,
-            "enum": ["Blocker", "Critical", "Major", "Normal", "Minor",
-                     "Undefined"],
-        },
-        "status": {
-            "type": "string",
-            "required": True,
-            "enum": ["Draft", "Ready", "Refined", "Reviewed"],
-        },
-        "workflow": {
-            "type": "string",
-            "required": False,
-            "enum": ["local", "ci"],
-            "default": None,
-        },
-        "latest_diff": {
-            "type": "string",
-            "required": False,
-            "default": None,
-        },
-        # Count of productive (body-changing) refine passes. Optional with NO
-        # materialized default: absence must stay distinguishable from an
-        # explicit 0 so the dashboard can fall back for un-instrumented
-        # strategies. See ADR-0001 and docs/plans/001.
-        "refine_count": {
-            "type": "int",
-            "required": False,
-        },
-    },
-    "strat-review": {
-        "strat_id": {
-            "type": "string",
-            "required": True,
-            "pattern": r"^(STRAT-\d+|RHAISTRAT-\d+)$",
-        },
-        "recommendation": {
-            "type": "string",
-            "required": True,
-            "enum": ["approve", "revise", "reject"],
-        },
-        "needs_attention": {
-            "type": "bool",
-            "required": True,
-            "default": False,
-        },
-        "scores": {
-            "type": "dict",
-            "required": True,
-            "fields": {
-                "feasibility": {"type": "int", "required": True},
-                "testability": {"type": "int", "required": True},
-                "scope": {"type": "int", "required": True},
-                "architecture": {"type": "int", "required": True},
-                "total": {"type": "int", "required": True},
-            },
-        },
-        "reviewers": {
-            "type": "dict",
-            "required": True,
-            "fields": {
-                "feasibility": {
-                    "type": "string",
-                    "required": True,
-                    "enum": ["approve", "revise", "reject", "pending"],
-                },
-                "testability": {
-                    "type": "string",
-                    "required": True,
-                    "enum": ["approve", "revise", "reject", "pending"],
-                },
-                "scope": {
-                    "type": "string",
-                    "required": True,
-                    "enum": ["approve", "revise", "reject", "pending"],
-                },
-                "architecture": {
-                    "type": "string",
-                    "required": True,
-                    "enum": ["approve", "revise", "reject", "skipped", "pending"],
-                },
-            },
-        },
-    },
 }
+SCHEMAS.update(_strat_schemas(_TYPE))
 
 
 # ─── Label Derivation ────────────────────────────────────────────────────────────
 
+# conventions.label_categories is keyed by label KEY; render it over conventions.labels.
 LABEL_CATEGORIES = {
-    "strat-creator-auto-created": "provenance",
-    "strat-creator-auto-refined": "provenance",
-    "strat-creator-auto-revised": "provenance",
-    "strat-creator-rubric-pass": "gate",
-    "strat-creator-needs-attention": "escalation",
-    "strat-creator-ignore": "exclusion",
-    "strat-creator-human-sign-off": "gate",
+    _LABELS[key]: category for key, category in _TYPE.get("conventions.label_categories").items()
 }
 
 
@@ -269,15 +204,16 @@ def compute_strat_labels(status, recommendation, reviewers=None):
     Returns a list of full-prefixed label strings
     (e.g. ["strat-creator-auto-created", "strat-creator-rubric-pass"]).
     """
-    labels = ["strat-creator-auto-created"]
+    labels = [_LABELS["auto_created"]]
 
+    # The post-refine statuses of schema.task.status_enum — a rule of this pipeline, not a binding.
     if status in ("Refined", "Reviewed"):
-        labels.append("strat-creator-auto-refined")
+        labels.append(_LABELS["auto_refined"])
 
     if recommendation == "approve":
-        labels.append("strat-creator-rubric-pass")
+        labels.append(_LABELS["rubric_pass"])
     elif recommendation in ("revise", "reject"):
-        labels.append("strat-creator-needs-attention")
+        labels.append(_LABELS["needs_attention"])
 
     return labels
 

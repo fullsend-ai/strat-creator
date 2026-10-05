@@ -182,7 +182,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/apply_scores.py tmp/strat-assess/review/scor
 python3 scripts/assess-strat/summarize_run.py tmp/strat-assess/review/
 ```
 
-**Do NOT manually extract scores, compute verdicts, or set frontmatter.** The scripts handle this deterministically. The verdict rules are:
+**Do NOT manually extract scores, compute verdicts, or set frontmatter.** The scripts handle this deterministically. The verdict rules are (recorded as `schema.review.verdict_rules` in the type descriptor; `parse_results.py` applies them):
 ```
 APPROVE:  total >= 6  AND  no zeros       → needs_attention=false
 REVISE:   total >= 3  AND  ≤1 zero        → needs_attention=true
@@ -206,7 +206,7 @@ Run begin in its own Bash call; do not launch two begin sessions in one call.
 Do not substitute transcripts, earlier scorer feedback or invented reports.
 
 
-Use the **Skill tool** to invoke all four reviewer skills in parallel. Each runs in its own isolated `context: fork` — no reviewer sees another's output. Pass the strategy key to each:
+Use the **Skill tool** to invoke the type's reviewer skills in parallel — `pipeline.dimensions[]` in `types/<type>/type.yaml` (`<type>` is the `--type` value in `$ARGUMENTS`, default `rfe-strategy`), one `strategy-<name>-review` skill per dimension; today the four below. Each runs in its own isolated `context: fork` — no reviewer sees another's output. Pass the strategy key to each:
 
 ```
 Skill(skill="strategy-feasibility-review", args="RHAISTRAT-NNNN")
@@ -220,7 +220,7 @@ Do NOT use the Agent tool for reviews. Use the Skill tool — the reviewer skill
 - **`strategy-feasibility-review`**: Can we build this with the proposed approach? Are effort estimates credible?
 - **`strategy-testability-review`**: Are acceptance criteria testable? What edge cases are missing?
 - **`strategy-scope-review`**: Is the strategy right-sized? Does the effort match the scope?
-- **`strategy-architecture-review`** (if architecture context available): Are dependencies correctly identified? Are integration patterns correct?
+- **`strategy-architecture-review`** (if architecture context available — `pipeline.dimensions[3].condition.context_exists`): Are dependencies correctly identified? Are integration patterns correct?
 
 Each reviewer resolves only the exact assigned strategy file and its
 `source_rfe`. A local file for a different ticket does not change its mode.

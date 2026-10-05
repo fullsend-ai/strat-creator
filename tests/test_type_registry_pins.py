@@ -24,6 +24,10 @@ Retired (the consumer reads the registry now, so the pin would be a tautology):
     4c6ae1c literals is now tests/test_type_registry.py::test_jira_utils_derives_the_4c6ae1c_literals.
   * scripts/list-rfe-ids.py: the settings path (:28 SETTINGS_PATH) is the type's discovery.settings.
     tests/test_type_registry.py::test_each_type_names_its_settings_file checks the file exists.
+  * Reviewers + sign-off: artifact_utils (strat-task / strat-review schemas, LABEL_CATEGORIES,
+    compute_strat_labels), lock_issues (pipeline.lock), apply_scores (dimensions, dirs.reviews) and
+    remove_draft_prefix (summary_prefix) read the descriptor. Equality with the 4c6ae1c values is
+    tests/test_type_registry.py::test_review_consumers_equal_the_4c6ae1c_values (+ tests/fixtures).
 """
 
 import hashlib
@@ -38,18 +42,13 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 
-import apply_scores  # noqa: E402
-import artifact_utils  # noqa: E402
 import jira_utils  # noqa: E402
-import lock_issues  # noqa: E402
 import pull_strategy  # noqa: E402
 import push_strategy  # noqa: E402
-import remove_draft_prefix  # noqa: E402
 import type_registry  # noqa: E402
 
 REG = type_registry.load(extra_roots=[], env={})
 D = REG.get("rfe-strategy")
-SCHEMAS = artifact_utils.SCHEMAS
 
 
 def src(rel):
@@ -62,50 +61,13 @@ def pin(descriptor_value, live_value, where):
     )
 
 
-# ── identity + artifact schemas (artifact_utils.py:139-244) ───────────────────────────────
-
-
-def _id_grammar():
-    """The strat_id pattern is the local grammar OR'd with the tracker write prefix."""
-    return "^(" + D.local_id_pattern.strip("^$") + "|" + D.write_prefix + r"\d+)$"
-
-
-def test_strat_id_grammar():
-    pin(_id_grammar(), SCHEMAS["strat-task"]["strat_id"]["pattern"], "identity.{local_id_pattern,jira.key_prefixes} — artifact_utils.py:143")
-    pin(_id_grammar(), SCHEMAS["strat-review"]["strat_id"]["pattern"], "identity.{local_id_pattern,jira.key_prefixes} — artifact_utils.py:195")
-    pin(D.id_field, next(iter(SCHEMAS["strat-task"])), "identity.id_field — artifact_utils.py:140")
-    pin(D.id_field, next(iter(SCHEMAS["strat-review"])), "identity.id_field — artifact_utils.py:192")
-
-
-def test_tracker_key_field():
-    spec = SCHEMAS["strat-task"][D.tracker_key_field]
-    pin("^" + D.write_prefix + r"\d+$", spec["pattern"], "identity.tracker_key_field — artifact_utils.py:154-159")
-    pin(D.get("schema.task.extra_fields.jira_key"), spec, "schema.task.extra_fields.jira_key — artifact_utils.py:154-159")
-
-
-def test_strat_task_fields():
-    task = SCHEMAS["strat-task"]
-    pin(D.get("schema.task.status_enum"), task["status"]["enum"], "schema.task.status_enum — artifact_utils.py:166-170")
-    pin(D.get("schema.task.priority.enum"), task["priority"]["enum"], "schema.task.priority.enum — artifact_utils.py:160-165")
-    for name, spec in D.get("schema.task.extra_fields").items():
-        pin(spec, task[name], f"schema.task.extra_fields.{name} — artifact_utils.py:149-189")
-    base = {D.id_field, "title", "priority", "status"}
-    pin(base | set(D.get("schema.task.extra_fields")), set(task), "strat-task field set — artifact_utils.py:139-190")
+# ── identity + artifact schemas: derived (artifact_utils._strat_schemas); descriptor-internal checks only ──
 
 
 def test_source_ref_grammar_is_the_input_grammar():
     pattern = D.get("schema.task.extra_fields.source_rfe.pattern")
     pin(D.get("inputs.0.source_ref_field"), "source_rfe", "inputs.0.source_ref_field — artifact_utils.py:149")
     assert D.get("inputs.0.jira.key_prefixes.0") + r"\d+" in pattern, "inputs.0.jira.key_prefixes — artifact_utils.py:152"
-
-
-def test_strat_review_fields():
-    review = SCHEMAS["strat-review"]
-    pin(D.get("schema.review.recommendation_enum"), review["recommendation"]["enum"], "schema.review.recommendation_enum — artifact_utils.py:197-201")
-    pin(D.score_fields + [D.get("schema.review.total_field")], list(review["scores"]["fields"]), "schema.review.{score_fields,total_field} — artifact_utils.py:207-216")
-    pin(D.get("schema.review.extra_fields.reviewers"), review["reviewers"], "schema.review.extra_fields.reviewers — artifact_utils.py:218-243")
-    pin(D.score_fields, list(review["reviewers"]["fields"]), "reviewers keys == score_fields — artifact_utils.py:222-241")
-    pin({D.id_field, "recommendation", "needs_attention", "scores", "reviewers"}, set(review), "strat-review field set — artifact_utils.py:191-244")
 
 
 # ── labels (artifact_utils.py:250-282; lock_issues.py:43-56) ──────────────────────────────
@@ -117,26 +79,9 @@ def test_every_label_carries_the_prefix():
         assert value.startswith(prefix), f"conventions.labels.{key}={value!r} lacks {prefix!r}"
 
 
-def test_label_categories():
-    rendered = {D.labels[k]: cat for k, cat in D.get("conventions.label_categories").items()}
-    pin(rendered, artifact_utils.LABEL_CATEGORIES, "conventions.label_categories over conventions.labels — artifact_utils.py:250-258")
-    pin("unknown", artifact_utils.label_category(D.labels["processing"]), "processing has no category row — artifact_utils.py:261-263")
-
-
-def test_compute_strat_labels():
-    L = D.labels
-    pin([L["auto_created"], L["rubric_pass"]], artifact_utils.compute_strat_labels("Draft", "approve"), "artifact_utils.py:266-282 approve")
-    pin([L["auto_created"], L["auto_refined"], L["needs_attention"]], artifact_utils.compute_strat_labels("Refined", "revise"), "artifact_utils.py:266-282 revise")
-    pin([L["auto_created"], L["auto_refined"], L["needs_attention"]], artifact_utils.compute_strat_labels("Reviewed", "reject"), "artifact_utils.py:266-282 reject")
-
-
 def test_lock_labels():
     lock = D.get("pipeline.lock")
-    pin(lock["label"], lock_issues.PROCESSING_LABEL, "pipeline.lock.label — lock_issues.py:43")
     pin(lock["label"], D.labels["processing"], "pipeline.lock.label == conventions.labels.processing")
-    pin(set(lock["blocking_labels"]), set(lock_issues.BLOCKING_LABELS), "pipeline.lock.blocking_labels — lock_issues.py:45-49")
-    pin(lock["derived_required_label"], lock_issues.STRAT_REQUIRED_LABEL, "pipeline.lock.derived_required_label — lock_issues.py:51")
-    pin(set(lock["derived_blocking_labels"]), set(lock_issues.STRAT_BLOCKING_LABELS), "pipeline.lock.derived_blocking_labels — lock_issues.py:53-56")
 
 
 # ── inputs[0] + discovery vs jira_utils ──────────────────────────────────────────────────
@@ -188,7 +133,6 @@ def test_removed_context_marker():
 
 
 def test_dirs():
-    pin(str(REPO / D.dirs()["reviews"]), os.path.normpath(apply_scores.REVIEW_DIR_DEFAULT), "dirs.reviews — apply_scores.py:30")
     assert f'default="{D.dirs()["tasks"]}"' in src("scripts/push_refined_strategies.py"), "dirs.tasks — push_refined_strategies.py:60"
     claude = src("CLAUDE.md")
     for key, value in D.dirs("bare").items():
@@ -222,7 +166,6 @@ def test_body_overflow():
 
 def test_draft_prefix_lifecycle():
     prefix = D.get("conventions.summary_prefix")
-    pin(prefix["value"], remove_draft_prefix.DRAFT_PREFIX, "conventions.summary_prefix.value — remove_draft_prefix.py:20")
     assert prefix["added_at"] in D.stages and prefix["removed_at"] in D.stages
     signoff = src(".claude/skills/strategy-signoff/SKILL.md")
     assert f"Remove {prefix['value'].strip()} Prefix" in signoff, "strategy-signoff/SKILL.md:99"

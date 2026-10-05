@@ -21,7 +21,7 @@ Then fetch the current labels and parent from Jira:
 python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_issue.py RHAISTRAT-NNNN --fields labels,parent --markdown
 ```
 
-**Guard checks:**
+**Guard checks** (the labels are the type's `conventions.labels.needs_attention` / `rubric_pass` in `types/<type>/type.yaml`, `<type>` being the `--type` value in `$ARGUMENTS`, default `rfe-strategy`):
 
 - If the issue has `strat-creator-needs-attention` (not `rubric-pass`): tell the user this strategy needs CI approval first. Suggest using `/strategy-push` to resubmit, then waiting for CI to approve before signing off. **Stop here.**
 - If the issue does NOT have `strat-creator-rubric-pass`: tell the user this strategy hasn't been CI-approved yet and cannot be signed off. **Stop here.**
@@ -85,6 +85,8 @@ If the review file does not exist, skip and print `[SKIP] No review file found â
 
 ## Step 6: Add human-sign-off Label
 
+The label is the type's `conventions.labels.human_sign_off`; sign-off is the `signoff` stage of `pipeline.stages` (human sign-off stays).
+
 ```bash
 python3 -c "
 import sys; sys.path.insert(0, '${CLAUDE_SKILL_DIR}/scripts')
@@ -98,7 +100,7 @@ Print `[LABEL] strat-creator-human-sign-off added to RHAISTRAT-NNNN`.
 
 ## Step 7: Remove [DRAFT] Prefix
 
-Strip the `[DRAFT]` prefix (and its trailing space) from the Jira summary if present:
+Strip the `[DRAFT]` prefix (and its trailing space; `conventions.summary_prefix`, removed at this stage) from the Jira summary if present:
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/remove_draft_prefix.py RHAISTRAT-NNNN

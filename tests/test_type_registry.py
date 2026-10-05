@@ -1,5 +1,6 @@
 """Unit tests for scripts/type_registry.py and scripts/validate_types.py."""
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -10,7 +11,11 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 
+import apply_scores  # noqa: E402
+import artifact_utils  # noqa: E402
 import jira_utils  # noqa: E402
+import lock_issues  # noqa: E402
+import remove_draft_prefix  # noqa: E402
 import type_registry  # noqa: E402
 import validate_types  # noqa: E402
 
@@ -346,3 +351,60 @@ def test_processed_check_refuses_a_non_clones_relation(tmp_path, monkeypatch):
     monkeypatch.setattr(jira_utils, "search_issues", lambda *a, **kw: pytest.fail("queried Jira"))
     with pytest.raises(ValueError, match="follows a clones relation, not 'parent'"):
         jira_utils.find_processed_rfe_ids("s", "u", "t", ["x"], desc=desc)
+
+
+# ── reviewers + sign-off ──────────────────────────────────────────────────────────────────
+
+
+def test_review_consumers_equal_the_4c6ae1c_values():
+    """What artifact_utils, lock_issues, apply_scores and remove_draft_prefix carried as literals on
+    main at 4c6ae1c, now derived from the descriptor: same values, same field order; #85 widened
+    the reviewer enums."""
+    frozen = json.loads((REPO / "tests" / "fixtures" / "strat-schemas-4c6ae1c.json").read_text(encoding="utf-8"))
+    # #85 added the provisional reviewer values: pending for each specialist, skipped for architecture.
+    for name, spec in frozen["strat-review"]["reviewers"]["fields"].items():
+        spec["enum"] += ["skipped", "pending"] if name == "architecture" else ["pending"]
+    for name in ("strat-task", "strat-review"):
+        assert artifact_utils.SCHEMAS[name] == frozen[name], name
+        assert list(artifact_utils.SCHEMAS[name]) == frozen["order"][name], f"{name} field order"
+    assert list(artifact_utils.SCHEMAS) == ["rfe-task", "rfe-review", "strat-task", "strat-review"]
+    assert artifact_utils.LABEL_CATEGORIES == {
+        "strat-creator-auto-created": "provenance",
+        "strat-creator-auto-refined": "provenance",
+        "strat-creator-auto-revised": "provenance",
+        "strat-creator-rubric-pass": "gate",
+        "strat-creator-needs-attention": "escalation",
+        "strat-creator-ignore": "exclusion",
+        "strat-creator-human-sign-off": "gate",
+    }
+    assert artifact_utils.label_category("strat-creator-processing") == "unknown"
+    assert lock_issues.PROCESSING_LABEL == "strat-creator-processing"
+    assert lock_issues.BLOCKING_LABELS == {
+        "strat-creator-processing", "strat-creator-needs-attention", "strat-creator-human-sign-off"}
+    assert lock_issues.STRAT_REQUIRED_LABEL == "strat-creator-auto-created"
+    assert lock_issues.STRAT_BLOCKING_LABELS == {"strat-creator-needs-attention", "strat-creator-human-sign-off"}
+    assert remove_draft_prefix.DRAFT_PREFIX == "[DRAFT] "
+    assert apply_scores.DIMENSIONS == ["feasibility", "testability", "scope", "architecture"]
+    columns = [apply_scores.COLUMNS[d] for d in apply_scores.DIMENSIONS]
+    assert columns == ["Feasibility", "Testability", "Scope", "Architecture"]
+    assert apply_scores.TOTAL_FIELD == "total" and apply_scores.MAX_TOTAL == 8
+    assert os.path.normpath(apply_scores.REVIEW_DIR_DEFAULT) == str(REPO / "artifacts" / "strat-reviews")
+
+
+def test_strat_schemas_follow_a_drop_in_type(tmp_path):
+    """A type with a different id grammar and one fewer dimension gets its own schemas."""
+    def mutate(data):
+        data["identity"]["local_prefix"] = "INIT-"
+        data["identity"]["local_id_pattern"] = r"^INIT-\d+$"
+        data["identity"]["jira"]["key_prefixes"] = ["RHAIINIT-"]
+        data["schema"]["review"]["score_fields"] = ["feasibility", "scope"]
+        data["schema"]["review"]["extra_fields"]["reviewers"]["fields"] = {
+            k: v for k, v in data["schema"]["review"]["extra_fields"]["reviewers"]["fields"].items()
+            if k in ("feasibility", "scope")}
+    root = _dropin(tmp_path, "initiative-strategy", mutate)
+    desc = type_registry.load(extra_roots=[root], env={}).get("initiative-strategy")
+    schemas = artifact_utils._strat_schemas(desc)
+    assert schemas["strat-task"]["strat_id"]["pattern"] == r"^(INIT-\d+|RHAIINIT-\d+)$"
+    assert list(schemas["strat-review"]["scores"]["fields"]) == ["feasibility", "scope", "total"]
+    assert list(schemas["strat-review"]["reviewers"]["fields"]) == ["feasibility", "scope"]
+    assert list(schemas["strat-task"]) == list(artifact_utils.SCHEMAS["strat-task"])
