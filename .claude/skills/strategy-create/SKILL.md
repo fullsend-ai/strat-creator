@@ -255,7 +255,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-tasks/RHA
     source_rfe=RHAIRFE-NNNN \
     jira_key=RHAISTRAT-NNNN \
     priority=<priority from Jira> \
-    status=Draft
+    status=Draft \
+    type=rfe-strategy
 ```
 
 5. Print `[IMPORT] RHAISTRAT-NNNN imported (cloned from RHAIRFE-NNNN)` for each imported STRAT.
@@ -304,7 +305,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-tasks/<fi
     source_rfe=<source_rfe_id> \
     jira_key=<RHAISTRAT_key_or_null> \
     priority=<priority> \
-    status=Draft
+    status=Draft \
+    type=rfe-strategy
 ```
 
 Use `jira_key=null` if Jira cloning was not done (dry-run mode).

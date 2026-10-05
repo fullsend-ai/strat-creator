@@ -242,3 +242,4 @@ def test_create_skill_binding_prose():
     jql = yaml.safe_load((REPO / D.get("discovery.settings")).read_text(encoding="utf-8"))["jql"]
     gate_values = jql["required_labels"] + jql["quality_labels"]
     assert D.get("discovery.settings") in create and not [v for v in gate_values if v in create], "strategy-create/SKILL.md Step 2a"
+    assert create.count(f"    type={D.name}\n") == 2, "strategy-create/SKILL.md: both strat-tasks set blocks stamp the type"

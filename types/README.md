@@ -11,7 +11,7 @@ from rfe-creator PR #172 §3.5.
 
 | type | source → derived | status |
 |---|---|---|
-| `rfe-strategy` | RHAIRFE Feature Request → RHAISTRAT Feature (Cloners link) | today's pipeline, byte-for-byte; every value is a live literal with its `file:line @ cc1ba8c` |
+| `rfe-strategy` | RHAIRFE Feature Request → RHAISTRAT Feature (Cloners link) | today's pipeline, plus the `type:` stamp on task files; every value is a live literal with its `file:line @ cc1ba8c` |
 
 ## Selecting a type
 
@@ -21,6 +21,18 @@ else the artifact's directory, else the ids' prefixes (a type's own key prefixes
 type owns is an error there. `list-rfe-ids.py --type` and the review and sign-off skills (`--type` in their
 arguments) pick the type today; `generate-report.py` and `extract-pipeline-data.py` list every type's files; the other
 scripts read `rfe-strategy`'s values, and a comment in each says how it would pick the type per call.
+
+## Self-describing artifacts
+
+Strategy task files say their type in frontmatter, `type: rfe-strategy` (rfe-creator PR 184's field name and enum
+rule). The writers stamp the files they write: the two `frontmatter.py set` blocks in strategy-create, and
+`pull_strategy.py`, which writes the local task file whole on every pull; nothing back-fills a file no writer touches.
+The field is appended after the fields the writer passes (schema defaults the CLI fills in follow it) and has no
+default. The schema allows only the type it belongs to, so a file cannot declare another one. Review files are not
+stamped: strategy-review and strategy-signoff attach them to Jira whole, and a checkout from before the stamp refuses a
+field it does not know. Nothing in the pipeline reads the stamp yet; `resolve()` (its CLI and tests) does, as its
+frontmatter rung, the one a per-file schema will use. There is no `tracker_ref`: `jira_key`
+(`identity.tracker_key_field`) already holds the tracker key.
 
 ## Adding a type
 

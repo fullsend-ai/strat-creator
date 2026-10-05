@@ -239,6 +239,7 @@ def pull_strategy(server, user, token, strat_key, local_dir=WORKSPACE, *, pipeli
         "priority": priority,
         "status": "Draft" if pipeline_rfe is not None else "Refined",
         "workflow": None if pipeline_rfe is not None else "local",
+        "type": _TYPE.name,
     }
     # The frontmatter helper preserves an existing body. Build a fresh file
     # so a refresh replaces the prior document rather than appending to it.

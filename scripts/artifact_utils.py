@@ -54,6 +54,16 @@ def _strat_schemas(desc):
                    "fields": {name: {"type": "int", "required": True} for name in score_names}},
     }
     review_schema.update(copy.deepcopy(review.get("extra_fields") or {}))
+    # rfe-creator PR 184's self-describing `type`, on strat-task only: optional with no default, so
+    # apply_defaults never writes it; a writer that passes it stamps the file it writes, and nothing
+    # back-fills the rest. Appended last, so the fields above keep their order. The enum is the
+    # conflict check: a file may declare only the type whose schema validates it. Review files stay
+    # unstamped: strategy-review and strategy-signoff attach them to Jira whole, and a checkout that
+    # predates the field refuses it.
+    # For now: no tracker_ref — identity.tracker_key_field (jira_key) is the tracker reference on
+    # every file that has a key; add rfe-creator's tracker_ref when a strat id can differ from its
+    # key (a submit/rename path) or a reader shared with rfe-creator needs that name.
+    task_schema["type"] = {"type": "string", "required": False, "enum": [desc.name]}
     return {"strat-task": task_schema, "strat-review": review_schema}
 
 
