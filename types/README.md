@@ -1,7 +1,10 @@
 # types/ — work-item type descriptors
 
 One directory per work type, `types/<name>/type.yaml`, validated against `types/_schema/type.schema.json`
-(`make lint` runs `scripts/validate_types.py`: schema, name/directory match, one tracker binding per type). The
+(`make lint` runs `scripts/validate_types.py`: schema, name/directory match, one tracker binding per type). Every
+script that imports `jira_utils`, `artifact_utils` or `type_registry` (discovery, lock, the Jira, frontmatter and
+report scripts) loads every descriptor when it starts, so one malformed descriptor stops them all, rfe-strategy's
+jobs included; strat-pipeline runs main as it is, so `make lint` must pass before a descriptor change merges. The
 vocabulary is rfe-creator's — the stations share configuration vocabulary, not
 code — and the strat-specific blocks (`discovery`, `workspace`, `files`, `summary_prefix`,
 `label_categories`, `status_enum`, `verdict_rules`, `lock`, `body_overflow`, `section_ownership`) use the key names
