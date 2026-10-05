@@ -40,10 +40,17 @@ frontmatter rung, the one a per-file schema will use. There is no `tracker_ref`:
 2. Change `identity` (the tracker binding must be unique across types), `inputs[0]` (upstream type, relation,
    skip_if), `discovery.settings` (a settings file in `config/pipeline-settings.yaml`'s shape: the intake gate, skip
    lists and batch size) and whatever the type does differently. Everything else is the station's — keep it.
-3. `make lint`, then `make test-unit`.
-4. Select it: `--type <name>`, or ids it owns.
-5. Not every value is read yet: `tests/test_type_registry_pins.py` lists the fields scripts still carry as literals.
-   Until that consumer migrates, a new type's value for the field has no effect.
+3. `make lint`, then `make test-unit`. `tests/test_type_registry.py` lists the shipped types: add yours to
+   `SHIPPED_ALL` and bump the counts in `test_shipped_types` and `test_gate1_passes_on_the_shipped_types`.
+4. Select it with `--type <name>`: `list-rfe-ids.py` and the review and sign-off skills take it. No pipeline step
+   resolves a type from ids or from a file's `type:` yet; `python3 scripts/type_registry.py resolve` shows what they
+   would resolve to.
+5. Most scripts read `rfe-strategy`'s values, not the selected type's (see Selecting a type), and
+   `tests/test_type_registry_pins.py` lists the values that scripts, skills and `CLAUDE.md` still carry as literals.
+   Until a consumer picks the type per call, a new type's value has no effect there. The strategy-file schemas are
+   one of them: `frontmatter.py` validates every `strat-tasks/` and `strat-reviews/` file against `rfe-strategy`'s, so
+   an id outside its grammar is refused and a file cannot declare the new type until it picks the schema per file
+   (the comment in `artifact_utils.py`).
 
 ## Inspecting
 
