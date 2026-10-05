@@ -1,4 +1,5 @@
-"""Tests for list-rfe-ids.py config mode (no Jira connection)."""
+"""Tests for list-rfe-ids.py: config and descriptor modes (no Jira connection), and same-ticket
+discovery against the jira-emulator."""
 import os
 import subprocess
 import sys
@@ -154,3 +155,31 @@ class TestTypeMode:
         assert result.returncode != 0
         assert result.stderr.startswith("TYPE RESOLVED: initiative-strategy (--type)\n")
         assert 'JQL: project = RHOAIENG AND (labels = "initiative-autofix-rubric-pass"' in result.stderr
+
+
+class TestSameTicketDiscovery:
+    """initiative-strategy runs on the Initiative itself (relation self): the intake gate selects
+    rubric-passed Initiatives without the lock, and "already processed" is an Initiative carrying a
+    skip_if label. rfe-strategy's discovery on the same Jira is unchanged."""
+
+    def test_initiatives(self, jira):
+        gate = "initiative-autofix-rubric-pass"
+        jira.create("RHOAIENG-1", "Fresh", "d", labels=[gate], issue_type="Initiative")
+        jira.create("RHOAIENG-2", "Reviewed", "d", labels=[gate, "strat-creator-rubric-pass"], issue_type="Initiative")
+        jira.create("RHOAIENG-3", "Locked", "d", labels=[gate, "strat-creator-processing"], issue_type="Initiative")
+        jira.create("RHAIRFE-4", "An RFE", "d", labels=["strat-creator-3.5", "rfe-creator-autofix-rubric-pass"])
+        env = dict(os.environ, JIRA_SERVER=jira.url, JIRA_USER="admin", JIRA_TOKEN="admin")
+
+        result = _run(["--jql-default", "--type", "initiative-strategy", "--verbose"], env=env)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.split() == ["RHOAIENG-1"]
+        assert "JQL returned 2 RFE(s)" in result.stderr  # RHOAIENG-3 is gated out by its lock
+        assert "excluding RHOAIENG-2" in result.stderr
+
+        result = _run(["--jql-default", "--type", "initiative-strategy", "--include-processed"], env=env)
+        assert result.stdout.split() == ["RHOAIENG-1", "RHOAIENG-2"]
+
+        result = _run(["--jql-default"], env=env)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.split() == ["RHAIRFE-4"]
+        assert 'JQL: project = RHAIRFE AND (labels = "strat-creator-3.5" OR' in result.stderr

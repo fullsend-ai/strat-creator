@@ -321,11 +321,21 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
     one was created as a replacement.
 
     ``desc`` is the work type (default rfe-strategy): ``strat_project`` defaults to its
-    identity.jira.project and its inputs[0].relation is the link walked.
-    For now: a clones relation only; any other relation is refused before Jira is queried, until
+    identity.jira.project and its inputs[0].relation is the link walked. A ``self`` relation (the
+    strategy lives on the input ticket) has no link to walk: processed is every input-project issue
+    that carries a skip label, from one search.
+    For now: clones and self only; any other relation is refused before Jira is queried, until
     that type's "already processed" rule is decided.
     """
     d = desc or _TYPE
+    if d.get("inputs.0.relation.kind") == "self":
+        # For now: skip labels only, no status clause (excluded_strat_statuses is empty in
+        # config/initiative-settings.yaml); add one when a self type sets statuses.
+        if not skip_labels:
+            return set()
+        label_clause = " OR ".join(f'labels = "{label}"' for label in skip_labels)
+        jql = f"project = {d.get('inputs.0.jira.project')} AND ({label_clause})"
+        return {issue["key"] for issue in search_issues(server, user, token, jql, fields=["key"])}
     if d.get("inputs.0.relation.kind") != "clones":
         raise ValueError(f"{d.name}: the already-processed check follows a clones relation, not "
                          f"{d.get('inputs.0.relation.kind')!r}; pass --include-processed")

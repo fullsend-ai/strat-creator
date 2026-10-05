@@ -477,7 +477,7 @@ def test_strat_schemas_follow_a_drop_in_type(tmp_path):
 # ── the twin ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_initiative_strategy_descriptor():
+def test_initiative_strategy_descriptor(monkeypatch):
     twin = REG.get(TWIN)
     rfe = REG.get(SHIPPED)
     assert twin.get("identity.jira.project") == "RHOAIENG" and twin.write_prefix == "RHOAIENG-"
@@ -500,8 +500,14 @@ def test_initiative_strategy_descriptor():
     assert type_registry.resolve(REG, explicit_type=TWIN, env={}).desc is twin
     assert type_registry.resolve(REG, ids=["RHOAIENG-1"], env={}).line() == f"TYPE RESOLVED: {TWIN} (id grammar)"
     assert type_registry.resolve(REG, ids=["RHAIRFE-1"], env={"CI": "true"}).type_name == SHIPPED
-    with pytest.raises(ValueError, match="not 'self'"):  # its already-processed rule is not decided yet
-        jira_utils.find_processed_rfe_ids("s", "u", "t", ["x"], desc=twin)
+    # Same ticket: processed = the Initiatives that carry a skip label, from one search on RHOAIENG.
+    searches = []
+    monkeypatch.setattr(jira_utils, "search_issues",
+                        lambda s, u, t, jql, fields=None: searches.append((jql, fields)) or [{"key": "RHOAIENG-2"}])
+    skip = yaml.safe_load((REPO / twin.get("discovery.settings")).read_text(encoding="utf-8"))["skip_labels"]
+    assert jira_utils.find_processed_rfe_ids("s", "u", "t", skip, desc=twin) == {"RHOAIENG-2"}
+    assert searches == [('project = RHOAIENG AND (labels = "strat-creator-rubric-pass" OR labels = '
+                         '"strat-creator-needs-attention" OR labels = "strat-creator-processing")', ["key"])]
 
 
 # ── the Jira scripts ──────────────────────────────────────────────────────────────────────
