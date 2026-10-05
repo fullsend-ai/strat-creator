@@ -463,3 +463,21 @@ class TestMainIntegration:
         assert data["scores"]["scope"] == 2
         assert data["scores"]["architecture"] == 1
         assert data["scores"]["total"] == 6
+
+    def test_initiative_strategy_ids_use_their_types_review_schema(self, tmp_path):
+        """A RHOAIENG- review file validates against initiative-strategy's review schema (its file name's id)."""
+        review_dir = tmp_path / "artifacts" / "strat-reviews"
+        review_dir.mkdir(parents=True)
+        csv_path = tmp_path / "scores.csv"
+        _write_scores_csv(str(csv_path), [
+            {
+                "ID": "RHOAIENG-80", "Feasibility": "2", "Testability": "2",
+                "Scope": "1", "Architecture": "2", "Total": "7",
+                "Verdict": "APPROVE", "Needs_Attention": "false",
+            },
+        ])
+        result = _run_apply_scores(tmp_path, csv_path, review_dir)
+        assert result.returncode == 0, result.stderr
+        data = _read_review_frontmatter(str(review_dir / "RHOAIENG-80-review.md"))
+        assert data["strat_id"] == "RHOAIENG-80"
+        assert data["scores"]["total"] == 7

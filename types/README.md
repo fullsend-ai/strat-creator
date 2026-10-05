@@ -29,11 +29,13 @@ Strategy task files say their type in frontmatter, `type: rfe-strategy` (rfe-cre
 rule). The writers stamp the files they write: the two `frontmatter.py set` blocks in strategy-create, and
 `pull_strategy.py`, which writes the local task file whole on every pull; nothing back-fills a file no writer touches.
 The field is appended after the fields the writer passes (schema defaults the CLI fills in follow it) and has no
-default. The schema allows only the type it belongs to, so a file cannot declare another one. Review files are not
+default. Each type's schema allows only its own name and refuses ids and fields of another type. Review files are not
 stamped: strategy-review and strategy-signoff attach them to Jira whole, and a checkout from before the stamp refuses a
-field it does not know. Nothing in the pipeline reads the stamp yet; `resolve()` (its CLI and tests) does, as its
-frontmatter rung, the one a per-file schema will use. There is no `tracker_ref`: `jira_key`
-(`identity.tracker_key_field`) already holds the tracker key.
+field it does not know. `frontmatter.py` and the `artifact_utils.py` read/write helpers read the stamp: a strategy
+file validates against its own type's schema, picked by its `type:`, else by the id its file name starts with
+(`RHOAIENG-1.md`, `RHOAIENG-1-review.md`). `rfe-strategy`'s schemas keep the names `strat-task` and `strat-review`;
+every other type's are `<type>-task` and `<type>-review` (rfe-creator's names, `frontmatter.py schema <name>`). There
+is no `tracker_ref`: `jira_key` (`identity.tracker_key_field`) already holds the tracker key.
 
 ## Adding a type
 
@@ -43,15 +45,13 @@ frontmatter rung, the one a per-file schema will use. There is no `tracker_ref`:
    lists and batch size) and whatever the type does differently. Everything else is the station's — keep it.
 3. `make lint`, then `make test-unit`. `tests/test_type_registry.py` lists the shipped types: add yours to
    `SHIPPED_ALL` and bump the counts in `test_shipped_types` and `test_gate1_passes_on_the_shipped_types`.
-4. Select it with `--type <name>`: `list-rfe-ids.py` and the review and sign-off skills take it. No pipeline step
-   resolves a type from ids or from a file's `type:` yet; `python3 scripts/type_registry.py resolve` shows what they
-   would resolve to.
+4. Select it with `--type <name>`: `list-rfe-ids.py` and the review and sign-off skills take it. Only the
+   strategy-file schemas follow a file's `type:` or its id (Self-describing artifacts);
+   `python3 scripts/type_registry.py resolve` shows what the other steps would resolve to.
 5. Most scripts read `rfe-strategy`'s values, not the selected type's (see Selecting a type), and
    `tests/test_type_registry_pins.py` lists the values that scripts, skills and `CLAUDE.md` still carry as literals.
    Until a consumer picks the type per call, a new type's value has no effect there. The strategy-file schemas are
-   one of them: `frontmatter.py` validates every `strat-tasks/` and `strat-reviews/` file against `rfe-strategy`'s, so
-   an id outside its grammar is refused and a file cannot declare the new type until it picks the schema per file
-   (the comment in `artifact_utils.py`).
+   the exception: each type's come from its own descriptor (`identity`, `inputs[0].source_ref_field`, `schema`).
 
 ## Inspecting
 

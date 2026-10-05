@@ -17,9 +17,10 @@ import yaml
 # The work-item type whose schemas and labels this module serves: the default, rfe-strategy. The
 # strat-task / strat-review schemas and the label vocabulary derive from its
 # descriptor; the rfe-* schemas are the upstream artifacts this station reads and stay literal.
-# For now: one type's schemas; another type's files validate once a caller picks the descriptor per
-# file (type_registry.resolve(artifact=path)), with that type's first production caller.
-_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+# Every other registered type's strategy schemas sit beside them under rfe-creator's names,
+# <type>-task / <type>-review, and a strategy file validates against its own type's (typed_schema).
+_TYPES = type_registry.load()
+_TYPE = _TYPES.get(type_registry.LEGACY_DEFAULT_TYPE)
 _LABELS = _TYPE.labels
 
 
@@ -193,6 +194,33 @@ SCHEMAS = {
     },
 }
 SCHEMAS.update(_strat_schemas(_TYPE))
+SCHEMAS.update({f"{desc.name}-{name[len('strat-'):]}": spec
+                for desc in _TYPES if desc is not _TYPE for name, spec in _strat_schemas(desc).items()})
+
+
+def typed_schema(schema_type, path, data=None):
+    """The schema a strategy file at ``path`` validates against. ``strat-task`` and ``strat-review``
+    name the kind; the file's type picks the schema: its frontmatter ``type:`` (in ``data``, else in
+    the file on disk), else the type that owns the id its file name starts with
+    (``TypeRegistry.detect``: ``RHOAIENG-1.md`` and ``RHOAIENG-1-review.md`` are initiative-strategy).
+    rfe-strategy, a type with no schemas here and every other name keep ``schema_type``, so an
+    rfe-strategy file validates exactly as before.
+    For now: the stamp, then the file name — not resolve()'s whole ladder (no --type, no directory
+    rung: every type shares strat-tasks/ and strat-reviews/); add rungs when a file name stops
+    carrying its id."""
+    if schema_type not in ("strat-task", "strat-review"):
+        return schema_type
+    if data is None:
+        try:
+            data = read_frontmatter(path)[0] if os.path.isfile(path) else {}
+        except (yaml.YAMLError, UnicodeDecodeError, OSError):
+            data = {}  # no signal; the read or write that follows reports the file, as before
+    name = data.get("type")
+    if not name:
+        desc = _TYPES.detect(os.path.splitext(os.path.basename(path))[0])
+        name = desc.name if desc else _TYPE.name
+    typed = f"{name}-{schema_type[len('strat-'):]}"
+    return typed if typed in SCHEMAS else schema_type
 
 
 # ─── Label Derivation ────────────────────────────────────────────────────────────
@@ -437,6 +465,7 @@ def read_frontmatter_validated(path, schema_type):
     if not data:
         raise ValidationError(f"No frontmatter found in {path}")
 
+    schema_type = typed_schema(schema_type, path, data)
     _migrate_fields(data, schema_type)
     apply_defaults(data, schema_type)
     errors = validate(data, schema_type)
@@ -463,6 +492,7 @@ def write_frontmatter(path, data, schema_type):
     Raises:
         ValidationError: if data fails schema validation
     """
+    schema_type = typed_schema(schema_type, path, data)
     _migrate_fields(data, schema_type)
     apply_defaults(data, schema_type)
     errors = validate(data, schema_type)
@@ -509,6 +539,7 @@ def update_frontmatter(path, updates, schema_type):
         else:
             data[key] = value
 
+    schema_type = typed_schema(schema_type, path, data)
     _migrate_fields(data, schema_type)
     apply_defaults(data, schema_type)
     errors = validate(data, schema_type)

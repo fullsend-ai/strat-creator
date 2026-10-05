@@ -326,3 +326,55 @@ class TestBatchRead:
         result = run_fm(tmp_path, "batch-read", path)
         data = json.loads(result.stdout)
         assert data[0]["_file"] == path
+
+
+# ─── per-file schemas ─────────────────────────────────────────────────────────
+
+
+class TestPerTypeSchema:
+    """A strategy file validates against its own type's schema: its frontmatter `type:`, else the id its
+    file name starts with. rfe-strategy keeps strat-task / strat-review; initiative-strategy's are
+    initiative-strategy-task / initiative-strategy-review."""
+
+    TWIN_TASK = ["strat_id=RHOAIENG-1", "title=Initiative", "source_initiative=RHOAIENG-1",
+                 "jira_key=RHOAIENG-1", "priority=Major", "status=Draft"]
+
+    def test_initiative_task_files(self, tmp_path):
+        path = "artifacts/strat-tasks/RHOAIENG-1.md"
+        run_fm(tmp_path, "set", path, *self.TWIN_TASK, "type=initiative-strategy")
+        run_fm(tmp_path, "set", path, "status=Refined", "refine_count=1")
+        data = json.loads(run_fm(tmp_path, "read", path).stdout)
+        assert (data["source_initiative"], data["status"], data["type"]) == (
+            "RHOAIENG-1", "Refined", "initiative-strategy")
+        # an unstamped local draft: its ISTRAT- id names the type
+        run_fm(tmp_path, "set", "artifacts/strat-tasks/ISTRAT-2.md", "strat_id=ISTRAT-2", "title=Draft",
+               "source_initiative=INIT-3", "priority=Major", "status=Draft")
+
+    def test_the_stamp_decides_before_the_file_name(self, tmp_path):
+        path = "artifacts/strat-tasks/draft.md"
+        run_fm(tmp_path, "set", path, *self.TWIN_TASK, "type=initiative-strategy")
+        # source_initiative is an initiative-only field: this set passes only if the stamp is read from disk
+        run_fm(tmp_path, "set", path, "status=Ready", "source_initiative=RHOAIENG-2")
+        data = json.loads(run_fm(tmp_path, "read", path).stdout)
+        assert (data["status"], data["source_initiative"]) == ("Ready", "RHOAIENG-2")
+        result = run_fm(tmp_path, "set", "artifacts/strat-tasks/RHOAIENG-2.md", *self.TWIN_TASK,
+                        "type=rfe-strategy", check=False)
+        assert result.returncode == 1
+        assert "unknown field 'source_initiative' for schema 'strat-task'" in result.stderr
+
+    def test_each_type_refuses_the_others_fields(self, tmp_path):
+        result = run_fm(tmp_path, "set", "artifacts/strat-tasks/RHOAIENG-1.md", "source_rfe=RHAIRFE-1",
+                        check=False)
+        assert result.returncode == 1
+        assert "unknown field 'source_rfe' for schema 'initiative-strategy-task'" in result.stderr
+        result = run_fm(tmp_path, "set", "artifacts/strat-tasks/RHAISTRAT-5.md", "source_initiative=RHOAIENG-1",
+                        check=False)
+        assert result.returncode == 1
+        assert "unknown field 'source_initiative' for schema 'strat-task'" in result.stderr
+
+    def test_schema_prints_the_initiative_schemas(self, tmp_path):
+        task = run_fm(tmp_path, "schema", "initiative-strategy-task").stdout
+        assert "source_initiative" in task and "source_rfe" not in task
+        assert r"^(ISTRAT-\d+|RHOAIENG-\d+)$" in task and "- initiative-strategy" in task
+        review = run_fm(tmp_path, "schema", "initiative-strategy-review").stdout
+        assert "reviewers" in review and r"^(ISTRAT-\d+|RHOAIENG-\d+)$" in review

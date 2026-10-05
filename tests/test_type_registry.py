@@ -281,6 +281,27 @@ def test_gate1_findings(tmp_path, capsys):
     assert "does not match the directory name 'renamed'" in out
 
 
+def test_gate1_requires_what_the_importers_read(tmp_path, capsys):
+    """artifact_utils reads schema.task and inputs[0].source_ref_field at import, so gate 1 must
+    refuse a descriptor without them rather than let every importer crash."""
+    def drop_task_and_ref(data):
+        del data["schema"]["task"]
+        del data["inputs"][0]["source_ref_field"]
+
+    def drop_inputs(data):
+        data["inputs"] = []
+
+    root = _dropin(tmp_path, "no-task-strategy", drop_task_and_ref)
+    assert validate_types.main(["--root", str(root)]) == 1
+    out = capsys.readouterr().out
+    assert "'task' is a required property" in out
+    assert "'source_ref_field' is a required property" in out
+
+    root = _dropin(tmp_path / "b", "no-input-strategy", drop_inputs)
+    assert validate_types.main(["--root", str(root)]) == 1
+    assert "[] should be non-empty" in capsys.readouterr().out
+
+
 def test_gate1_binding_uniqueness(tmp_path):
     _dropin(tmp_path, "a-strategy")
     _dropin(tmp_path, "b-strategy")  # same (RHAISTRAT, Feature) pair
@@ -380,7 +401,8 @@ def test_review_consumers_equal_the_4c6ae1c_values():
     for name in ("strat-task", "strat-review"):
         assert artifact_utils.SCHEMAS[name] == frozen[name], name
         assert list(artifact_utils.SCHEMAS[name]) == frozen["order"][name], f"{name} field order"
-    assert list(artifact_utils.SCHEMAS) == ["rfe-task", "rfe-review", "strat-task", "strat-review"]
+    assert list(artifact_utils.SCHEMAS) == [
+        "rfe-task", "rfe-review", "strat-task", "strat-review", f"{TWIN}-task", f"{TWIN}-review"]
     assert artifact_utils.LABEL_CATEGORIES == {
         "strat-creator-auto-created": "provenance",
         "strat-creator-auto-refined": "provenance",
@@ -407,8 +429,8 @@ def test_review_consumers_equal_the_4c6ae1c_values():
 def test_type_stamp(tmp_path):
     """rfe-creator PR 184's self-describing `type`, on strategy task files: written only when a writer
     passes it (no default, no back-fill), appended after the fields given, refused when it names
-    another type, read by resolve()'s frontmatter rung, and stripped with the frontmatter before a
-    push, so nothing new reaches Jira."""
+    another type (that type's schema refuses the file), read by resolve()'s frontmatter rung, and
+    stripped with the frontmatter before a push, so nothing new reaches Jira."""
     new_task = ["strat_id=RHAISTRAT-500", "title=New strat", "source_rfe=RHAIRFE-101",
                 "jira_key=RHAISTRAT-500", "priority=Major", "status=Draft"]  # strategy-create's set
 
@@ -425,9 +447,9 @@ def test_type_stamp(tmp_path):
     stamped = typed.read_text(encoding="utf-8")
     assert "type:" not in before
     assert stamped == before.replace("status: Draft\n", f"status: Draft\ntype: {SHIPPED}\n", 1)
-    for other in (TWIN, "bogus"):
+    for other, reason in ((TWIN, "Unknown field: source_rfe"), ("bogus", f"type: 'bogus' not in ['{SHIPPED}']")):
         _, run = fm_set("typed", f"type={other}")
-        assert run.returncode == 1 and f"type: '{other}' not in ['{SHIPPED}']" in run.stderr, other
+        assert run.returncode == 1 and reason in run.stderr, other
     assert typed.read_text(encoding="utf-8") == stamped
     assert type_registry.resolve(REG, artifact=typed, env={"CI": "true"}).rung == "frontmatter type"
     assert jira_utils.strip_metadata(stamped) == jira_utils.strip_metadata(before)
@@ -468,6 +490,9 @@ def test_initiative_strategy_descriptor():
         'AND (labels NOT IN ("strat-creator-processing") OR labels IS EMPTY) AND status NOT IN ("Closed", "Resolved") '
         'ORDER BY key ASC')
     schemas = artifact_utils._strat_schemas(twin)
+    assert (artifact_utils.SCHEMAS[f"{TWIN}-task"], artifact_utils.SCHEMAS[f"{TWIN}-review"]) == (
+        schemas["strat-task"], schemas["strat-review"])
+    assert schemas["strat-task"]["type"]["enum"] == [TWIN] and "type" not in schemas["strat-review"]
     assert schemas["strat-task"]["strat_id"]["pattern"] == r"^(ISTRAT-\d+|RHOAIENG-\d+)$"
     assert "source_initiative" in schemas["strat-task"] and "source_rfe" not in schemas["strat-task"]
     assert list(schemas["strat-task"])[:4] == ["strat_id", "title", "source_initiative", "jira_key"]

@@ -21,9 +21,9 @@ lists the primary root, then each extra root; the CLI has no ``candidates`` verb
 ``--extra-roots`` and no ``list --json``.
 
 Status: ``jira_utils.py`` (identity, inputs[0]),
-``list-rfe-ids.py`` (discovery.settings), ``artifact_utils.py`` (the strat schemas, the label
-vocabulary), ``lock_issues.py`` (pipeline.lock, the lock-strat relation walk), ``apply_scores.py``
-(dimensions, dirs), ``remove_draft_prefix.py`` (summary_prefix) and the Jira scripts
+``list-rfe-ids.py`` (discovery.settings), ``artifact_utils.py`` (every type's strat schemas, picked
+per file; the label vocabulary), ``lock_issues.py`` (pipeline.lock, the lock-strat relation walk),
+``apply_scores.py`` (dimensions, dirs), ``remove_draft_prefix.py`` (summary_prefix) and the Jira scripts
 ``pull_strategy.py``, ``push_strategy.py``, ``clone_issue.py`` and ``find_strat_for_rfe.py`` (the
 relation, the parent gate, copy fields, labels, dirs, workspace, the overflow attachment) read it.
 ``list-rfe-ids.py --type`` picks the type through ``resolve()``; ``generate-report.py`` and

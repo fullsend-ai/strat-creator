@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/opendatahub-io/strat-creator/types/_schema/type.schema.json",
   "title": "strat-creator work-item type descriptor (types/<type>/type.yaml), schema_version 1",
-  "description": "strat-creator's copy of rfe-creator's descriptor contract (AISDLC-60; the stations share configuration vocabulary, not code — this file is copied, not imported, and every key that names the same concept keeps rfe-creator's name). Additive strat-specific blocks: discovery, workspace, files, identity.tracker_key_field, conventions.{summary_prefix,label_categories}, schema.task.status_enum, schema.review.{total_field,recommendation_enum,verdict_rules}, pipeline.{lock,body_overflow,section_ownership}, inputs[].{jira,parent_gate,removed_context_marker}. The required sets are narrower where strat-creator has no consumer today: reporting.{item_key,before_score_name_map}, eval.mlflow_experiment, pipeline.{poll_prefix,state_prefix}, conventions.{type_label,removed_context_preamble}. Everything below this sentence is rfe-creator's text (ed197de) unless marked strat-creator. One descriptor per work-item type. It is the single source of every type-keyed literal the pipeline consumes (design-proposals/work-item-types-unified.md section 3.2; worked example section 8.2). At PR-1 the descriptors are inert: scripts/ do not import the registry yet and tests/ pin every live registry dict against descriptor projections. The vocabulary is closed (additionalProperties false) except for data-keyed maps whose KEYS are data rather than vocabulary: conventions.labels, schema.task.extra_fields, schema.review.extra_fields, eval.thresholds (Q20), plus the value-typed maps reporting.criterion_labels / criterion_short_labels / before_score_name_map, schema.task.priority.map_to_tracker and inputs[].gate.any_of[].fields. Fields marked RESERVED have no consumer in rfe-creator at v1; they exist so sibling pipelines' descriptors need no migration and so the shape is frozen before schema_version 1 is frozen. Evolution inside a major version is additive only.",
+  "description": "strat-creator's copy of rfe-creator's descriptor contract (AISDLC-60; the stations share configuration vocabulary, not code — this file is copied, not imported, and every key that names the same concept keeps rfe-creator's name). Additive strat-specific blocks: discovery, workspace, files, identity.tracker_key_field, conventions.{summary_prefix,label_categories}, schema.task.status_enum, schema.review.{total_field,recommendation_enum,verdict_rules}, pipeline.{lock,body_overflow,section_ownership}, inputs[].{jira,parent_gate,removed_context_marker}. The required sets are narrower where strat-creator has no consumer today: reporting.item_key, eval.mlflow_experiment, pipeline.{poll_prefix,state_prefix}, conventions.{type_label,removed_context_preamble}. Wider where every strat-creator importer reads the key: inputs (at least one), inputs[].source_ref_field, schema.task. Everything below this sentence is rfe-creator's text (ed197de) unless marked strat-creator. One descriptor per work-item type. It is the single source of every type-keyed literal the pipeline consumes (design-proposals/work-item-types-unified.md section 3.2; worked example section 8.2). At PR-1 the descriptors are inert: scripts/ do not import the registry yet and tests/ pin every live registry dict against descriptor projections. The vocabulary is closed (additionalProperties false) except for data-keyed maps whose KEYS are data rather than vocabulary: conventions.labels, schema.task.extra_fields, schema.review.extra_fields, eval.thresholds (Q20), plus the value-typed maps reporting.criterion_labels / criterion_short_labels / before_score_name_map, schema.task.priority.map_to_tracker and inputs[].gate.any_of[].fields. Fields marked RESERVED have no consumer in rfe-creator at v1; they exist so sibling pipelines' descriptors need no migration and so the shape is frozen before schema_version 1 is frozen. Evolution inside a major version is additive only.",
   "$comment": "Deployment binding override (design section 3.2.1) — RESERVED in strat-creator: no consumer at PR-1, the text is kept so the two stations' vocabularies match. identity.<tracker> is the DEFAULT binding. type_registry.Descriptor.binding() computes the EFFECTIVE binding by overlaying the type-scoped environment variables STRAT_CREATOR_BINDING_<TYPE>_{PROJECT,ISSUE_TYPE,LOCAL_PREFIX} (TYPE upper-cased) or, in interactive runs only, a workspace strat-creator.yaml `bindings.<type>.<tracker>` block read from an explicit --workspace-root; a bare JIRA_PROJECT/JIRA_ISSUE_TYPE is shorthand for the RESOLVED type only. Overridable fields are binding-only: project, issue_type, key_prefixes (write prefix derived as '<PROJECT>-' when project is overridden; the descriptor prefixes are kept as read prefixes), query_default (re-rendered by the adapter), link types, state_map, parent_key_patterns, optionally local_prefix. NEVER judgement content, dirs, schema, rubric, eval. Rules: (a) zero-config default preserved, no required environment variable; (b) the section 3.3 uniqueness lint runs on EFFECTIVE bindings, and no type's local_prefix stem may equal any effective project key; (c) resolve prints the override; (d) the dry-run sentinel is binding-derived (<PROJECT>-DRY); (e) run reports and snapshot metadata record the effective binding; (f) the Jira adapter contributes a generic key grammar to candidates() as a PROVISIONAL rung AFTER every type's local_id_pattern and key_prefixes (detect() stays a descriptor-only router); (g) TRUST BOUNDARY: in headless and CI runs an override is honoured only from the environment (protected CI variables), never from a workspace file the checkout could carry; the effective (project, issue_type) pair is printed at resolve time and checked for OWNERSHIP before the first tracker write (assert_registered_binding: the pair must not equal any other registered type's identity - an rfe override that selects the initiative pair is rejected, while a pair no type registers is allowed); an untrusted source or a pair another type owns is a hard failure, not a warning. DRAFT- is not adopted at v1.",
   "type": "object",
   "required": [
@@ -18,7 +18,8 @@
     "pipeline",
     "snapshot",
     "reporting",
-    "eval"
+    "eval",
+    "inputs"
   ],
   "additionalProperties": false,
   "properties": {
@@ -49,6 +50,7 @@
     "inputs": {
       "type": "array",
       "default": [],
+      "minItems": 1,
       "items": { "$ref": "#/$defs/input" },
       "description": "RESERVED (design section 3.7). How items of this type are DERIVED from an upstream type. Two requesters exist (strat-creator <- rfe via Cloners; epic-creator <- strategy via parent), which satisfies the second-requester rule for the SCHEMA; rfe-creator ships NO gate evaluator."
     },
@@ -474,7 +476,7 @@
     },
     "schema_block": {
       "type": "object",
-      "required": ["review"],
+      "required": ["task", "review"],
       "additionalProperties": false,
       "properties": {
         "task": {
@@ -840,7 +842,7 @@
     },
     "input": {
       "type": "object",
-      "required": ["from_type", "relation"],
+      "required": ["from_type", "relation", "source_ref_field"],
       "additionalProperties": false,
       "properties": {
         "from_type": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "Upstream type name (may be a peer pipeline's type, not necessarily registered here)." },
