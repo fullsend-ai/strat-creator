@@ -13,10 +13,6 @@ silently. Citations are file:line on main at cc1ba8c (the baseline, not the work
 line numbers). Values pinned by SOURCE FORM (a regex over a script's text) are the ones a script
 holds inside a function body or an argparse default; they migrate like the rest.
 
-Grandfathered, recorded on purpose:
-  * pull_strategy.py:41 spells the attachment placeholder {strat_key} where push_strategy.py:51
-    spells {issue_key}; the descriptor carries push's spelling and the pin renders pull's.
-
 Retired (the consumer reads the registry now, so the pin would be a tautology):
   * scripts/jira_utils.py: build_jql_from_config's default project (:206), the
     Cloners helpers (:251 link_type, :256 key prefix), find_processed_rfe_ids strat_project (:287)
@@ -28,6 +24,12 @@ Retired (the consumer reads the registry now, so the pin would be a tautology):
     compute_strat_labels), lock_issues (pipeline.lock), apply_scores (dimensions, dirs.reviews) and
     remove_draft_prefix (summary_prefix) read the descriptor. Equality with the 4c6ae1c values is
     tests/test_type_registry.py::test_review_consumers_equal_the_4c6ae1c_values (+ tests/fixtures).
+  * The Jira scripts: pull_strategy (the relation walk's link type and input prefix, the
+    attachment, now in push's {issue_key} spelling, the workspace.root default),
+    find_strat_for_rfe (link type, RHAISTRAT- prefix), clone_issue (the whole source-form pin:
+    parent gate, issue type, copy fields, [DRAFT] prefix) and push_strategy (attachment) read the
+    descriptor, as do their unpinned literals and lock_issues' lock-strat walk. Equality with the
+    4c6ae1c literals is tests/test_type_registry.py::test_jira_scripts_equal_the_4c6ae1c_literals.
 """
 
 import hashlib
@@ -94,33 +96,13 @@ def test_processed_lookup_override_rule():
 
 def test_pull_strategy_source_side():
     source = inspect.getsource(pull_strategy)
-    assert f'"{D.get("inputs.0.relation.link_type")}"' in source, "pull_strategy.py:59"
-    assert f'startswith("{D.get("inputs.0.jira.key_prefixes.0")}")' in source, "pull_strategy.py:64"
-    pin(D.get("pipeline.body_overflow.attachment").replace("{issue_key}", "{strat_key}"), pull_strategy.STRATEGY_ATTACHMENT_TEMPLATE, "pipeline.body_overflow.attachment — pull_strategy.py:41 (grandfathered placeholder name)")
-    pin(D.get("workspace.root"), inspect.signature(pull_strategy.pull_strategy).parameters["local_dir"].default, "workspace.root — pull_strategy.py:86")
-    assert f'"workflow": None if pipeline_rfe is not None else "{D.get("workspace.root")}"' in source, \
-        "pull_strategy.py workflow=local (a pipeline import has none)"
+    assert f'"workflow": None if pipeline_rfe is not None else "{D.get("workspace.root")}"' in source, "pull_strategy.py workflow=local (a pipeline import has none)"
     assert D.get("companions.comments") is True and "-comments.md" in source, "companions.comments — pull_strategy.py:222-229"
 
 
 def test_find_strat_for_rfe_source_form():
     source = src("scripts/find_strat_for_rfe.py")
-    assert f'"{D.get("inputs.0.relation.link_type")}"' in source, "find_strat_for_rfe.py:42"
-    assert f'startswith("{D.write_prefix}")' in source, "find_strat_for_rfe.py:47"
     assert '("outwardIssue", "inwardIssue")' in source, "both directions searched — find_strat_for_rfe.py:44"
-
-
-def test_clone_issue_source_form():
-    source = src("scripts/clone_issue.py")
-    parent = D.get("inputs.0.parent_gate")
-    assert f'startswith("{parent["key_prefixes"][0]}")' in source, "inputs.0.parent_gate.key_prefixes — clone_issue.py:43"
-    assert f'!= "{parent["issue_type"]}"' in source, "inputs.0.parent_gate.issue_type — clone_issue.py:58"
-    assert f'== "{parent["statuses_not"][0]}"' in source, "inputs.0.parent_gate.statuses_not — clone_issue.py:64"
-    assert f'default="{D.get("identity.jira.issue_type")}"' in source, "identity.jira.issue_type — clone_issue.py:79"
-    for field in D.get("inputs.0.copy_fields"):
-        assert f'"{field}"' in source, f"inputs.0.copy_fields {field!r} — clone_issue.py:89-92"
-    prefix = D.get("conventions.summary_prefix.value")
-    assert f'startswith("{prefix}")' in source and f"{prefix}{{summary}}" in source, "conventions.summary_prefix — clone_issue.py:96-97"
 
 
 def test_removed_context_marker():
@@ -160,7 +142,6 @@ def test_section_ownership():
 
 def test_body_overflow():
     overflow = D.get("pipeline.body_overflow")
-    pin(overflow["attachment"], push_strategy.STRATEGY_ATTACHMENT_TEMPLATE, "pipeline.body_overflow.attachment — push_strategy.py:51")
     assert f'"{overflow["on_error"]}"' in inspect.getsource(push_strategy), "pipeline.body_overflow.on_error — push_strategy.py:407"
 
 

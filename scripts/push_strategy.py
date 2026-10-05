@@ -26,6 +26,7 @@ import threading
 import urllib.error
 from contextlib import contextmanager
 
+import type_registry
 from jira_utils import (
     add_attachment,
     adf_to_markdown,
@@ -48,7 +49,17 @@ Write in declarative, cumulative form — statements that remain valid across re
 This input takes priority over architecture context when they conflict. \
 After review: address findings, then remove the needs-attention label from Jira.*"""
 
-STRATEGY_ATTACHMENT_TEMPLATE = "{issue_key}-strategy.md"
+# The default work type, rfe-strategy: the input reference its files carry, the overflow
+# attachment name and the originals dir of the pre-push backup. The body contract (the headings,
+# the Staff Input template, the notices) stays literal: both types share it.
+# For now: one type; resolve per call from the key or the file (type_registry.resolve(
+# ids=[issue_key], artifact=local_file)) once a second type pushes.
+_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+_SOURCE_PREFIX = _TYPE.get("inputs.0.jira.key_prefixes.0")
+_SOURCE_REF_RE = re.compile(_TYPE.get("inputs.0.source_ref_field") + r":\s*(" + _SOURCE_PREFIX + r"\d+)")
+NO_SOURCE_REF = _SOURCE_PREFIX + "0"  # what pull_strategy.py writes when the issue has no linked input
+
+STRATEGY_ATTACHMENT_TEMPLATE = _TYPE.get("pipeline.body_overflow.attachment")
 ATTACHMENT_NOTICE = (
     "> **Note:** The full strategy exceeds Jira's description size limit "
     "and is stored as an attachment: `{filename}`. "
@@ -202,11 +213,11 @@ def extract_source_rfe(content):
     match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
     if not match:
         return None
-    rfe_match = re.search(r'source_rfe:\s*(RHAIRFE-\d+)', match.group(1))
+    rfe_match = _SOURCE_REF_RE.search(match.group(1))
     if not rfe_match:
         return None
     key = rfe_match.group(1)
-    if key == "RHAIRFE-0":
+    if key == NO_SOURCE_REF:
         return None
     return key
 
@@ -377,7 +388,7 @@ def main():
         verify_staff(local_content, staff(existing_md))
 
     if existing_md:
-        backup_dir = os.path.join(os.path.dirname(args.local_file), "..", "strat-originals")
+        backup_dir = os.path.join(os.path.dirname(args.local_file), "..", _TYPE.dirs("bare")["originals"])
         os.makedirs(backup_dir, exist_ok=True)
         backup_path = os.path.join(backup_dir, f"{args.issue_key}-pre-push.md")
         if not os.path.exists(backup_path):

@@ -20,10 +20,13 @@ first registry: ``detect()`` refuses a tie where rfe-creator returns the first m
 lists the primary root, then each extra root; the CLI has no ``candidates`` verb, no
 ``--extra-roots`` and no ``list --json``.
 
-Status: ``jira_utils.py`` (identity, inputs[0]), ``list-rfe-ids.py`` (discovery.settings),
-``artifact_utils.py`` (the strat schemas, the label vocabulary), ``lock_issues.py``
-(pipeline.lock), ``apply_scores.py`` (dimensions, dirs) and ``remove_draft_prefix.py`` (summary_prefix)
-read it. ``list-rfe-ids.py --type`` picks the type through ``resolve()``; the others read the default
+Status: ``jira_utils.py`` (identity, inputs[0]),
+``list-rfe-ids.py`` (discovery.settings), ``artifact_utils.py`` (the strat schemas, the label
+vocabulary), ``lock_issues.py`` (pipeline.lock, the lock-strat relation walk), ``apply_scores.py``
+(dimensions, dirs), ``remove_draft_prefix.py`` (summary_prefix) and the Jira scripts
+``pull_strategy.py``, ``push_strategy.py``, ``clone_issue.py`` and ``find_strat_for_rfe.py`` (the
+relation, the parent gate, copy fields, labels, dirs, workspace, the overflow attachment) read it.
+``list-rfe-ids.py --type`` picks the type through ``resolve()``; the others read the default
 type, rfe-strategy.
 ``tests/test_type_registry_pins.py`` pins every literal a script still carries to its descriptor
 projection — source of truth BY TEST before BY IMPORT.

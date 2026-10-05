@@ -13,8 +13,12 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import apply_scores  # noqa: E402
 import artifact_utils  # noqa: E402
+import clone_issue  # noqa: E402
+import find_strat_for_rfe  # noqa: E402
 import jira_utils  # noqa: E402
 import lock_issues  # noqa: E402
+import pull_strategy  # noqa: E402
+import push_strategy  # noqa: E402
 import remove_draft_prefix  # noqa: E402
 import type_registry  # noqa: E402
 import validate_types  # noqa: E402
@@ -408,3 +412,34 @@ def test_strat_schemas_follow_a_drop_in_type(tmp_path):
     assert list(schemas["strat-review"]["scores"]["fields"]) == ["feasibility", "scope", "total"]
     assert list(schemas["strat-review"]["reviewers"]["fields"]) == ["feasibility", "scope"]
     assert list(schemas["strat-task"]) == list(artifact_utils.SCHEMAS["strat-task"])
+
+
+# ── the Jira scripts ──────────────────────────────────────────────────────────────────────
+
+
+def test_jira_scripts_equal_the_4c6ae1c_literals():
+    """What find_strat_for_rfe, pull_strategy, clone_issue, push_strategy and lock_issues' lock-strat
+    walk carried as literals on main at 4c6ae1c, now read from the default type (their pins are
+    retired)."""
+    for module in (find_strat_for_rfe, pull_strategy, clone_issue, push_strategy, lock_issues):
+        assert module._TYPE.name == SHIPPED, module.__name__
+    assert (find_strat_for_rfe.LINK_TYPE, find_strat_for_rfe.STRAT_PREFIX) == ("Cloners", "RHAISTRAT-")
+    assert (pull_strategy.LINK_TYPE, pull_strategy.INPUT_PREFIX) == ("Cloners", "RHAIRFE-")
+    assert (lock_issues.LINK_TYPE, lock_issues.INPUT_PREFIX) == ("Cloners", "RHAIRFE-")
+    assert pull_strategy.POST_CI_LABELS == {"strat-creator-rubric-pass", "strat-creator-needs-attention"}
+    assert pull_strategy.STRAT_CREATOR_COMMENT_MARKER == "[Strat Creator]"
+    assert pull_strategy.STRATEGY_ATTACHMENT_TEMPLATE.format(issue_key="K") == "K-strategy.md"
+    assert pull_strategy.WORKSPACE == "local" and pull_strategy.pull_strategy.__defaults__ == ("local",)
+    assert pull_strategy._DIRS == {"tasks": "strat-tasks", "originals": "strat-originals", "reviews": "strat-reviews"}
+    t = pull_strategy._TYPE  # the frontmatter keys pull writes, and its key check
+    keys = (t.id_field, t.get("inputs.0.source_ref_field"), t.tracker_key_field)
+    assert keys == ("strat_id", "source_rfe", "jira_key") and t.write_prefix == "RHAISTRAT-"
+    assert pull_strategy.NO_SOURCE_REF == push_strategy.NO_SOURCE_REF == "RHAIRFE-0"
+    assert clone_issue._PARENT == {"key_prefixes": ["RHAISTRAT-"], "issue_type": "Outcome", "statuses_not": ["Closed"]}
+    assert clone_issue.COPY_FIELDS == [
+        "summary", "description", "priority", "labels", "components", "versions", "customfield_10855", "parent"]
+    assert (clone_issue.ISSUE_TYPE, clone_issue.DRAFT_PREFIX, clone_issue.LOCK_LABEL, clone_issue.LINK_TYPE) == (
+        "Feature", "[DRAFT] ", "strat-creator-processing", "Cloners")
+    assert push_strategy._SOURCE_REF_RE.pattern == r"source_rfe:\s*(RHAIRFE-\d+)"
+    assert push_strategy.STRATEGY_ATTACHMENT_TEMPLATE == "{issue_key}-strategy.md"
+    assert push_strategy._TYPE.dirs("bare")["originals"] == "strat-originals"

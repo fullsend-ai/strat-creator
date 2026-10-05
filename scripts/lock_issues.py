@@ -55,12 +55,17 @@ from strat_side_effects import OWNER_PREFIX, atomic, checked_labels, locked, own
 # taking it, and the labels the DERIVED issue must / must not carry.
 # For now: one type's lock; resolve per call from the keys (type_registry.resolve(ids=keys)) once a
 # type with its own lock labels or a relation other than clones lands (lock-strat walks Cloners).
-_LOCK = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE).get("pipeline.lock")
+_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+_LOCK = _TYPE.get("pipeline.lock")
 
 PROCESSING_LABEL = _LOCK["label"]
 BLOCKING_LABELS = frozenset(_LOCK["blocking_labels"])
 STRAT_REQUIRED_LABEL = _LOCK["derived_required_label"]
 STRAT_BLOCKING_LABELS = frozenset(_LOCK["derived_blocking_labels"])
+
+# lock-strat's walk back to the input: the relation's link type and the input key prefix.
+LINK_TYPE = _TYPE.get("inputs.0.relation.link_type")
+INPUT_PREFIX = _TYPE.get("inputs.0.jira.key_prefixes.0")
 
 
 def _init_locked_keys_file(path):
@@ -87,12 +92,12 @@ def _resolve_strat_to_rfe(server, user, token, strat_key):
                      fields=["issuelinks"])
     links = data.get("fields", {}).get("issuelinks", [])
     for link in links:
-        if link.get("type", {}).get("name") != "Cloners":
+        if link.get("type", {}).get("name") != LINK_TYPE:
             continue
         for direction in ("outwardIssue", "inwardIssue"):
             issue = link.get(direction, {})
             key = issue.get("key", "")
-            if key.startswith("RHAIRFE-"):
+            if key.startswith(INPUT_PREFIX):
                 return key
     return None
 
