@@ -464,7 +464,7 @@ def test_initiative_strategy_descriptor():
     assert twin.stages == rfe.stages
     assert twin.get("pipeline.rubric.rubric_version") == rfe.get("pipeline.rubric.rubric_version")
     assert jira_utils.build_jql_from_type(twin) == (
-        'project = RHOAIENG AND (labels = "initiative-autofix-rubric-pass" OR labels = "tech-reviewed") '
+        'project = RHOAIENG AND (labels = "initiative-autofix-rubric-pass") '
         'AND (labels NOT IN ("strat-creator-processing") OR labels IS EMPTY) AND status NOT IN ("Closed", "Resolved") '
         'ORDER BY key ASC')
     schemas = artifact_utils._strat_schemas(twin)
