@@ -30,6 +30,10 @@ Retired (the consumer reads the registry now, so the pin would be a tautology):
     parent gate, issue type, copy fields, [DRAFT] prefix) and push_strategy (attachment) read the
     descriptor, as do their unpinned literals and lock_issues' lock-strat walk. Equality with the
     4c6ae1c literals is tests/test_type_registry.py::test_jira_scripts_equal_the_4c6ae1c_literals.
+  * The reporters: generate-report and extract-pipeline-data glob every registered type's
+    prefixes. Their globs were never pinned, so nothing retires; push_refined_strategies' RHAISTRAT-
+    glob stays literal as a guard and is pinned in test_dirs. The proof is
+    tests/test_type_registry.py::test_reporters_read_every_types_files.
 """
 
 import hashlib
@@ -116,6 +120,7 @@ def test_removed_context_marker():
 
 def test_dirs():
     assert f'default="{D.dirs()["tasks"]}"' in src("scripts/push_refined_strategies.py"), "dirs.tasks — push_refined_strategies.py:60"
+    assert f'"{D.write_prefix}*.md"' in src("scripts/push_refined_strategies.py"), "identity.jira.key_prefixes — push_refined_strategies.py:70"
     claude = src("CLAUDE.md")
     for key, value in D.dirs("bare").items():
         assert f"{value}/" in claude, f"dirs.{key} — CLAUDE.md:10-24"

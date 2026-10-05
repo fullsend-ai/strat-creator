@@ -19,7 +19,12 @@ from pathlib import Path
 
 # Add scripts/ to path for frontmatter imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+import type_registry
 from artifact_utils import compute_strat_labels, label_category, read_frontmatter
+
+# Every registered type's file names (local id prefix, then tracker key prefixes): the types share one
+# artifacts tree, so the report lists them all. rfe-strategy alone gives today's STRAT- and RHAISTRAT-.
+_ID_PREFIXES = [p for desc in type_registry.load() for p in [desc.local_prefix] + desc.key_prefixes]
 
 
 def load_yaml_config(path):
@@ -63,7 +68,7 @@ def load_artifacts(artifacts_dir):
     reviews = {}
     review_comments = {}
 
-    for pattern in ["STRAT-*.md", "RHAISTRAT-*.md"]:
+    for pattern in [f"{p}*.md" for p in _ID_PREFIXES]:
         for path in sorted(glob.glob(os.path.join(artifacts_dir, "strat-tasks", pattern))):
             try:
                 meta, body = read_frontmatter(path)
@@ -72,7 +77,7 @@ def load_artifacts(artifacts_dir):
             except Exception as e:
                 print(f"Warning: failed to read {path}: {e}", file=sys.stderr)
 
-    for pattern in ["STRAT-*-review.md", "RHAISTRAT-*-review.md"]:
+    for pattern in [f"{p}*-review.md" for p in _ID_PREFIXES]:
         for path in sorted(glob.glob(os.path.join(artifacts_dir, "strat-reviews", pattern))):
             if path.endswith("-review-comment.md"):
                 continue
@@ -83,7 +88,7 @@ def load_artifacts(artifacts_dir):
             except Exception as e:
                 print(f"Warning: failed to read {path}: {e}", file=sys.stderr)
 
-    for pattern in ["STRAT-*-review-comment.md", "RHAISTRAT-*-review-comment.md"]:
+    for pattern in [f"{p}*-review-comment.md" for p in _ID_PREFIXES]:
         for path in sorted(glob.glob(os.path.join(artifacts_dir, "strat-reviews", pattern))):
             try:
                 with open(path, encoding="utf-8") as f:

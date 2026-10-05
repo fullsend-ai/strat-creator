@@ -1,5 +1,6 @@
 """Unit tests for scripts/type_registry.py and scripts/validate_types.py."""
 
+import importlib.util
 import json
 import os
 import sys
@@ -443,3 +444,26 @@ def test_jira_scripts_equal_the_4c6ae1c_literals():
     assert push_strategy._SOURCE_REF_RE.pattern == r"source_rfe:\s*(RHAIRFE-\d+)"
     assert push_strategy.STRATEGY_ATTACHMENT_TEMPLATE == "{issue_key}-strategy.md"
     assert push_strategy._TYPE.dirs("bare")["originals"] == "strat-originals"
+
+
+# ── the reporters ─────────────────────────────────────────────────────────────────────────
+
+
+def test_reporters_read_every_types_files(tmp_path):
+    """generate-report and extract-pipeline-data list every registered type's tasks, reviews and review
+    comments: rfe-strategy's STRAT- and RHAISTRAT- (the 4c6ae1c globs)."""
+    ids = ["RHAISTRAT-2", "STRAT-1"]
+    (tmp_path / "strat-tasks").mkdir()
+    (tmp_path / "strat-reviews").mkdir()
+    for strat_id in ids:
+        for path in (tmp_path / "strat-tasks" / f"{strat_id}.md", tmp_path / "strat-reviews" / f"{strat_id}-review.md"):
+            path.write_text(f"---\nstrat_id: {strat_id}\n---\nbody\n", encoding="utf-8")
+        (tmp_path / "strat-reviews" / f"{strat_id}-review-comment.md").write_text("comment\n", encoding="utf-8")
+    (tmp_path / "strat-tasks" / "RHAIRFE-9-comments.md").write_text("not a strategy\n", encoding="utf-8")
+    reporters = (("generate-report.py", "load_artifacts"), ("extract-pipeline-data.py", "load_run_artifacts"))
+    for filename, loader in reporters:
+        spec = importlib.util.spec_from_file_location(filename[:-3].replace("-", "_"), REPO / "scripts" / filename)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        tasks, reviews, comments = getattr(module, loader)(str(tmp_path))[:3]
+        assert sorted(tasks) == sorted(reviews) == sorted(comments) == ids, filename

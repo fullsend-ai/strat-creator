@@ -81,6 +81,8 @@ def main():
               file=sys.stderr)
         return 2
 
+    # For now: rfe-strategy's tracker prefix only, on purpose: push_strategy.py is not type-aware and a twin's key is
+    # the shared Initiative. Glob every type's key_prefixes when push_strategy reads pipeline.section_ownership.
     files = sorted(glob.glob(os.path.join(args.artifacts_dir, "RHAISTRAT-*.md")))
     if not files:
         print("No RHAISTRAT files found, nothing to push.")

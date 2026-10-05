@@ -19,8 +19,8 @@ rfe-creator's ladder, `scripts/type_registry.py` `resolve()`: `--type <name>`, e
 else the artifact's directory, else the ids' prefixes (a type's own key prefixes, then its inputs'), else
 `rfe-strategy`. A headless or CI run (`STRAT_CREATOR_HEADLESS`, `CI` or `GITHUB_ACTIONS` set) never guesses: an id no
 type owns is an error there. `list-rfe-ids.py --type` and the review and sign-off skills (`--type` in their
-arguments) pick the type today; the other scripts read `rfe-strategy`'s values, and a comment in each
-says how it would pick the type per call.
+arguments) pick the type today; `generate-report.py` and `extract-pipeline-data.py` list every type's files; the other
+scripts read `rfe-strategy`'s values, and a comment in each says how it would pick the type per call.
 
 ## Adding a type
 

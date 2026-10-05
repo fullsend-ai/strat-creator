@@ -26,8 +26,9 @@ vocabulary), ``lock_issues.py`` (pipeline.lock, the lock-strat relation walk), `
 (dimensions, dirs), ``remove_draft_prefix.py`` (summary_prefix) and the Jira scripts
 ``pull_strategy.py``, ``push_strategy.py``, ``clone_issue.py`` and ``find_strat_for_rfe.py`` (the
 relation, the parent gate, copy fields, labels, dirs, workspace, the overflow attachment) read it.
-``list-rfe-ids.py --type`` picks the type through ``resolve()``; the others read the default
-type, rfe-strategy.
+``list-rfe-ids.py --type`` picks the type through ``resolve()``; ``generate-report.py`` and
+``extract-pipeline-data.py`` read every type's local_prefix and key_prefixes; the others read the
+default type, rfe-strategy.
 ``tests/test_type_registry_pins.py`` pins every literal a script still carries to its descriptor
 projection — source of truth BY TEST before BY IMPORT.
 

@@ -29,7 +29,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+import type_registry
 from artifact_utils import compute_strat_labels, read_frontmatter
+
+# Every registered type's file names (local id prefix, then tracker key prefixes): the types share one
+# artifacts tree, so the extract lists them all. rfe-strategy alone gives today's STRAT- and RHAISTRAT-.
+_ID_PREFIXES = [p for desc in type_registry.load() for p in [desc.local_prefix] + desc.key_prefixes]
 
 
 def extract_size(body):
@@ -62,7 +67,7 @@ def load_run_artifacts(run_dir):
     reviews = {}
     review_comments = {}
 
-    for pattern in ["STRAT-*.md", "RHAISTRAT-*.md"]:
+    for pattern in [f"{p}*.md" for p in _ID_PREFIXES]:
         for path in sorted(glob.glob(os.path.join(run_dir, "strat-tasks", pattern))):
             try:
                 meta, body = read_frontmatter(path)
@@ -71,7 +76,7 @@ def load_run_artifacts(run_dir):
             except Exception as e:
                 print(f"  Warning: {path}: {e}", file=sys.stderr)
 
-    for pattern in ["STRAT-*-review.md", "RHAISTRAT-*-review.md"]:
+    for pattern in [f"{p}*-review.md" for p in _ID_PREFIXES]:
         for path in sorted(glob.glob(os.path.join(run_dir, "strat-reviews", pattern))):
             if path.endswith("-review-comment.md"):
                 continue
@@ -82,7 +87,7 @@ def load_run_artifacts(run_dir):
             except Exception as e:
                 print(f"  Warning: {path}: {e}", file=sys.stderr)
 
-    for pattern in ["STRAT-*-review-comment.md", "RHAISTRAT-*-review-comment.md"]:
+    for pattern in [f"{p}*-review-comment.md" for p in _ID_PREFIXES]:
         for path in sorted(glob.glob(os.path.join(run_dir, "strat-reviews", pattern))):
             try:
                 with open(path, encoding="utf-8") as f:
