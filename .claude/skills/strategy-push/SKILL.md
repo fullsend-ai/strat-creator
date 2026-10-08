@@ -9,7 +9,9 @@ You are pushing an improved strategy back to Jira so CI can re-evaluate it. This
 
 ## Input
 
-`$ARGUMENTS` must contain a RHAISTRAT key (e.g., `RHAISTRAT-1520`). If no key is provided, ask the user for one.
+`$ARGUMENTS` must contain a strategy key: a RHAISTRAT key (e.g., `RHAISTRAT-1520`), or the RHOAIENG key of an
+Initiative whose strategy lives on the Initiative itself (e.g., `RHOAIENG-1200`). If no key is provided, ask the
+user for one. `RHAISTRAT-NNNN` below stands for whichever key you were given.
 
 ## Step 1: Validate Pre-Conditions
 

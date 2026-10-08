@@ -1,6 +1,6 @@
 ---
 name: strategy-pull
-description: Pull a RHAISTRAT issue from Jira into the local/ workspace for human review. Only works on post-CI strategies.
+description: Pull a strategy (a RHAISTRAT issue, or an Initiative's strategy) from Jira into the local/ workspace for human review. Only works on post-CI strategies.
 user-invocable: true
 allowed-tools: Read, Write, Bash, Glob, Grep
 ---
@@ -9,7 +9,9 @@ You are pulling a strategy from Jira into the local workspace so a human can rev
 
 ## Input
 
-`$ARGUMENTS` must contain a RHAISTRAT key (e.g., `RHAISTRAT-1520`). If no key is provided, ask the user for one.
+`$ARGUMENTS` must contain a strategy key: a RHAISTRAT key (e.g., `RHAISTRAT-1520`), or the RHOAIENG key of an
+Initiative whose strategy lives on the Initiative itself (e.g., `RHOAIENG-1200`). If no key is provided, ask the
+user for one. `RHAISTRAT-NNNN` below stands for whichever key you were given.
 
 ## Pull the Strategy
 
