@@ -13,6 +13,12 @@ fi
 
 CONTEXT_DIR=".context/architecture-context"
 
+# A pinned snapshot wins on every call. The entrypoint and pre-strategy.sh pass
+# it as $1, but skills re-run this script with no argument; without this, that
+# call would fetch the newest version from GitHub (unpinning the run) and update
+# the copy with git (see below).
+set -- "${1:-${STRAT_ARCHITECTURE_CONTEXT_PATH:-}}"
+
 if [ -n "$1" ]; then
   LOCAL_PATH="$1"
   if [ ! -d "$LOCAL_PATH" ]; then
@@ -37,6 +43,14 @@ fi
 
 if [ -L "$CONTEXT_DIR" ]; then
   rm "$CONTEXT_DIR"
+fi
+
+# Only a clone of its own is updated in place. A copy made by the local mode has
+# no .git, so `git -C` would act on the enclosing repository (this checkout) and
+# sparse-check it out down to two directories, deleting scripts/, config/,
+# .fullsend/ and .claude/skills/. Replace such a copy with a fresh clone.
+if [ -d "$CONTEXT_DIR" ] && [ ! -e "$CONTEXT_DIR/.git" ]; then
+  rm -rf "$CONTEXT_DIR"
 fi
 
 if [ -d "$CONTEXT_DIR" ]; then
