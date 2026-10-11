@@ -27,8 +27,15 @@ Output layout (one dir per case), consumed by eval/strat-refine.yaml (execution.
     reference/scores.yaml — the prod rubric scores (calibration / regression only)
     annotations.yaml      — expected_scores + expected_recommendation + tags (judge context)
 
+The work type (--type, default rfe-strategy) supplies the input key grammar, the
+Business Need heading, the source field, whether the strategy lives on the input
+ticket itself (relation self: the strat id is the key) and the default --out (its
+descriptor's eval.dataset). Initiative strategies: --type initiative-strategy, from
+the data repo's initiative-strategy/ folder, every case found (no curated list yet).
+
 Usage:
     python3 eval/scripts/build_dataset.py                       # default data repo, curated set
+    python3 eval/scripts/build_dataset.py --type initiative-strategy
     python3 eval/scripts/build_dataset.py --data-repo /path/to/strat-pipeline-data/RHAISTRAT
     python3 eval/scripts/build_dataset.py --out eval/dataset/cases --force
 """
@@ -43,12 +50,19 @@ import sys
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 FRONTMATTER = os.path.join(REPO_ROOT, "scripts", "frontmatter.py")
+sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+
+import type_registry  # noqa: E402
 
 PRIORITY_ENUM = {"Blocker", "Critical", "Major", "Normal", "Minor", "Undefined"}
 
-# Canonical issue-key form. Keys are interpolated into case directory names, so a
-# non-conforming value (e.g. one containing ../) is rejected before path composition.
-RFE_KEY_RE = re.compile(r"^RHAIRFE-[0-9]+$")
+
+def key_re(desc):
+    """The type's canonical input-key form (rfe-strategy: ``^RHAIRFE-[0-9]+$``). Keys are interpolated
+    into case directory names, so a non-conforming value (e.g. one containing ../) is rejected before
+    path composition."""
+    return re.compile("^(" + "|".join(re.escape(p) for p in desc.get("inputs.0.jira.key_prefixes")) + ")[0-9]+$")
+
 
 # Curated ~24 anchors spanning the full quality range, all sizes, and the scarce
 # high-value cases (zero-dimension / reject). Scores shown are the prod reference
@@ -158,20 +172,23 @@ def set_frontmatter(path, **fields):
         raise RuntimeError(f"frontmatter set failed for {path}:\n{r.stdout}\n{r.stderr}")
 
 
-def build_case(rfe_key, tri, out_root, force):
+def build_case(rfe_key, tri, out_root, force, desc):
     e = tri["entry"]
     scores = e.get("scores") or {}
     total = scores.get("total")
     title = e.get("title") or rfe_key
     priority = norm_priority(e.get("priority"))
     size = e.get("size")
-    strat_id = f"STRAT-{rfe_num(rfe_key)}"
+    # A type that runs on its own ticket (relation self) writes the strategy under the input's key,
+    # with --dry-run too; a cloning type's dry run names it STRAT-<n> with no key.
+    same_ticket = desc.get("inputs.0.relation.kind") == "self"
+    strat_id = rfe_key if same_ticket else f"STRAT-{rfe_num(rfe_key)}"
 
     # rfe_key reaches here from --keys or the data repo and is used to compose a
     # path, so reject anything that is not the canonical form (a value containing
     # ../ would otherwise escape out_root).
-    if not RFE_KEY_RE.match(rfe_key):
-        print(f"  SKIP {rfe_key!r} (not a canonical RHAIRFE-<n> key)", file=sys.stderr)
+    if not key_re(desc).match(rfe_key):
+        print(f"  SKIP {rfe_key!r} (not a canonical {desc.name} input key)", file=sys.stderr)
         return None
 
     case_id = f"{rfe_key}-{slugify(title)}"
@@ -195,22 +212,19 @@ def build_case(rfe_key, tri, out_root, force):
 
     # 3) stub.md — exactly what strategy-create --dry-run Path B emits (refine's input)
     stub_body = (
-        "## Business Need (from RFE)\n"
+        f"{desc.get('pipeline.section_ownership.0.heading')}\n"
         f"{rfe_body}\n\n"
         f"{STRATEGY_SECTION}\n"
         f"{STAFF_SECTION}"
     )
     stub_path = os.path.join(case_dir, "stub.md")
     write(stub_path, stub_body)
-    set_frontmatter(
-        stub_path,
-        strat_id=strat_id,
-        title=title,
-        source_rfe=rfe_key,
-        jira_key="null",
-        priority=priority,
-        status="Draft",
-    )
+    fields = {"strat_id": strat_id, "title": title, desc.get("inputs.0.source_ref_field"): rfe_key,
+              "jira_key": rfe_key if same_ticket else "null", "priority": priority, "status": "Draft"}
+    if desc.name != type_registry.LEGACY_DEFAULT_TYPE:
+        # strategy-create stamps it, and it picks the schema; rfe-strategy cases stay as they were built
+        fields["type"] = desc.name
+    set_frontmatter(stub_path, **fields)
 
     # 4) reference/ — prod outputs (calibration / regression only; never fed to refine)
     write(os.path.join(case_dir, "reference", "strategy.md"), read(tri["strategy"]))
@@ -277,12 +291,21 @@ def to_yaml(obj):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data-repo", default="/tmp/strat-pipeline-data/RHAISTRAT",
-                    help="Path to strat-pipeline-data RHAISTRAT dir (default: /tmp/strat-pipeline-data/RHAISTRAT)")
-    ap.add_argument("--out", default=os.path.join(REPO_ROOT, "eval", "dataset", "cases"))
+    ap.add_argument("--type", default=type_registry.LEGACY_DEFAULT_TYPE,
+                    help="Work type (default: rfe-strategy)")
+    ap.add_argument("--data-repo",
+                    help="Path to the type's strat-pipeline-data folder (default: "
+                         "/tmp/strat-pipeline-data/RHAISTRAT for rfe-strategy, "
+                         "/tmp/strat-pipeline-data/<type> otherwise: strat-pipeline's RESULTS_SUBDIR)")
+    ap.add_argument("--out", help="Case directory (default: the type's eval.dataset)")
     ap.add_argument("--force", action="store_true", help="Overwrite existing case dirs")
-    ap.add_argument("--keys", nargs="*", help="Override the curated RFE key list")
+    ap.add_argument("--keys", nargs="*",
+                    help="Override the key list (rfe-strategy: the curated list; else every key found)")
     args = ap.parse_args()
+    desc = type_registry.load().get(args.type)
+    legacy = desc.name == type_registry.LEGACY_DEFAULT_TYPE
+    args.data_repo = args.data_repo or f"/tmp/strat-pipeline-data/{'RHAISTRAT' if legacy else desc.name}"
+    args.out = args.out or os.path.join(REPO_ROOT, desc.get("eval.dataset"))
 
     if not os.path.isdir(args.data_repo):
         print(f"ERROR: data repo not found: {args.data_repo}\n"
@@ -296,7 +319,7 @@ def main():
     triples = load_latest_triples(args.data_repo)
     print(f"Found {len(triples)} unique RFEs with a complete on-disk triple.\n")
 
-    keys = args.keys or CURATED
+    keys = args.keys or (CURATED if legacy else sorted(triples))
     os.makedirs(args.out, exist_ok=True)
     built, missing = [], []
     for rfe in keys:
@@ -305,7 +328,7 @@ def main():
             missing.append(rfe)
             print(f"  MISS {rfe} — no complete triple found in data repo")
             continue
-        row = build_case(rfe, tri, args.out, args.force)
+        row = build_case(rfe, tri, args.out, args.force, desc)
         if row:
             built.append(row)
 

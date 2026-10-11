@@ -1,0 +1,451 @@
+name: strat-creator-eval-initiative
+description: >
+  End-to-end strat-creator pipeline eval for Initiative strategies (initiative-strategy:
+  the strategy is written on the Initiative itself). eval/strat-refine.yaml with the
+  type's --type, dataset and wording; tests/test_eval_checks.py keeps the rest equal.
+  For each rubric-passed Initiative, reproduces the
+  production create->refine->review flow: create's mechanical stub is staged by a
+  before_each hook, then strategy-refine and strategy-review run as two native
+  execution.steps sharing the case workspace (handing off through artifacts/ on
+  disk, exactly like the prod strat-pipeline). The refined strategy is scored with
+  an independent, held-constant judge using the assess-strat rubric (Feasibility /
+  Testability / Scope / Architecture, 0-2 each = /8); Architecture is a grounded
+  agent judge that consults the real arch docs. Fully hermetic: --dry-run, no live Jira.
+
+execution:
+  mode: case                 # one case = one RFE (repeated-measures unit for eval-anova)
+  # The prod create->refine->review pipeline as native steps. create is mechanical
+  # (stage strategy-create's verbatim stub) and runs as a before_each hook, not a
+  # step. refine and review are two agent steps that share the per-case workspace,
+  # handing off through artifacts/ on disk exactly like the prod strat-pipeline.
+  timeout: 2700              # per-STEP wall-clock (45 min); review forks a scorer + 4 prose reviewers
+  max_budget_usd: 20.0       # per-STEP hard cap (claude --max-budget-usd); a case = 2 steps (~2x worst case)
+  steps:
+    - id: refine
+      skill: strategy-refine
+      arguments: "{{ input.strat_id }} --type initiative-strategy --dry-run --architecture-context .context/architecture-context"
+    - id: review
+      skill: strategy-review
+      arguments: "{{ input.strat_id }} --type initiative-strategy --dry-run --architecture-context .context/architecture-context"
+
+runner:
+  type: claude-code          # native runner (the harness owns staging/execution/collection)
+  # Isolated per-case workspaces are untrusted, so recent Claude Code versions
+  # (workspace-trust gating) DROP the workspace .claude/settings.json
+  # permissions.allow + additionalDirectories and can't show a trust dialog in
+  # headless -p mode. `dontAsk` never prompts and allows ONLY what the CLI
+  # --allowed-tools list (fed from `permissions.allow` below) pre-approves —
+  # deny-by-default, trust-independent (CLI flags aren't trust-gated). Keep the
+  # allow-list below COMPLETE or legitimate tool calls are silently denied.
+  permission_mode: dontAsk
+# Trust-independent allow-list (passed via --allowed-tools, so it applies in the
+# untrusted isolated workspaces). A BARE read-only Bash command (ls/cat alone) is
+# auto-allowed by CC's built-in classifier, but a COMPOUND command defeats it: in
+# dontAsk mode CC splits on ;/&&/||/| and every sub-command must prefix-match an
+# allow rule, so an existence-check idiom like `ls -la <dir> 2>/dev/null; echo
+# "EXIT: $?"` is denied unless BOTH `ls` and `echo` are listed (this denial flipped
+# RHAIRFE-629's review step to exit 1). Read/Grep/Glob still need no entries.
+# `Edit(...)` covers the Write tool for a path (CC file-permission checks only match
+# Edit rules, not Write).
+permissions:
+  allow:
+    - Skill                                   # refine/review invoke sub-skills
+    - Agent                                   # review forks a scorer + prose reviewers
+    - Edit(artifacts/**)                      # refined strategy + review files
+    - Edit(/tmp/strat-assess/**)              # assess-strat scratch (scorer/reviewers)
+    - Edit(/private/tmp/strat-assess/**)      # macOS /tmp -> /private/tmp
+    - Bash(python3 *)                         # frontmatter/state/assess-strat scripts + one-liners (absolute paths)
+    - Bash(bash *)                            # fetch-architecture-context.sh / bootstrap-assess-strat.sh
+    - Bash(ls *)                              # dir/file existence checks (incl. compound `ls ...; echo ...`)
+    - Bash(echo *)                            # `; echo "EXIT: $?"` idiom in compound existence checks
+    - Bash(mkdir *)                           # scratch dir creation
+    - Bash(rm -rf /tmp/strat-assess/*)        # scratch cleanup (scoped)
+    - Bash(rm -rf /private/tmp/strat-assess/*)
+    - Bash(make test-unit*)                   # skills self-check via the test suite
+  deny: []
+
+models:
+  skill: claude-opus-4-6      # model under test (prod default). Override per run with --model.
+  subagent: claude-opus-4-6   # scorer + 4 prose reviewers (prod pins these to opus too)
+  judge: claude-opus-4-8      # independent, held-constant grader (kept fixed across candidate models)
+
+dataset:
+  path: dataset/initiative-cases
+  schema: |
+    One dir per case (built by eval/scripts/build_dataset.py --type initiative-strategy from
+    the strat-pipeline-data prod repo's initiative-strategy/ folder). Files:
+      input.yaml    — rfe_key (the Initiative key), strat_id (the same key), title, priority, size
+      stub.md       — strategy-create output (verbatim Business Need + empty Strategy + Staff Input + frontmatter)
+      rfe-original.md, rfe-comments.md — RFE snapshot + removed-implementation-context
+      reference/    — prod-produced strategy + rubric scores (calibration/regression only; NOT fed to the pipeline)
+      annotations.yaml — expected_scores{F,T,S,A,total}, expected_recommendation, size, tags
+  workspace:
+    files: [stub.md, rfe-original.md, rfe-comments.md]   # copied into each case workspace; staged by before_each
+
+outputs:
+  - path: artifacts/strat-tasks
+    schema: "Refined strategy RHOAIENG-<n>.md with YAML frontmatter (status=Refined) and a filled ## Strategy section."
+  - path: artifacts/strat-reviews
+    schema: "<strat_id>-review.md with frontmatter scores{feasibility,testability,scope,architecture,total}, recommendation, needs_attention, reviewers{}."
+
+traces:
+  stdout: true
+  stderr: true
+  events: true       # each step emits stream-json -> collect.py builds events.json
+                     # (top-level reasoning + tool calls; enables architecture_context_used)
+  metrics: true      # the harness captures per-step cost/tokens in run_result.json (summed per case)
+
+hooks:
+  # Stage read-only assets once per run: assess-strat (rubric + scorer agent) and
+  # architecture-context (RHOAI docs) into eval/.assets. Idempotent.
+  before_all:
+    - command: 'bash "$AGENT_EVAL_PROJECT_ROOT/eval/scripts/stage-assets.sh"'
+      timeout: 900
+  # Per case: rebuild the hermetic project tree in the case workspace (real
+  # .claude/skills + .context so skill bootstrap can't write into the repo) and
+  # stage strategy-create's stub (the create->refine handoff).
+  before_each:
+    - command: 'bash "$AGENT_EVAL_PROJECT_ROOT/eval/scripts/stage-case.sh"'
+      timeout: 300
+
+judges:
+  # --- Independent rubric judges (held-constant judge model): the model-differentiation signal.
+  #     Feasibility & Testability carry most of the signal (real strategies cluster at 1 there).
+  - name: feasibility_score
+    description: Independent assess-strat Feasibility score (0-2) of the refined strategy.
+    prompt_file: eval/prompts/feasibility-judge.md
+    feedback_type: int
+    score_range: [0, 2]
+    samples: 3
+  - name: testability_score
+    description: Independent assess-strat Testability score (0-2) of the refined strategy.
+    prompt_file: eval/prompts/testability-judge.md
+    feedback_type: int
+    score_range: [0, 2]
+    samples: 3
+  - name: scope_score
+    description: Independent assess-strat Scope score (0-2) of the refined strategy.
+    prompt_file: eval/prompts/scope-judge.md
+    feedback_type: int
+    score_range: [0, 2]
+    samples: 3
+  - name: architecture_score
+    # AGENTIC judge (native `agent:` type): a held-constant judge model run as a
+    # tool-using agent that Greps/Reads .context/architecture-context to VALIDATE the
+    # strategy's components/CRDs/APIs/patterns against the real docs. A text-only LLM
+    # judge can't open the docs and inflates this to ~2.0; the agent grounds it (e.g.
+    # RHAIRFE-1056: agent 1 vs LLM 2). The harness stages an isolated workspace (the
+    # refined strategy under ./strat-tasks/, arch docs read-only under
+    # ./.context/architecture-context), runs the judge's own runner, and reads
+    # output/score.json — no external judge module needed.
+    description: Independent GROUNDED Architecture score (0-2) — agent validates claims against the arch docs.
+    prompt_file: eval/prompts/architecture-agent-judge.md
+    feedback_type: int
+    score_range: [0, 2]
+    samples: 3                        # grounded agent runs/case, median — matches the sibling dims.
+                                      # Lower to 1 to cut judge cost (agent runs are pricier than LLM calls).
+    agent:
+      allowed_tools: [Read, Grep, Glob, Write]       # +Write so the judge can write ./output/score.json (the
+                                                     # reliable verdict path; the stdout fallback can't parse the
+                                                     # runner's stream-json). Write triggers copy-not-symlink
+                                                     # staging of context (isolated workspace, CWE-59 safe).
+      context: [eval/.assets/architecture-context]   # staged read-only as ./.context/architecture-context
+      inputs: [artifacts]                            # stage the artifacts/ outputs (filter is by top-level
+                                                     # dir; the strategy is at artifacts/strat-tasks/STRAT-<n>.md)
+      timeout: 420                                   # ~7 min/run
+      max_budget_usd: 4.0                            # grounded exploration over 900+ arch docs needs headroom
+
+  # --- Deterministic structural gates (min_pass_rate 1.0).
+  - name: files_exist
+    description: The pipeline produced both a refined strategy and a scored review file.
+    check: |
+      files = outputs.get("files", {})
+      has_task = any(p.endswith(".md") and "strat-tasks" in p for p in files)
+      has_review = any(p.endswith("-review.md") and not p.endswith("-review-comment.md") for p in files)
+      if not has_task:
+          return False, "no strat-tasks/*.md produced"
+      if not has_review:
+          return False, "no strat-reviews/*-review.md produced"
+      return True, "strategy + review present"
+
+  - name: strategy_nonempty
+    description: strategy-refine filled the Strategy section with substantive content.
+    check: |
+      files = outputs.get("files", {})
+      task = next((c for p, c in files.items() if "strat-tasks" in p and p.endswith(".md")), "")
+      marker = "## Strategy (AI Generated"
+      if marker not in task:
+          return False, "no Strategy section"
+      body = task.split(marker, 1)[1]
+      # strip the placeholder HTML comments create leaves behind
+      substantive = [ln for ln in body.splitlines()
+                     if ln.strip() and not ln.strip().startswith("<!--")
+                     and not ln.strip().startswith("## Staff Engineer")]
+      return (len("\n".join(substantive)) > 400,
+              f"strategy body chars={len(chr(10).join(substantive))}")
+
+  - name: frontmatter_valid
+    description: The review frontmatter matches the strat-review schema (4 int scores 0-2, total, enums).
+    check: |
+      import yaml
+      files = outputs.get("files", {})
+      rev = next((c for p, c in files.items()
+                  if p.endswith("-review.md") and not p.endswith("-review-comment.md")), None)
+      if rev is None:
+          return False, "no review file"
+      if not rev.lstrip().startswith("---"):
+          return False, "no frontmatter"
+      try:
+          fm = yaml.safe_load(rev.split("---", 2)[1])
+      except Exception as e:
+          return False, f"unparseable frontmatter: {e}"
+      sc = (fm or {}).get("scores") or {}
+      dims = ["feasibility", "testability", "scope", "architecture"]
+      for d in dims:
+          v = sc.get(d)
+          if not isinstance(v, int) or v not in (0, 1, 2):
+              return False, f"{d}={v!r} not in 0..2"
+      tot = sc.get("total")
+      if tot != sum(sc[d] for d in dims):
+          return False, f"total {tot} != sum {sum(sc[d] for d in dims)}"
+      if (fm.get("recommendation") not in ("approve", "revise", "reject")):
+          return False, f"bad recommendation {fm.get('recommendation')!r}"
+      return True, f"scores ok total={tot}"
+
+  - name: recommendation_consistency
+    description: The pipeline's recommendation matches the deterministic assess-strat verdict of its own scores.
+    check: |
+      import yaml
+      files = outputs.get("files", {})
+      rev = next((c for p, c in files.items()
+                  if p.endswith("-review.md") and not p.endswith("-review-comment.md")), None)
+      if rev is None:
+          return False, "no review file"
+      try:
+          fm = yaml.safe_load(rev.split("---", 2)[1])
+      except Exception as e:
+          return False, f"unparseable frontmatter: {e}"
+      sc = (fm or {}).get("scores") or {}
+      try:
+          f, t, s, a = (int(sc["feasibility"]), int(sc["testability"]),
+                        int(sc["scope"]), int(sc["architecture"]))
+      except Exception:
+          return False, "missing dimension scores"
+      tot = f + t + s + a
+      z = sum(1 for x in (f, t, s, a) if x == 0)
+      if tot >= 6 and z == 0:
+          expected = "approve"
+      elif tot < 3 or z >= 2:
+          expected = "reject"
+      else:
+          expected = "revise"
+      got = fm.get("recommendation")
+      return (got == expected, f"recommendation={got} expected={expected} (total={tot}, zeros={z})")
+
+  # --- Grounding: did strategy-refine itself consult architecture-context?
+  #
+  #     Neither obvious source works, both verified against real runs:
+  #       1. outputs["events"] is the LAST step's. In execution.mode: case the
+  #          case-level stdout.log IS steps/review/stdout.log (byte-identical, 24/24)
+  #          and events.json is parsed from that alone — collect.py only routes
+  #          subagent transcripts into events.json in BATCH mode — so the trace holds
+  #          no subagent entries at all. What its architecture-context hits actually
+  #          are, then, is the review step's own top-level calls: Bash touching the
+  #          docs directory, and Agent invocations whose prompt happens to name the
+  #          path (7 Bash + 5 Agent in a sampled case, zero Read/Grep/Glob). So it is
+  #          not even measuring the reviewers reading the docs, let alone refine — and
+  #          because refine's activity is absent from that trace entirely, its
+  #          behaviour cannot move the result either way.
+  #       2. steps/refine/stdout.log carries the invocation, exactly one assistant
+  #          turn and the result, but ZERO assistant tool_use blocks (24/24 cases):
+  #          refine is a `context: fork` skill, so its tool calls happen in a
+  #          subagent. (That lone assistant turn is still where a refusal would be
+  #          expected to surface — see argument-parsing-coverage.md, which relies on
+  #          it. Not yet confirmed against a real refusal.)
+  #     Those forked calls are captured by the harness SubagentStop hook in
+  #     cases/<case>/subagents/*.jsonl. That directory is per-case, so transcripts are
+  #     matched to the refine STEP by session id: the step's own stdout.log carries
+  #     session_id, every subagent it spawns repeats it as sessionId, and the review
+  #     step always gets a different one (24/24 cases). Matching on the skill path
+  #     instead would be wrong twice over. It would over-count, because the collected
+  #     output directory is only ever added to (subagents/ is created with
+  #     exist_ok=True and copied into, never cleared), so re-running a run-id leaves
+  #     earlier transcripts sitting where judges read them — observed once, inflating
+  #     a case from 14 reads to 22. And it would under-count, by discarding refine's
+  #     own nested subagents, whose reads are still refine's work.
+  #     Fails closed when the transcripts are missing, which is correct: no capture
+  #     means no evidence, and that should surface rather than silently pass on the
+  #     reviewers' reads.
+  #     Counts RESULTS, not attempts. Counting tool_use blocks made this check pass
+  #     at 100% on a run where the context directory was empty and refine said so in
+  #     its own output: the reads were attempted, they returned "No files found" and
+  #     "total 0", and the gate scored every one of them as grounding. A tool_use is
+  #     an intent; only its tool_result says whether any documentation came back. So
+  #     each qualifying call is paired to its result by tool_use_id, errors are
+  #     discarded (load-bearing: real error replies run 218-249 chars, past any sane
+  #     length bar), and the result must clear MIN_RESULT_CHARS.
+  #     Hits are credited only from Read/Grep/Glob results whose input points under
+  #     .context/architecture-context/ (where the harness stages the docs). Bash
+  #     counts as an attempt but never as a hit: its output length says nothing
+  #     about documentation — in the stored 2026-08-05/2026-08-10 runs, existence
+  #     probes over an EMPTY context cleared 200 chars easily (compound ls/find
+  #     output echoing ~170-char absolute workspace paths, the fetch script's
+  #     ~460-char cp-failure message). The path requirement exists because a bare
+  #     "architecture-context" match also admits Read of
+  #     scripts/fetch-architecture-context.sh (1875 chars, qualifying by filename
+  #     alone) — the sole "hit" in several empty-context cases. The match is
+  #     boundary-checked so sibling paths (.context/architecture-context-backup/)
+  #     don't qualify either; tool input is model-controlled, so anything short of
+  #     a directory boundary is gameable. Replayed over the
+  #     stored runs: this rule scores 10/24 and 8/24, exactly the hand-classified
+  #     grounded cases, where length-only scored 17/24 and 18/24 and flipped both
+  #     run verdicts to PASS at min_pass_rate 0.7. Every genuinely grounded case
+  #     had 4-33 doc-file Read hits, so the tighter rule costs no observed true
+  #     positive. For in-tree doc reads the threshold does separate documentation
+  #     from emptiness: the staged docs are all >= 857 bytes, while empty-context
+  #     replies are the likes of "No files found" (14 chars).
+  - name: architecture_context_used
+    description: strategy-refine itself consulted the architecture-context docs (grounding), not just asserted architecture.
+    check: |
+      import glob, json, os, re
+      base = outputs.get("case_dir") or ""
+      step_log = os.path.join(base, "steps", "refine", "stdout.log")
+      if not os.path.exists(step_log):
+          return False, "no steps/refine/stdout.log (needs execution.steps + traces.stdout)"
+
+      # The refine step's own Claude Code session id. Every subagent it spawns carries the
+      # same sessionId, and the review step gets a different one, so this attributes work
+      # to the refine STEP -- not to the reviewers, and not to a stale transcript left in a
+      # reused workspace (subagents/ is copied, never cleared, so leftovers do occur).
+      session = None
+      for line in open(step_log, encoding="utf-8", errors="replace"):
+          line = line.strip()
+          if not line.startswith("{"):
+              continue
+          try:
+              ev = json.loads(line)
+          except ValueError:
+              continue
+          if ev.get("session_id"):
+              session = ev["session_id"]
+              break
+      if not session:
+          return False, "refine step log has no session_id"
+
+      transcripts = sorted(glob.glob(os.path.join(base, "subagents", "*.jsonl")))
+      if not transcripts:
+          return False, "no subagent transcripts (SubagentStop capture disabled?)"
+
+      READ_TOOLS = {"Read", "Grep", "Glob", "Bash"}   # what counts as LOOKING at the docs
+      HIT_TOOLS = {"Read", "Grep", "Glob"}            # what can EVIDENCE docs coming back...
+      # ...and only from under here. The lookahead is the directory boundary: it
+      # rejects sibling paths (.context/architecture-context-backup/) while keeping
+      # the bare dir eligible -- Grep/Glob address it as path with NO trailing
+      # slash in 34 of the 291 qualifying structured reads in the stored runs.
+      DOCS_DIR = re.compile(r"\.context/architecture-context(?![\w.\-])")
+      MIN_RESULT_CHARS = 200
+      seen = 0
+      attempts = 0
+      hits = 0
+      for path in transcripts:
+          try:
+              with open(path, encoding="utf-8", errors="replace") as fh:
+                  lines = fh.readlines()
+          except OSError:
+              continue
+          if not lines:
+              continue
+          try:
+              first = json.loads(lines[0])
+          except ValueError:
+              continue
+          if not isinstance(first, dict) or first.get("sessionId") != session:
+              continue
+          seen += 1
+          pending = {}
+          # Guard every dereference: an exception here doesn't fail closed, it
+          # errors the judge, and an errored case drops OUT of the min_pass_rate
+          # denominator -- a corrupted capture would fail open at the run level.
+          for line in lines:
+              try:
+                  ev = json.loads(line)
+              except ValueError:
+                  continue
+              if not isinstance(ev, dict):
+                  continue
+              msg = ev.get("message")
+              if not isinstance(msg, dict):
+                  continue
+              for b in msg.get("content") or []:
+                  if not isinstance(b, dict):
+                      continue
+                  if b.get("type") == "tool_use":
+                      tool_input = str(b.get("input", {}))
+                      if b.get("name") in READ_TOOLS and "architecture-context" in tool_input:
+                          pending[b.get("id")] = b.get("name") in HIT_TOOLS and bool(DOCS_DIR.search(tool_input))
+                          attempts += 1
+                  elif b.get("type") == "tool_result" and b.get("tool_use_id") in pending:
+                      eligible = pending.pop(b.get("tool_use_id"))
+                      if not eligible or b.get("is_error"):
+                          continue
+                      content = b.get("content")
+                      text = content if isinstance(content, str) else json.dumps(content)
+                      if len(text) >= MIN_RESULT_CHARS:
+                          hits += 1
+      if not seen:
+          return False, "no subagent transcript belongs to the refine session"
+      return hits > 0, "refine session got documentation from {} of {} architecture-context reads (across {} of its transcripts)".format(hits, attempts, seen)
+
+  # --- Reported metric: the pipeline's OWN assess-strat total (0-8), for
+  #     pipeline-vs-independent-judge agreement. Aggregates as a mean.
+  - name: pipeline_total
+    description: The pipeline's own assess-strat total score (0-8) from the review frontmatter.
+    score_range: [0, 8]        # sum of 4 rubric dims (each 0-2); lets the report band per-case cells
+    check: |
+      import yaml
+      files = outputs.get("files", {})
+      rev = next((c for p, c in files.items()
+                  if p.endswith("-review.md") and not p.endswith("-review-comment.md")), None)
+      if rev is None:
+          return 0.0, "no review file"
+      try:
+          fm = yaml.safe_load(rev.split("---", 2)[1])
+          tot = int(((fm or {}).get("scores") or {}).get("total"))
+      except Exception:
+          return 0.0, "no total"
+      return float(tot), f"pipeline total={tot}/8"
+
+  # --- Cost (Pareto input + per-CASE total gate). Distinct from execution.max_budget_usd,
+  #     which is the per-STEP hard cap. This reads the harness's per-case cost (refine +
+  #     review, summed across steps in run_result.json, incl. subagents). The agent
+  #     architecture judge's cost is attributed to that judge, not the pipeline case.
+  - name: cost_budget
+    description: Per-case pipeline cost (refine + review) stays within budget.
+    builtin: cost_budget
+    arguments:
+      max_cost_usd: 12.0
+
+thresholds:
+  files_exist: {min_pass_rate: 1.0}
+  strategy_nonempty: {min_pass_rate: 1.0}
+  frontmatter_valid: {min_pass_rate: 1.0}
+  recommendation_consistency: {min_pass_rate: 1.0}
+  architecture_context_used: {min_pass_rate: 0.7}   # soft: most refines should ground in the docs
+  # Rubric floors calibrated to the real prod distribution (F/T center ~1, S/A center ~2).
+  feasibility_score: {min_mean: 1.0}
+  testability_score: {min_mean: 1.0}
+  scope_score: {min_mean: 1.5}
+  architecture_score: {min_mean: 1.0}   # grounded agent scores lower/realer than the inflated LLM 2.0
+  pipeline_total: {min_mean: 5.0}
+  cost_budget: {min_pass_rate: 0.8}
+
+# --- Model comparison (Phase 2). Uncomment and run `/eval-anova` to sweep models
+#     with F/p/effect-size per judge + a cost/quality Pareto. The judge model stays
+#     fixed (models.judge) across all cells to avoid self-preference bias.
+# matrix:
+#   factors:
+#     model:
+#       - claude-opus-4-6
+#       - claude-opus-4-8
+#       - claude-sonnet-4-6
+#   replications: 3

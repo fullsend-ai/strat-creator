@@ -45,6 +45,7 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parent.parent
@@ -222,11 +223,13 @@ def test_scorer_agent_and_template():
 # ── eval ──────────────────────────────────────────────────────────────────────────────────
 
 
-def test_eval():
-    config = yaml.safe_load((REPO / D.get("eval.config")).read_text(encoding="utf-8"))
-    pin(D.get("eval.thresholds"), config["thresholds"], "eval.thresholds — eval/strat-refine.yaml:425-437")
-    pin(D.get("eval.timeout"), config["execution"]["timeout"], "eval.timeout — eval/strat-refine.yaml:18")
-    pin(D.get("eval.dataset"), "eval/" + config["dataset"]["path"], "eval.dataset — eval/strat-refine.yaml:70")
+@pytest.mark.parametrize("name", ["rfe-strategy", "initiative-strategy"])
+def test_eval(name):
+    desc = REG.get(name)
+    config = yaml.safe_load((REPO / desc.get("eval.config")).read_text(encoding="utf-8"))
+    pin(desc.get("eval.thresholds"), config["thresholds"], "eval.thresholds — eval/strat-refine.yaml:425-437")
+    pin(desc.get("eval.timeout"), config["execution"]["timeout"], "eval.timeout — eval/strat-refine.yaml:18")
+    pin(desc.get("eval.dataset"), "eval/" + config["dataset"]["path"], "eval.dataset — eval/strat-refine.yaml:70")
 
 
 # ── binding prose (CLAUDE.md:83-91; strategy-create/SKILL.md) ────────────────────────────

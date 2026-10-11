@@ -120,6 +120,23 @@ curated RFE key list lives in `eval/scripts/build_dataset.py` (`CURATED`).
 /eval-run --config eval/strat-refine.yaml --model claude-opus-4-6
 ```
 
+### Initiative strategies
+
+`eval/strat-refine-initiative.yaml` is the same eval for `initiative-strategy` (the strategy
+is written on the Initiative itself): the steps add `--type initiative-strategy` and the
+cases live in `dataset/initiative-cases/`. Everything else (judges, thresholds, hooks,
+permissions) is the RFE eval's, and `tests/test_eval_checks.py` keeps it that way. Build
+its cases from the data repo's `initiative-strategy/` folder, which strat-pipeline's
+Initiative jobs write; every Initiative found becomes a case (there is no curated list yet):
+
+```bash
+python3 eval/scripts/build_dataset.py --type initiative-strategy --data-repo "$DATA_DIR/initiative-strategy"
+/eval-run --config eval/strat-refine-initiative.yaml --model claude-opus-4-6
+```
+
+The judge prompts still name the RFE's `## Business Need (from RFE)` heading; an Initiative
+stub has `## Business Need (from Initiative)`.
+
 Each run writes `eval/runs/<run-id>/` with `summary.yaml`, `report.html`,
 `run_result.json`, and per-case artifacts (incl. per-step `steps/<id>/` traces).
 Reports show per-dimension judge means, the pipeline's own totals, the deterministic
@@ -163,6 +180,7 @@ all cells. Add `--baseline <run-id>` to activate the blind `pairwise` judge
 ```text
 eval/
   strat-refine.yaml                 # harness config (claude-code runner, execution.steps, hooks, judges, matrix[commented])
+  strat-refine-initiative.yaml      # the same for initiative-strategy (--type, dataset/initiative-cases)
   prompts/*.md              # rubric judges + pairwise. Architecture has TWO prompts:
                             #   architecture-agent-judge.md  ACTIVE  (grounded agent judge, wired in strat-refine.yaml)
                             #   architecture-judge.md        legacy  (text-only, inflates to ~2.0; kept for the cheap variant)
@@ -170,6 +188,7 @@ eval/
   scripts/stage-assets.sh   # before_all hook: stages assess-strat + architecture-context into .assets/
   scripts/stage-case.sh     # before_each hook: rebuilds the per-case project tree + stages the create stub
   dataset/cases/<id>/       # (git-ignored) input.yaml, stub.md, rfe-original.md, reference/, annotations.yaml
+  dataset/initiative-cases/ # (git-ignored) the same for initiative-strategy
   .assets/                  # (git-ignored) assess-strat + architecture-context
   runs/                     # (git-ignored) eval run outputs
 ```

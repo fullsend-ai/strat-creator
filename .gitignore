@@ -228,6 +228,7 @@ eder-claude-research-notes/
 eval/.assets/
 eval/runs/
 eval/dataset/cases/
+eval/dataset/initiative-cases/
 
 # Local scratch: skill state files (scripts/state.py) and eval preflight state
 tmp/

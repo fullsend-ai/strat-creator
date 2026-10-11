@@ -35,10 +35,12 @@ RFE_KEY="$(_field rfe_key)"
 # escape the workspace. Anchored regex, not a `case` glob -- a glob's * matches / and
 # ; as well, so STRAT-[0-9]* happily accepts "STRAT-1/../../outside".
 [ -n "$RFE_KEY" ] || { log "FATAL: rfe_key missing in $INPUT"; exit 1; }
-[[ "$STRAT_ID" =~ ^STRAT-[0-9]+$ ]] || {
-  log "FATAL: strat_id must be STRAT-<n>, got '$STRAT_ID'"; exit 1; }
-[[ "$RFE_KEY" =~ ^RHAIRFE-[0-9]+$ ]] || {
-  log "FATAL: rfe_key must be RHAIRFE-<n>, got '$RFE_KEY'"; exit 1; }
+# Both are <PROJECT>-<n> keys: an rfe-strategy case is STRAT-<n> from RHAIRFE-<n>, an
+# initiative-strategy case is RHOAIENG-<n> on the Initiative itself (build_dataset.py --type).
+[[ "$STRAT_ID" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || {
+  log "FATAL: strat_id must be <PROJECT>-<n>, got '$STRAT_ID'"; exit 1; }
+[[ "$RFE_KEY" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || {
+  log "FATAL: rfe_key must be <PROJECT>-<n>, got '$RFE_KEY'"; exit 1; }
 log "staging $STRAT_ID ($RFE_KEY) in $WS"
 
 # --- 1. Real (not symlinked) project tree so skill bootstrap can't write into the

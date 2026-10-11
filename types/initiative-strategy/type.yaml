@@ -160,9 +160,9 @@ pipeline:
 snapshot: { mode: none, processed_gate: inputs.0.skip_if }
 reporting:
   criterion_labels: { feasibility: Feasibility, testability: Testability, scope: Scope, architecture: Architecture }
-eval:                                                   # rfe-strategy's eval until an initiative dataset exists — open question
-  config: eval/strat-refine.yaml
-  dataset: eval/dataset/cases
+eval:                                                   # rfe-strategy's eval with --type initiative-strategy (tests/test_eval_checks.py); thresholds copied until an Initiative baseline exists
+  config: eval/strat-refine-initiative.yaml
+  dataset: eval/dataset/initiative-cases                # eval/scripts/build_dataset.py --type initiative-strategy
   timeout: 2700
   thresholds:
     files_exist: { min_pass_rate: 1.0 }
