@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 import type_registry
-from artifact_utils import compute_strat_labels, read_frontmatter
+from artifact_utils import compute_strat_labels, read_frontmatter, source_key
 
 # Every registered type's file names (local id prefix, then tracker key prefixes): the types share one
 # artifacts tree, so the extract lists them all. rfe-strategy alone gives today's STRAT- and RHAISTRAT-.
@@ -190,7 +190,7 @@ def extract_strategy(strat_id, task, review, review_comment):
     return {
         "strat_id": strat_id,
         "title": meta.get("title", ""),
-        "source_rfe": meta.get("source_rfe", ""),
+        "source_rfe": source_key(meta, strat_id),  # the key keeps its name: the dashboard and eval read it
         "priority": meta.get("priority", ""),
         "status": meta.get("status", ""),
         "size": extract_size(body),

@@ -562,3 +562,20 @@ def test_reporters_read_every_types_files(tmp_path):
         spec.loader.exec_module(module)
         tasks, reviews, comments = getattr(module, loader)(str(tmp_path))[:3]
         assert sorted(tasks) == sorted(reviews) == sorted(comments) == ids, filename
+
+
+def test_reporters_read_each_types_source_field():
+    """The reporters' source_rfe column comes from the field the file's type names: an Initiative strategy
+    keeps its Initiative in source_initiative (found in the 2026-10-11 dry run, where the column was empty)."""
+    from artifact_utils import source_key
+    assert source_key({"source_rfe": "RHAIRFE-1"}, "STRAT-1") == "RHAIRFE-1"
+    assert source_key({"source_rfe": "RHAIRFE-2"}, "RHAISTRAT-2") == "RHAIRFE-2"
+    assert source_key({"source_initiative": "RHOAIENG-3"}, "RHOAIENG-3") == "RHOAIENG-3"  # by id
+    assert source_key({"type": "initiative-strategy", "source_initiative": "RHOAIENG-4"}, "ISTRAT-4") == "RHOAIENG-4"
+    assert source_key({"source_initiative": "RHOAIENG-5"}, "STRAT-5") == ""  # an rfe-strategy id reads source_rfe
+    path = REPO / "scripts" / "extract-pipeline-data.py"
+    spec = importlib.util.spec_from_file_location("extract_pipeline_data", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    task = {"meta": {"source_initiative": "RHOAIENG-3", "title": "t"}, "body": ""}
+    assert module.extract_strategy("RHOAIENG-3", task, None, None)["source_rfe"] == "RHOAIENG-3"

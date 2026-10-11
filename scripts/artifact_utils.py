@@ -223,6 +223,15 @@ def typed_schema(schema_type, path, data=None):
     return typed if typed in SCHEMAS else schema_type
 
 
+def source_key(meta, strat_id):
+    """The ticket a strategy was made from, read from the field its type names (``inputs[0].source_ref_field``:
+    rfe-strategy's ``source_rfe``, initiative-strategy's ``source_initiative``). The type is picked as in
+    typed_schema: the ``type:`` stamp, else the type that owns the id, else rfe-strategy."""
+    name = meta.get("type")
+    desc = _TYPES.get(name) if name in _TYPES else (_TYPES.detect(strat_id) or _TYPE)
+    return meta.get(desc.get("inputs.0.source_ref_field")) or ""
+
+
 # ─── Label Derivation ────────────────────────────────────────────────────────────
 
 # conventions.label_categories is keyed by label KEY; render it over conventions.labels.

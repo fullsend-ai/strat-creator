@@ -20,7 +20,7 @@ from pathlib import Path
 # Add scripts/ to path for frontmatter imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 import type_registry
-from artifact_utils import compute_strat_labels, label_category, read_frontmatter
+from artifact_utils import compute_strat_labels, label_category, read_frontmatter, source_key
 
 # Every registered type's file names (local id prefix, then tracker key prefixes): the types share one
 # artifacts tree, so the report lists them all. rfe-strategy alone gives today's STRAT- and RHAISTRAT-.
@@ -329,7 +329,7 @@ def generate_html(tasks, reviews, review_comments, skipped, pending_review, conf
         meta = task["meta"]
         rev_meta = review.get("meta", {})
         reviewers = rev_meta.get("reviewers", {})
-        source_rfe = meta.get("source_rfe", "")
+        source_rfe = source_key(meta, strat_id)
         cfg = config.get(source_rfe, {})
 
         scores = rev_meta.get("scores", {})
