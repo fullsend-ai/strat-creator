@@ -2,6 +2,7 @@
 name: strategy-architecture-review
 description: Reviews strategy features for architectural correctness — dependencies, integration patterns, component interactions.
 context: fork
+agent: strat-reviewer
 allowed-tools: Read, Grep, Glob
 model: opus
 user-invocable: false

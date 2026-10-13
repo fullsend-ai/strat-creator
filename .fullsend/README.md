@@ -322,6 +322,7 @@ the consumer checkout before the sandbox starts:
 
 - `.claude/skills/` (the `scripts` symlinks are dereferenced, so only regular files are copied)
 - `.claude/agents/strat-scorer.md`
+- `.claude/agents/strat-reviewer.md` (explicit Read/Grep/Glob tools for forked reviewer reports)
 - `scripts/`, `config/` and `workflows/`
 
 `artifacts/` and the progress record (`artifacts/strat-progress.json`) end up

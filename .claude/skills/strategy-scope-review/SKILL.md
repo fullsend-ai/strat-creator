@@ -2,6 +2,7 @@
 name: strategy-scope-review
 description: Reviews strategy features for scope — is each strategy right-sized, does the effort match the scope?
 context: fork
+agent: strat-reviewer
 allowed-tools: Read, Grep, Glob
 model: opus
 user-invocable: false

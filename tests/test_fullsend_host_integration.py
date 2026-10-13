@@ -102,6 +102,8 @@ def test_pre_script_vendors_locks_and_writes_the_input(host, jira):
     assert (target / ".claude/skills/strategy-review/SKILL.md").is_file()
     assert (target / ".claude/skills/strategy-review/scripts/apply_scores.py").is_file()
     assert (target / ".claude/agents/strat-scorer.md").is_file()
+    assert (target / ".claude/agents/strat-reviewer.md").read_text() == (
+        host["src"] / ".claude/agents/strat-reviewer.md").read_text()
     assert (target / "scripts/strat_pipeline_state.py").is_file()
     assert (target / "workflows/strat-pipeline.js").is_file()
     assert not [p for p in target.rglob("*") if p.is_symlink()]

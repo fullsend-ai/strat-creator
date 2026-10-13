@@ -2,6 +2,7 @@
 name: strategy-testability-review
 description: Reviews strategy features for testability — are acceptance criteria measurable, are edge cases covered, can this be validated?
 context: fork
+agent: strat-reviewer
 allowed-tools: Read, Grep, Glob
 model: opus
 user-invocable: false

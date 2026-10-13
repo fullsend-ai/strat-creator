@@ -8,6 +8,6 @@
   },
   "license": "Apache-2.0",
   "skills": "./.claude/skills/",
-  "agents": ["./.claude/agents/strat-scorer.md"],
+  "agents": ["./.claude/agents/strat-scorer.md", "./.claude/agents/strat-reviewer.md"],
   "workflows": "./workflows/"
 }
