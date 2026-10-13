@@ -1,6 +1,6 @@
 ---
 name: strategy-signoff
-description: Sign off on a CI-approved strategy — pushes content and adds strat-creator-human-sign-off label. For rubric-pass strategies only.
+description: Sign off on a CI-approved strategy (a RHAISTRAT issue, or an Initiative's strategy) — pushes content and adds strat-creator-human-sign-off label. For rubric-pass strategies only.
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
@@ -9,7 +9,16 @@ You are signing off on a strategy that has passed CI review, marking it as featu
 
 ## Input
 
-`$ARGUMENTS` must contain a RHAISTRAT key (e.g., `RHAISTRAT-1520`). If no key is provided, ask the user for one.
+`$ARGUMENTS` must contain a strategy key: a RHAISTRAT key (e.g., `RHAISTRAT-1520`), or the RHOAIENG key of an
+Initiative whose strategy lives on the Initiative itself (e.g., `RHOAIENG-1200`). If no key is provided, ask the
+user for one. `RHAISTRAT-NNNN` below stands for whichever key you were given.
+
+Resolve the work type from the key, adding `--type <type>` if `$ARGUMENTS` has one, and use the type it prints as
+`<type>` below. If it exits non-zero, show its error and stop.
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py resolve RHAISTRAT-NNNN
+```
 
 ## Step 1: Validate Pre-Conditions
 
@@ -21,7 +30,7 @@ Then fetch the current labels and parent from Jira:
 python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_issue.py RHAISTRAT-NNNN --fields labels,parent --markdown
 ```
 
-**Guard checks** (the labels are the type's `conventions.labels.needs_attention` / `rubric_pass` in `types/<type>/type.yaml`, `<type>` being the `--type` value in `$ARGUMENTS`, default `rfe-strategy`):
+**Guard checks** (the labels are the type's `conventions.labels.needs_attention` / `rubric_pass` in `types/<type>/type.yaml`, `<type>` being the type resolved above):
 
 - If the issue has `strat-creator-needs-attention` (not `rubric-pass`): tell the user this strategy needs CI approval first. Suggest using `/strategy-push` to resubmit, then waiting for CI to approve before signing off. **Stop here.**
 - If the issue does NOT have `strat-creator-rubric-pass`: tell the user this strategy hasn't been CI-approved yet and cannot be signed off. **Stop here.**
