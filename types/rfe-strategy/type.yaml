@@ -5,13 +5,13 @@
 # the registry yet; tests/test_type_registry_pins.py (next PR) pins every value below equal to the literal a
 # script still carries, so the descriptor is source of truth BY TEST until each consumer migrates
 # (rfe-creator's discipline, its types/README.md "Adoption status"). Every value is the live literal on
-# main (4c6ae1c) with the consuming file:line AT THAT COMMIT in a trailing comment; nothing here is
+# main (cc1ba8c) with the consuming file:line AT THAT COMMIT in a trailing comment; nothing here is
 # authored, and a value with no script consumer says so (prose / unpinned). Open questions on AISDLC-60 that
 # would change a value are marked open question (same-ticket initiatives; batch discovery beside
 # event dispatch); the block stays additive either way.
 schema_version: 1
 type: rfe-strategy
-display: { entity: Strategy, entity_plural: Strategies }   # strategy-review/SKILL.md:208 "Strategy Review"; README.md:22, generate-report.py:653 "Strategies" — display prose, unpinned
+display: { entity: Strategy, entity_plural: Strategies }   # strategy-review/SKILL.md:208 "Strategy Review"; README.md:22, generate-report.py:655 "Strategies" — display prose, unpinned
 kind: strategy                                          # rfe-creator's reserved enum value, first real use; no script consumer (the skills + the external CI are the engine)
 
 identity:
@@ -84,7 +84,7 @@ inputs:                                                 # rfe-creator's RESERVED
     removed_context_marker:                             # strategy-refine/SKILL.md:123 string-matches rfe-creator's removed-context comment — a CONSUMED contract (R7), not this type's own convention
       comment_prefix: "[RFE Creator]"
       phrase: "The following technical implementation details were removed from the RFE description during review."
-    skip_if:                                            # "already processed", evaluated on the DERIVED (RHAISTRAT) side: jira_utils.py:285-330 find_processed_rfe_ids; ADR-0002
+    skip_if:                                            # "already processed", evaluated on the DERIVED (RHAISTRAT) side: jira_utils.py:285-343 find_processed_rfe_ids; ADR-0002
       labels_any: [strat-creator-rubric-pass, strat-creator-needs-attention, strat-creator-processing]   # pipeline-settings.yaml:57-60 skip_labels; jira_utils.py:302-307
       statuses: [In Progress, Review, Release Pending, Closed, Resolved]   # pipeline-settings.yaml:64-69 excluded_strat_statuses; strategy-create/SKILL.md:175
       single_open_unlabeled_override: true              # jira_utils.py:294-298 (the docstring rule); strategy-create/SKILL.md:175-177 (exactly one open clone -> import it; more than one -> skip)
@@ -111,10 +111,10 @@ conventions:
   labels:                                               # every key spelled out; all equal "<label_prefix>-<suffix>" today (pinned)
     rubric_pass: strat-creator-rubric-pass              # artifact_utils.py:254,:278; strategy-review/SKILL.md:50,:276; strategy-signoff/SKILL.md:27; pipeline-settings.yaml:58 (skip) — PUBLISHED downstream (epic-creator's intake reads it)
     needs_attention: strat-creator-needs-attention      # artifact_utils.py:255,:280; strategy-review/SKILL.md:50,:277-278; lock_issues.py:47,:54; pipeline-settings.yaml:59
-    ignore: strat-creator-ignore                        # artifact_utils.py:256 (exclusion category); no JQL consumer at 4c6ae1c
+    ignore: strat-creator-ignore                        # artifact_utils.py:256 (exclusion category); no JQL consumer at cc1ba8c
     auto_created: strat-creator-auto-created            # artifact_utils.py:251,:272; lock_issues.py:51 STRAT_REQUIRED_LABEL
     auto_refined: strat-creator-auto-refined            # artifact_utils.py:252,:275 (status Refined/Reviewed) — a strat-creator key: rfe-creator has no refine stage
-    auto_revised: strat-creator-auto-revised            # artifact_utils.py:253 (provenance category); no writer at 4c6ae1c
+    auto_revised: strat-creator-auto-revised            # artifact_utils.py:253 (provenance category); no writer at cc1ba8c
     human_sign_off: strat-creator-human-sign-off        # artifact_utils.py:257 (gate); strategy-signoff/SKILL.md:3,:41,:93,:97; lock_issues.py:48,:55 — rfe-creator's RESERVED key, first real use (human sign-off stays)
     processing: strat-creator-processing                # lock_issues.py:43 PROCESSING_LABEL, :46; pipeline-settings.yaml:47,:60 — rfe-creator's RESERVED key, first real use; == pipeline.lock.label
   label_categories:                                     # artifact_utils.py:250-258 LABEL_CATEGORIES, keyed here by label KEY (the pin renders labels[k] -> category); processing has no row there (label_category() -> "unknown")
@@ -144,7 +144,7 @@ schema:
       enum: [Blocker, Critical, Major, Normal, Minor, Undefined]   # artifact_utils.py:160-165
       map_to_tracker: {}                                # identity map: clone copies the Jira priority by name (clone_issue.py:89)
   review:
-    score_fields: [feasibility, testability, scope, architecture]   # artifact_utils.py:211-214 (scores); generate-report.py:374 dimensions (order verbatim); eval/strat-refine.yaml:8
+    score_fields: [feasibility, testability, scope, architecture]   # artifact_utils.py:211-214 (scores); generate-report.py:376 dimensions (order verbatim); eval/strat-refine.yaml:8
     total_field: total                                  # artifact_utils.py:215 scores.total; strategy-review/SKILL.md:208 "Score: {total}/8"
     recommendation_enum: [approve, revise, reject]      # artifact_utils.py:197-201 (strat-review.recommendation); :222-241 (reviewers.*)
     extra_fields:
@@ -178,7 +178,7 @@ pipeline:
   rubric:                                               # ADR-0005: the rubric is embedded in this repo — rfe-creator's D3 `repo: self` form
     repo: self
     path: scripts/assess-strat/agent_prompt.md          # export_rubric.py:21 "Source of truth"; the strat-scorer agent reads it
-    rubric_version: "93a3722cbd00076723679e3ec666a6e2fc15038791b69f670245671360d2e5f7"   # sha256 of that file at 4c6ae1c (pinned by test; changes with the rubric)
+    rubric_version: "93a3722cbd00076723679e3ec666a6e2fc15038791b69f670245671360d2e5f7"   # sha256 of that file at cc1ba8c (pinned by test; changes with the rubric)
     export: artifacts/strat-rubric.md                   # export_rubric.py:15
   lock:                                                 # lock_issues.py:43-56 — lock labels written on the SOURCE (RHAIRFE) issue
     label: strat-creator-processing                     # :43 PROCESSING_LABEL (== conventions.labels.processing)
@@ -190,13 +190,13 @@ pipeline:
     attachment: "{issue_key}-strategy.md"               # push_strategy.py:51 STRATEGY_ATTACHMENT_TEMPLATE (pull_strategy.py:41 spells the placeholder {strat_key})
     policy: append_only                                 # ADR-0004; push_strategy.py:62-198 per-issue writer lock, newest wins (attachment_sort_key)
   section_ownership:                                    # the section-scoped body contract push_strategy.py:372-380 enforces
-    - { heading: "## Business Need (from RFE)", owner: source }                              # jira_utils.py:1125 BUSINESS_NEED_HEADING; strategy-create/SKILL.md:197-198 (verbatim, never rewritten)
+    - { heading: "## Business Need (from RFE)", owner: source }                              # jira_utils.py:1127 BUSINESS_NEED_HEADING; strategy-create/SKILL.md:197-198 (verbatim, never rewritten)
     - { heading: "## Strategy (AI Generated by Agentic SDLC Pipeline)", owner: pipeline }    # push_strategy.py:41 STRATEGY_HEADING (replaced on push :372-380)
     - { heading: "## Staff Engineer / SME Input", owner: human }                              # push_strategy.py:42-44 STAFF_INPUT_HEADING / STAFF_INPUT_TEMPLATE (preserved on push)
 
-snapshot: { mode: none, processed_gate: inputs.0.skip_if }   # no snapshot files; "already processed" is the derived-side skip_if (jira_utils.py:285-330)
+snapshot: { mode: none, processed_gate: inputs.0.skip_if }   # no snapshot files; "already processed" is the derived-side skip_if (jira_utils.py:285-343)
 reporting:
-  criterion_labels: { feasibility: Feasibility, testability: Testability, scope: Scope, architecture: Architecture }   # display names: no code literal — generate-report.py:374 iterates the lowercase keys; eval/strat-refine.yaml:8 spells the four names. Unpinned
+  criterion_labels: { feasibility: Feasibility, testability: Testability, scope: Scope, architecture: Architecture }   # display names: no code literal — generate-report.py:376 iterates the lowercase keys; eval/strat-refine.yaml:8 spells the four names. Unpinned
 eval:
   config: eval/strat-refine.yaml                        # the committed eval config (hand-written; strat-creator has no generate_eval_config)
   dataset: eval/dataset/cases                           # eval/strat-refine.yaml:70 dataset.path "dataset/cases" (relative to eval/)
