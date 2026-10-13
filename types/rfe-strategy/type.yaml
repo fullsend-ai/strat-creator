@@ -6,7 +6,8 @@
 # script still carries, so the descriptor is source of truth BY TEST until each consumer migrates
 # (rfe-creator's discipline, its types/README.md "Adoption status"). Every value is the live literal on
 # main (cc1ba8c) with the consuming file:line AT THAT COMMIT in a trailing comment; nothing here is
-# authored, and a value with no script consumer says so (prose / unpinned). Open questions on AISDLC-60 that
+# authored, and a value with no script consumer says so (prose / unpinned). The intake gate, skip lists and batch
+# size are not copied: discovery.settings names the file that holds them. Open questions on AISDLC-60 that
 # would change a value are marked open question (same-ticket initiatives; batch discovery beside
 # event dispatch); the block stays additive either way.
 schema_version: 1
@@ -36,46 +37,6 @@ inputs:                                                 # rfe-creator's RESERVED
       link_type: Cloners                                # CLAUDE.md:86; jira_utils.py:251,:271; pull_strategy.py:59,:149; find_strat_for_rfe.py:42
       direction: derived_is_inward                      # rfe-creator fixture value; the consumers search BOTH directions (find_strat_for_rfe.py:44-47; jira_utils.py:253-259)
     source_ref_field: source_rfe                        # artifact_utils.py:149-153 (strat-task, required); pull_strategy.py:201
-    gate:                                               # the intake gate = pipeline-settings.yaml jql: (rendered by jira_utils.py:200-242); strategy-create/SKILL.md:62-93 is its prose twin
-      labels_any: [rfe-creator-autofix-rubric-pass, tech-reviewed]   # pipeline-settings.yaml:43-45 quality_labels "at least one required"; jira_utils.py:229-231. The first is rfe-creator's conventions.labels.rubric_pass — its PUBLISHED CONTRACT (R7), spelled here because the stations share no code
-      labels_all: []
-      labels_not: [strat-creator-processing]            # pipeline-settings.yaml:46-47 excluded_labels (the RFE-level lock); jira_utils.py:232-234 "(labels NOT IN (...) OR labels IS EMPTY)"
-      statuses_not: [Closed, Resolved, Draft]           # pipeline-settings.yaml:48-51 excluded_statuses; jira_utils.py:235-237; #79 took the copy out of strategy-create/SKILL.md
-      any_of:                                           # pipeline-settings.yaml:8 "OR'd with required_labels via cf[10855]"; jira_utils.py:215-228
-        - labels_any: [strat-creator-3.5, strat-creator-3.6, strat-creator-3.7]   # pipeline-settings.yaml:4-7 required_labels (#79 took the copy out of strategy-create/SKILL.md)
-        - fields:
-            customfield_10855:                          # the Target Version picker: jira_utils.py:219 `cf[10855] in (...)`; strategy-create/SKILL.md:70,:73; clone_issue.py:92 copies it
-              name_in:                                  # pipeline-settings.yaml:9-42 target_versions (30 values, order verbatim)
-                - rhoai-3.5
-                - rhoai-3.5.EA1
-                - rhoai-3.5.EA2
-                - rhoai-3.6
-                - rhoai-3.6.EA1
-                - rhoai-3.6.EA2
-                - "3.5 EA1 RHAII RELEASE"
-                - "3.5 EA1 RHOAI RELEASE"
-                - "3.5 EA1 RHELAI RELEASE"
-                - "3.5 EA2 RHAII RELEASE"
-                - "3.5 EA2 RHOAI RELEASE"
-                - "3.5 EA2 RHELAI RELEASE"
-                - "3.5 GA RHAII RELEASE"
-                - "3.5 GA RHOAI RELEASE"
-                - "3.5 GA RHELAI RELEASE"
-                - "3.6 EA1 RHAII RELEASE"
-                - "3.6 EA1 RHOAI RELEASE"
-                - "3.6 EA1 RHELAI RELEASE"
-                - "3.6 EA2 RHAII RELEASE"
-                - "3.6 EA2 RHOAI RELEASE"
-                - "3.6 EA2 RHELAI RELEASE"
-                - "3.6 GA RHAII RELEASE"
-                - "3.6 GA RHOAI RELEASE"
-                - "3.6 GA RHELAI RELEASE"
-                - "3.7 EA RHAII RELEASE"
-                - "3.7 EA RHOAI RELEASE"
-                - "3.7 EA RHELAI RELEASE"
-                - "3.7 GA RHAII RELEASE"
-                - "3.7 GA RHOAI RELEASE"
-                - "3.7 GA RHELAI RELEASE"
     parent_gate:                                        # clone_issue.py:31-70 _resolve_parent_outcome: the source's parent is copied only when it is a RHAISTRAT- Outcome that is not Closed
       key_prefixes: ["RHAISTRAT-"]                      # clone_issue.py:43
       issue_type: Outcome                               # clone_issue.py:58
@@ -84,14 +45,11 @@ inputs:                                                 # rfe-creator's RESERVED
     removed_context_marker:                             # strategy-refine/SKILL.md:123 string-matches rfe-creator's removed-context comment — a CONSUMED contract (R7), not this type's own convention
       comment_prefix: "[RFE Creator]"
       phrase: "The following technical implementation details were removed from the RFE description during review."
-    skip_if:                                            # "already processed", evaluated on the DERIVED (RHAISTRAT) side: jira_utils.py:285-343 find_processed_rfe_ids; ADR-0002
-      labels_any: [strat-creator-rubric-pass, strat-creator-needs-attention, strat-creator-processing]   # pipeline-settings.yaml:57-60 skip_labels; jira_utils.py:302-307
-      statuses: [In Progress, Review, Release Pending, Closed, Resolved]   # pipeline-settings.yaml:64-69 excluded_strat_statuses; strategy-create/SKILL.md:175
+    skip_if:                                            # "already processed", evaluated on the DERIVED (RHAISTRAT) side: jira_utils.py:285-343 find_processed_rfe_ids; ADR-0002. The skip labels and statuses are in discovery.settings
       single_open_unlabeled_override: true              # jira_utils.py:294-298 (the docstring rule); strategy-create/SKILL.md:175-177 (exactly one open clone -> import it; more than one -> skip)
 
-discovery:                                              # strat-creator block: batch scheduling (rfe-creator's fixture: "consumer scheduling settings, not intake-gate vocabulary") — open question: whether batch discovery stays beside event-driven dispatch
-  batch_size: 10                                        # pipeline-settings.yaml:54; list-rfe-ids.py:83 --batch-size
-  order_by: key ASC                                     # pipeline-settings.yaml:52 jql.order_by; jira_utils.py:212 default "key ASC"
+discovery:                                              # strat-creator block: JQL batch discovery — open question: whether batch discovery stays beside event-driven dispatch
+  settings: config/pipeline-settings.yaml               # the intake gate (jql:), skip_labels, excluded_strat_statuses and batch_size, not copied here (#79): list-rfe-ids.py:28 reads it, jira_utils.py:200-242 renders the gate, strategy-create/SKILL.md:64 checks it
 
 dirs:                                                   # CLAUDE.md:10-19 (artifacts/ is the CI root)
   tasks: artifacts/strat-tasks                          # CLAUDE.md:11; push_refined_strategies.py:60 --artifacts-dir default; push_strategy.py:9
