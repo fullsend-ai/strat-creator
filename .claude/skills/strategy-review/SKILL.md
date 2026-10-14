@@ -71,7 +71,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/strat_label_gate.py RHAISTRAT-NNNN
 It prints `{"key": ..., "eligible": ..., "gate_label": ..., "gate_labels_present": [...]}`.
 Act only on this JSON — do NOT read or interpret the label list yourself. The
 script matches `strat-creator-rubric-pass` and `strat-creator-needs-attention`
-exactly; lookalikes such as `rfe-creator-needs-attention` (inherited from the
+(the type's `conventions.labels.rubric_pass` / `needs_attention`) exactly; lookalikes such as `rfe-creator-needs-attention` (inherited from the
 source RFE) are not gate labels and never stop review. Exit 2 means Jira
 credentials are missing: read the labels via MCP and rerun with
 `--labels <comma-separated labels>`. Any other non-zero exit stops review.

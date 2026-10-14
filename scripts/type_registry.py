@@ -20,7 +20,9 @@ first registry: ``detect()`` refuses a tie where rfe-creator returns the first m
 lists the primary root, then each extra root; the CLI has no ``candidates`` verb, no
 ``--extra-roots`` and no ``list --json``.
 
-Status: ``scripts/jira_utils.py`` is the first consumer; it reads the default type.
+Status: ``scripts/jira_utils.py`` (identity, inputs[0]) and ``scripts/list-rfe-ids.py``
+(discovery.settings) read it; ``list-rfe-ids.py --type`` picks the type
+through ``resolve()``, everything else reads the default type.
 ``tests/test_type_registry_pins.py`` pins every literal a script still carries to its descriptor
 projection — source of truth BY TEST before BY IMPORT.
 

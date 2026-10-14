@@ -1,9 +1,9 @@
 # types/rfe-strategy/type.yaml — the rfe-strategy work-item type descriptor: a strategy derived from an
 # approved RHAIRFE Feature Request into a RHAISTRAT Feature (today's only strat-creator behaviour).
 # Contract: types/_schema/type.schema.json — rfe-creator's vocabulary, copied not imported (the
-# stations share configuration vocabulary, not code). Status: scripts/jira_utils.py reads
-# identity.jira.project, inputs[0].jira.{project,key_prefixes[0]}, inputs[0].relation.link_type,
-# and the two id grammars as the default type (type_registry.LEGACY_DEFAULT_TYPE);
+# stations share configuration vocabulary, not code). Status: scripts/jira_utils.py and
+# scripts/list-rfe-ids.py read identity.jira.project, inputs[0] (jira, relation), discovery.settings and the two
+# id grammars (list-rfe-ids.py --type picks the type, default rfe-strategy);
 # tests/test_type_registry_pins.py pins every other value below equal to the literal a
 # script still carries, so the descriptor is source of truth BY TEST until each consumer migrates
 # (rfe-creator's discipline, its types/README.md "Adoption status"). Every value is the live literal on

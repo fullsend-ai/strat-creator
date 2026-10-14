@@ -48,7 +48,7 @@ See [Human Review Guide](docs/human-review-guide.md) for the full walkthrough.
 
 The pipeline supports two modes for selecting which RFEs to process:
 
-1. **JQL mode** (`--jql-default` or `--jql`): Queries Jira directly using labels and statuses defined in `config/pipeline-settings.yaml`. Handles batching and pre-filtering automatically.
+1. **JQL mode** (`--jql-default` or `--jql`): Queries Jira using labels and statuses defined in the work type's settings file (`discovery.settings` in `types/<type>/type.yaml`: `config/pipeline-settings.yaml` for `rfe-strategy`, the default; `--type` picks the type). Handles batching and pre-filtering automatically.
 2. **Config file mode** (`--config`): Reads RFE IDs from a manually curated YAML batch file.
 
 ### JQL Pre-Filtering
@@ -64,8 +64,8 @@ In JQL mode, RFEs go through a two-stage filter before reaching the skills:
 
 **Stage 2 — Pre-filter (before batching):**
 Queries RHAISTRAT to find RFEs that already have processed or active strategies, then removes them so batch slots aren't wasted. An RFE is excluded if any of its STRATs (via Cloners links):
-- Have a skip label: `strat-creator-rubric-pass` or `strat-creator-needs-attention`
-- Are in an active/completed status: `In Progress`, `Review`, `Refinement`, `Release Pending`, `Closed`, `Resolved`
+- Have a skip label: `strat-creator-rubric-pass`, `strat-creator-needs-attention` or `strat-creator-processing`
+- Are in an active/completed status: `In Progress`, `Review`, `Release Pending`, `Closed`, `Resolved`
 
 After both stages, the first `batch_size` (default 10) remaining RFEs are selected.
 
@@ -83,7 +83,7 @@ Use `--include-processed` to bypass pre-filtering when needed.
 
 ### Configuration
 
-All filter parameters are externalized in `config/pipeline-settings.yaml` — no hardcoded labels in code.
+All filter parameters are externalized in `config/pipeline-settings.yaml` (the settings file `types/rfe-strategy/type.yaml` names) — no hardcoded labels in code.
 
 ```bash
 # List all matching RFEs

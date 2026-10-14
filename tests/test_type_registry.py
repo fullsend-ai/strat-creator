@@ -1,6 +1,5 @@
 """Unit tests for scripts/type_registry.py and scripts/validate_types.py."""
 
-import inspect
 import os
 import sys
 from pathlib import Path
@@ -291,15 +290,59 @@ def test_default_root_is_file_relative():
 # ── the first consumer ────────────────────────────────────────────────────────────────────
 
 
-def test_jira_utils_derives_the_4c6ae1c_literals():
+def test_jira_utils_derives_the_4c6ae1c_literals(monkeypatch):
     """The first consumer composes what used to be literals; equality with the text on main at
     4c6ae1c is the byte-identical check (their pins were deleted with that change)."""
     assert jira_utils._TYPE.name == SHIPPED
     assert jira_utils._TITLE_KEY_RE.pattern == r"^#\s+(RFE-\d+|RHAIRFE-\d+|STRAT-\d+|RHAISTRAT-\d+):"
-    assert inspect.signature(jira_utils.find_processed_rfe_ids).parameters["strat_project"].default == "RHAISTRAT"
+    seen = []  # find_processed_rfe_ids queries the default type's project (the 4c6ae1c default)
+    monkeypatch.setattr(jira_utils, "search_issues", lambda s, u, t, jql, **kw: seen.append(jql) or [])
+    jira_utils.find_processed_rfe_ids("s", "u", "t", ["x"])
+    assert seen == ['project = RHAISTRAT AND (labels = "x")']
     link = {"type": {"name": "Cloners"}, "outwardIssue": {"key": "RHAIRFE-1"}, "inwardIssue": {"key": "RHAISTRAT-2"}}
     assert jira_utils._linked_input_key(link) == "RHAIRFE-1"
     assert jira_utils._linked_input_key({**link, "type": {"name": "Blocks"}}) is None
     inward_only = {"type": {"name": "Cloners"}, "inwardIssue": {"key": "RHAIRFE-3"}}
     assert jira_utils._linked_input_key(inward_only) == "RHAIRFE-3"
     assert jira_utils._linked_input_key({"type": {"name": "Cloners"}, "inwardIssue": None}) is None
+
+
+# ── the intake gate ───────────────────────────────────────────────────────────────────────
+
+# What build_jql_from_config produced from config/pipeline-settings.yaml on main at b396172.
+FROZEN_INTAKE_JQL = (
+    'project = RHAIRFE AND (labels = "strat-creator-3.5" OR labels = "strat-creator-3.6" OR labels = "str'
+    'at-creator-3.7" OR labels = "strat-creator-3.8" OR cf[10855] in ("rhoai-3.5", "rhoai-3.5.EA1", "rhoa'
+    'i-3.5.EA2", "rhoai-3.6", "rhoai-3.6.EA1", "rhoai-3.6.EA2", "rhai-3.6", "rhai-3.7", "rhai-3.8", "3.5 '
+    'EA1 RHAII RELEASE", "3.5 EA1 RHOAI RELEASE", "3.5 EA1 RHELAI RELEASE", "3.5 EA2 RHAII RELEASE", "3.5'
+    ' EA2 RHOAI RELEASE", "3.5 EA2 RHELAI RELEASE", "3.5 GA RHAII RELEASE", "3.5 GA RHOAI RELEASE", "3.5 '
+    'GA RHELAI RELEASE", "3.6 EA1 RHAII RELEASE", "3.6 EA1 RHOAI RELEASE", "3.6 EA1 RHELAI RELEASE", "3.6'
+    ' EA2 RHAII RELEASE", "3.6 EA2 RHOAI RELEASE", "3.6 EA2 RHELAI RELEASE", "3.6 GA RHAII RELEASE", "3.6'
+    ' GA RHOAI RELEASE", "3.6 GA RHELAI RELEASE", "3.7 EA RHAII RELEASE", "3.7 EA RHOAI RELEASE", "3.7 EA'
+    ' RHELAI RELEASE", "3.7 GA  RHAII RELEASE", "3.7 GA RHOAI RELEASE", "3.7 GA RHELAI RELEASE", "3.8 EA1'
+    ' RHAII RELEASE", "3.8 EA1 RHOAI RELEASE", "3.8 EA1 RHELAI RELEASE", "3.8 EA2 RHAII RELEASE", "3.8 EA'
+    '2 RHOAI RELEASE", "3.8 EA2 RHELAI RELEASE", "3.8 GA RHAII RELEASE", "3.8 GA RHOAI RELEASE", "3.8 GA '
+    'RHELAI RELEASE")) AND (labels = "rfe-creator-autofix-rubric-pass" OR labels = "tech-reviewed") AND ('
+    'labels NOT IN ("strat-creator-processing") OR labels IS EMPTY) AND status NOT IN ("Closed", "Resolve'
+    'd", "Draft") ORDER BY key ASC'
+)
+
+
+def test_intake_jql_is_the_b396172_text():
+    assert jira_utils.build_jql_from_type(REG.get(SHIPPED)) == FROZEN_INTAKE_JQL
+    assert jira_utils.build_jql_from_type() == FROZEN_INTAKE_JQL
+
+
+def test_each_type_names_its_settings_file():
+    for name in REG.choices():
+        path = REG.get(name).get("discovery.settings")
+        assert (REPO / path).is_file(), f"{name}: discovery.settings {path}"
+
+
+def test_processed_check_refuses_a_non_clones_relation(tmp_path, monkeypatch):
+    def parent(data):
+        data["inputs"][0]["relation"] = {"kind": "parent"}
+    desc = type_registry.load(extra_roots=[_dropin(tmp_path, "parent-strategy", parent)], env={}).get("parent-strategy")
+    monkeypatch.setattr(jira_utils, "search_issues", lambda *a, **kw: pytest.fail("queried Jira"))
+    with pytest.raises(ValueError, match="follows a clones relation, not 'parent'"):
+        jira_utils.find_processed_rfe_ids("s", "u", "t", ["x"], desc=desc)

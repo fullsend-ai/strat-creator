@@ -9,10 +9,10 @@ import yaml
 SCRIPT = os.path.join(os.path.dirname(__file__), "..", "scripts", "list-rfe-ids.py")
 
 
-def _run(args, cwd=None):
+def _run(args, cwd=None, env=None):
     result = subprocess.run(
         [sys.executable, SCRIPT] + args,
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, env=env,
     )
     return result
 
@@ -116,3 +116,34 @@ class TestMissingConfig:
         ids = result.stdout.strip().split("\n")
         assert len(ids) >= 5
         assert all(i.startswith("RHAIRFE-") for i in ids)
+
+
+class TestTypeMode:
+    """--jql-default renders the work type's settings file before it needs Jira."""
+
+    def test_jql_default_renders_the_type_settings(self):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("JIRA_")}
+        result = _run(["--jql-default"], env=env)
+        assert result.returncode != 0  # no Jira credentials: stops after printing the JQL
+        assert 'JQL: project = RHAIRFE AND (labels = "strat-creator-3.5" OR' in result.stderr
+        assert result.stderr.count("ORDER BY key ASC") == 1
+        assert "TYPE RESOLVED" not in result.stderr  # no --type: the run prints what it did before
+
+    def test_explicit_type_says_so_and_renders_the_same_gate(self):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("JIRA_")}
+        default = _run(["--jql-default"], env=env)
+        explicit = _run(["--jql-default", "--type", "rfe-strategy"], env=env)
+        assert explicit.stderr == "TYPE RESOLVED: rfe-strategy (--type)\n" + default.stderr
+
+    def test_unknown_type_is_a_usage_error(self):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("JIRA_")}
+        result = _run(["--jql-default", "--type", "nope"], env=env)
+        assert result.returncode == 2
+        assert "invalid choice: 'nope'" in result.stderr
+
+    def test_type_needs_the_type_settings(self):
+        settings = os.path.join(os.path.dirname(__file__), "..", "config", "pipeline-settings.yaml")
+        for source in (["--config", settings], ["--jql-default", settings], []):
+            result = _run(source + ["--type", "rfe-strategy"])
+            assert result.returncode == 2, source
+            assert "--type works with --jql-default (no settings path) or --jql" in result.stderr

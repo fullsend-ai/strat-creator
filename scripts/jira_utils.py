@@ -29,9 +29,10 @@ from strat_side_effects import check_owner, digest, perform
 # The work-item type whose values this module reads: the default, rfe-strategy (today's only
 # production type). Every _TYPE read below used to
 # be a literal here; tests/test_type_registry_pins.py pins the ones that still are.
-# For now: one module-wide type; a function takes a descriptor once a caller runs another type
-# (the entry script resolves it with type_registry.resolve).
+# For now: one module-wide default; build_jql_from_type and find_processed_rfe_ids take another
+# type's descriptor (list-rfe-ids.py --type), the rest follows when a caller needs it.
 _TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 ssl_ctx = ssl.create_default_context()
 try:
@@ -262,15 +263,23 @@ def build_jql_from_config(config_path):
     return jql
 
 
-def _linked_input_key(link):
+def build_jql_from_type(descriptor=None):
+    """The intake JQL of ``descriptor`` (default rfe-strategy), from the settings file its
+    ``discovery.settings`` names."""
+    d = descriptor or _TYPE
+    return build_jql_from_config(os.path.join(_REPO, d.get("discovery.settings")))
+
+
+def _linked_input_key(link, desc=None):
     """The input-side key on one issue link of the descriptor's relation type, else None.
 
     Both link directions are searched (inputs[0].relation.direction is advisory; the live data
-    has links created from either side).
+    has links created from either side). ``desc`` is the work type, default rfe-strategy.
     """
-    if link.get("type", {}).get("name") != _TYPE.get("inputs.0.relation.link_type"):
+    d = desc or _TYPE
+    if link.get("type", {}).get("name") != d.get("inputs.0.relation.link_type"):
         return None
-    prefix = _TYPE.get("inputs.0.jira.key_prefixes.0")
+    prefix = d.get("inputs.0.jira.key_prefixes.0")
     for side in ("outwardIssue", "inwardIssue"):
         key = (link.get(side) or {}).get("key", "")
         if key.startswith(prefix):
@@ -278,27 +287,27 @@ def _linked_input_key(link):
     return None
 
 
-def _linked_input_keys(issues):
+def _linked_input_keys(issues, desc=None):
     for issue in issues:
         for link in issue.get("fields", {}).get("issuelinks", []):
-            key = _linked_input_key(link)
+            key = _linked_input_key(link, desc)
             if key:
                 yield key
 
 
-def _extract_rfe_keys_from_issues(issues):
+def _extract_rfe_keys_from_issues(issues, desc=None):
     """Input (source) keys linked from a list of this type's issues."""
-    return set(_linked_input_keys(issues))
+    return set(_linked_input_keys(issues, desc))
 
 
-def _count_rfe_clones_from_issues(issues):
+def _count_rfe_clones_from_issues(issues, desc=None):
     """Count this type's issues per input key, one per relation link."""
-    return collections.Counter(_linked_input_keys(issues))
+    return collections.Counter(_linked_input_keys(issues, desc))
 
 
 def find_processed_rfe_ids(server, user, token, skip_labels,
                            excluded_strat_statuses=None,
-                           strat_project=_TYPE.get("identity.jira.project")):
+                           strat_project=None, desc=None):
     """Find RHAIRFE IDs that should be excluded from batching.
 
     Excludes RFEs whose RHAISTRAT clones either:
@@ -310,7 +319,17 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
     is un-excluded so the replacement clone can be processed. This
     handles the case where an old clone was closed/rejected and a new
     one was created as a replacement.
+
+    ``desc`` is the work type (default rfe-strategy): ``strat_project`` defaults to its
+    identity.jira.project and its inputs[0].relation is the link walked.
+    For now: a clones relation only; any other relation is refused before Jira is queried, until
+    that type's "already processed" rule is decided.
     """
+    d = desc or _TYPE
+    if d.get("inputs.0.relation.kind") != "clones":
+        raise ValueError(f"{d.name}: the already-processed check follows a clones relation, not "
+                         f"{d.get('inputs.0.relation.kind')!r}; pass --include-processed")
+    strat_project = strat_project or d.get("identity.jira.project")
     processed = set()
 
     if skip_labels:
@@ -318,14 +337,14 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
         jql = f"project = {strat_project} AND ({label_clause})"
         issues = search_issues(server, user, token, jql,
                                fields=["issuelinks"])
-        processed |= _extract_rfe_keys_from_issues(issues)
+        processed |= _extract_rfe_keys_from_issues(issues, d)
 
     if excluded_strat_statuses:
         status_clause = ", ".join(f'"{s}"' for s in excluded_strat_statuses)
         jql = f"project = {strat_project} AND status IN ({status_clause})"
         issues = search_issues(server, user, token, jql,
                                fields=["issuelinks"])
-        processed |= _extract_rfe_keys_from_issues(issues)
+        processed |= _extract_rfe_keys_from_issues(issues, d)
 
     if processed and excluded_strat_statuses:
         sc = ", ".join(f'"{s}"' for s in excluded_strat_statuses)
@@ -333,7 +352,7 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
                     f"AND status NOT IN ({sc})")
         open_issues = search_issues(server, user, token, open_jql,
                                     fields=["issuelinks", "labels"])
-        open_counts = _count_rfe_clones_from_issues(open_issues)
+        open_counts = _count_rfe_clones_from_issues(open_issues, d)
 
         unlabeled_rfes = set()
         if skip_labels:
@@ -346,7 +365,7 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
                 ) & skip_set)
             ]
             unlabeled_rfes = _extract_rfe_keys_from_issues(
-                truly_unlabeled)
+                truly_unlabeled, d)
         else:
             unlabeled_rfes = set(open_counts)
 

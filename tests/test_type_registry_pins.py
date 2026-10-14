@@ -18,10 +18,12 @@ Grandfathered, recorded on purpose:
     spells {issue_key}; the descriptor carries push's spelling and the pin renders pull's.
 
 Retired (the consumer reads the registry now, so the pin would be a tautology):
-  * scripts/jira_utils.py: build_jql_from_config defaults (:206 project, :212 order_by), the
+  * scripts/jira_utils.py: build_jql_from_config's default project (:206), the
     Cloners helpers (:251 link_type, :256 key prefix), find_processed_rfe_ids strat_project (:287)
     and the strip_metadata title regex (:1028-1052, never pinned here). Their equality with the
     4c6ae1c literals is now tests/test_type_registry.py::test_jira_utils_derives_the_4c6ae1c_literals.
+  * scripts/list-rfe-ids.py: the settings path (:28 SETTINGS_PATH) is the type's discovery.settings.
+    tests/test_type_registry.py::test_each_type_names_its_settings_file checks the file exists.
 """
 
 import hashlib
@@ -138,13 +140,6 @@ def test_lock_labels():
 
 
 # ── inputs[0] + discovery vs jira_utils ──────────────────────────────────────────────────
-
-
-def test_discovery_settings():
-    path = D.get("discovery.settings")
-    assert (REPO / path).is_file(), path
-    joined = " / ".join(f'"{part}"' for part in path.split("/"))
-    assert joined in src("scripts/list-rfe-ids.py"), "discovery.settings — list-rfe-ids.py:28 SETTINGS_PATH"
 
 
 def test_processed_lookup_override_rule():
