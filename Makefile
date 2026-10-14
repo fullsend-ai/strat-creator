@@ -3,8 +3,9 @@
 install:            ## Install all dependencies via uv
 	uv sync
 
-lint:               ## Lint Python files with ruff
+lint:               ## Lint Python files with ruff; validate types/ against its schema (gate 1)
 	uv run ruff check scripts/ tests/
+	uv run python scripts/validate_types.py
 
 test:               ## Run all tests
 	uv run pytest tests/ -v --tb=short

@@ -14,6 +14,7 @@ dev = [
     "pytest",
     "ruff",
     "jira-emulator @ git+https://github.com/jctanner/jira-emulator.git",
+    "jsonschema>=4.26.0",
 ]
 
 [tool.ruff]

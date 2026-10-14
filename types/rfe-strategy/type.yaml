@@ -1,0 +1,173 @@
+# types/rfe-strategy/type.yaml — the rfe-strategy work-item type descriptor: a strategy derived from an
+# approved RHAIRFE Feature Request into a RHAISTRAT Feature (today's only strat-creator behaviour).
+# Contract: types/_schema/type.schema.json — rfe-creator's vocabulary, copied not imported (the
+# stations share configuration vocabulary, not code). Status: inert. No script imports
+# the registry yet; tests/test_type_registry_pins.py (next PR) pins every value below equal to the literal a
+# script still carries, so the descriptor is source of truth BY TEST until each consumer migrates
+# (rfe-creator's discipline, its types/README.md "Adoption status"). Every value is the live literal on
+# main (cc1ba8c) with the consuming file:line AT THAT COMMIT in a trailing comment; nothing here is
+# authored, and a value with no script consumer says so (prose / unpinned). The intake gate, skip lists and batch
+# size are not copied: discovery.settings names the file that holds them. Open questions on AISDLC-60 that
+# would change a value are marked open question (same-ticket initiatives; batch discovery beside
+# event dispatch); the block stays additive either way.
+schema_version: 1
+type: rfe-strategy
+display: { entity: Strategy, entity_plural: Strategies }   # strategy-review/SKILL.md:208 "Strategy Review"; README.md:22, generate-report.py:655 "Strategies" — display prose, unpinned
+kind: strategy                                          # rfe-creator's reserved enum value, first real use; no script consumer (the skills + the external CI are the engine)
+
+identity:
+  tracker: jira                                         # every write goes through jira_utils.py REST (clone_issue.py, push_strategy.py, lock_issues.py)
+  jira:
+    project: RHAISTRAT                                  # CLAUDE.md:84; jira_utils.py:287 find_processed_rfe_ids(strat_project="RHAISTRAT"); strategy-create/SKILL.md:104 --target-project RHAISTRAT
+    issue_type: Feature                                 # CLAUDE.md:85; clone_issue.py:79 --issue-type default "Feature"; strategy-create/SKILL.md:104
+    key_prefixes: ["RHAISTRAT-"]                        # artifact_utils.py:143 (strat_id), :157 (jira_key), :195 (strat-review.strat_id); find_strat_for_rfe.py:47 — the tracker half of the id grammar
+  local_prefix: "STRAT-"                                # CLAUDE.md:61-62; strategy-create/SKILL.md:17 (RHAIRFE-1146 -> STRAT-1146)
+  local_id_pattern: '^STRAT-\d+$'                       # artifact_utils.py:143,:195 r"^(STRAT-\d+|RHAISTRAT-\d+)$" — the local half; ONE backslash
+  id_field: strat_id                                    # artifact_utils.py:140 (strat-task), :192 (strat-review)
+  tracker_key_field: jira_key                           # artifact_utils.py:154-159 (^RHAISTRAT-\d+$, optional, default null); CLAUDE.md:60-62 (renamed on submit)
+
+inputs:                                                 # rfe-creator's RESERVED design-§3.7 block, first real use; shape = its tests/fixtures/types/strategy-inputs.yaml
+  - from_type: rfe                                      # rfe-creator's type name, carried as data — the stations import nothing from each other
+    jira:                                               # the upstream binding this station READS (CLAUDE.md:89-91 "RHAIRFE Project (source — read only)")
+      project: RHAIRFE                                  # CLAUDE.md:90; pipeline-settings.yaml:3 jql.project; jira_utils.py:206 build_jql_from_config default
+      issue_type: Feature Request                       # CLAUDE.md:91 — prose only: the discovery JQL has no issuetype clause (jira_utils.py:214)
+      key_prefixes: ["RHAIRFE-"]                        # jira_utils.py:256,:276 startswith("RHAIRFE"); pull_strategy.py:64,:154; push_strategy.py:205; artifact_utils.py:152 r"^(RFE-\d+|RHAIRFE-\d+)$" (source_rfe)
+    relation:
+      kind: clones                                      # strategy-create/SKILL.md:97 "clone it into the RHAISTRAT project"; clone_issue.py:2-5 — open question: same-ticket initiatives need one new enum value (self); not added until ruled
+      link_type: Cloners                                # CLAUDE.md:86; jira_utils.py:251,:271; pull_strategy.py:59,:149; find_strat_for_rfe.py:42
+      direction: derived_is_inward                      # rfe-creator fixture value; the consumers search BOTH directions (find_strat_for_rfe.py:44-47; jira_utils.py:253-259)
+    source_ref_field: source_rfe                        # artifact_utils.py:149-153 (strat-task, required); pull_strategy.py:201
+    parent_gate:                                        # clone_issue.py:31-70 _resolve_parent_outcome: the source's parent is copied only when it is a RHAISTRAT- Outcome that is not Closed
+      key_prefixes: ["RHAISTRAT-"]                      # clone_issue.py:43
+      issue_type: Outcome                               # clone_issue.py:58
+      statuses_not: [Closed]                            # clone_issue.py:64
+    copy_fields: [summary, description, priority, labels, components, versions, customfield_10855, parent]   # clone_issue.py:89-92 — the fetched field list, order verbatim; strategy-create/SKILL.md:97,:108
+    removed_context_marker:                             # strategy-refine/SKILL.md:123 string-matches rfe-creator's removed-context comment — a CONSUMED contract (R7), not this type's own convention
+      comment_prefix: "[RFE Creator]"
+      phrase: "The following technical implementation details were removed from the RFE description during review."
+    skip_if:                                            # "already processed", evaluated on the DERIVED (RHAISTRAT) side: jira_utils.py:285-343 find_processed_rfe_ids; ADR-0002. The skip labels and statuses are in discovery.settings
+      single_open_unlabeled_override: true              # jira_utils.py:294-298 (the docstring rule); strategy-create/SKILL.md:175-177 (exactly one open clone -> import it; more than one -> skip)
+
+discovery:                                              # strat-creator block: JQL batch discovery — open question: whether batch discovery stays beside event-driven dispatch
+  settings: config/pipeline-settings.yaml               # the intake gate (jql:), skip_labels, excluded_strat_statuses and batch_size, not copied here (#79): list-rfe-ids.py:28 reads it, jira_utils.py:200-242 renders the gate, strategy-create/SKILL.md:64 checks it
+
+dirs:                                                   # CLAUDE.md:10-19 (artifacts/ is the CI root)
+  tasks: artifacts/strat-tasks                          # CLAUDE.md:11; push_refined_strategies.py:60 --artifacts-dir default; push_strategy.py:9
+  originals: artifacts/strat-originals                  # CLAUDE.md:17; strategy-create/SKILL.md:119 (the frozen RFE description snapshot)
+  reviews: artifacts/strat-reviews                      # CLAUDE.md:14; apply_scores.py:30 REVIEW_DIR_DEFAULT
+workspace: { root: local }                              # CLAUDE.md:21-24 (the human review mirror); pull_strategy.py:86 local_dir="local", :268 --local-dir default; artifact_utils.py:171-176 workflow enum [local, ci]
+files:
+  tickets: artifacts/strat-tickets.md                   # CLAUDE.md:19 (RHAISTRAT ticket mapping after cloning); written by strategy-create prose, no script consumer
+  skipped: artifacts/strat-skipped.md                   # strategy-create/SKILL.md:66,:75,:79-88; generate-report.py:99; generate-dashboard.py:351; extract-pipeline-data.py:95
+index: { enabled: false }                               # no rebuild_index analog; files.tickets is a mapping, not an index
+companions:
+  comments: true                                        # pull_strategy.py:222-229 writes <key>-comments.md (the RFE's comments); fetch_issue.py:275
+  removed_context: false                                # nothing here writes a -removed-context.yaml; the removed-context comment is READ from the input (inputs[0].removed_context_marker)
+
+conventions:
+  label_prefix: strat-creator                           # every label in artifact_utils.py:250-258 and lock_issues.py:43-56
+  labels:                                               # every key spelled out; all equal "<label_prefix>-<suffix>" today (pinned)
+    rubric_pass: strat-creator-rubric-pass              # artifact_utils.py:254,:278; strategy-review/SKILL.md:50,:276; strategy-signoff/SKILL.md:27; pipeline-settings.yaml:58 (skip) — PUBLISHED downstream (epic-creator's intake reads it)
+    needs_attention: strat-creator-needs-attention      # artifact_utils.py:255,:280; strategy-review/SKILL.md:50,:277-278; lock_issues.py:47,:54; pipeline-settings.yaml:59
+    ignore: strat-creator-ignore                        # artifact_utils.py:256 (exclusion category); no JQL consumer at cc1ba8c
+    auto_created: strat-creator-auto-created            # artifact_utils.py:251,:272; lock_issues.py:51 STRAT_REQUIRED_LABEL
+    auto_refined: strat-creator-auto-refined            # artifact_utils.py:252,:275 (status Refined/Reviewed) — a strat-creator key: rfe-creator has no refine stage
+    auto_revised: strat-creator-auto-revised            # artifact_utils.py:253 (provenance category); no writer at cc1ba8c
+    human_sign_off: strat-creator-human-sign-off        # artifact_utils.py:257 (gate); strategy-signoff/SKILL.md:3,:41,:93,:97; lock_issues.py:48,:55 — rfe-creator's RESERVED key, first real use (human sign-off stays)
+    processing: strat-creator-processing                # lock_issues.py:43 PROCESSING_LABEL, :46; pipeline-settings.yaml:47,:60 — rfe-creator's RESERVED key, first real use; == pipeline.lock.label
+  label_categories:                                     # artifact_utils.py:250-258 LABEL_CATEGORIES, keyed here by label KEY (the pin renders labels[k] -> category); processing has no row there (label_category() -> "unknown")
+    auto_created: provenance
+    auto_refined: provenance
+    auto_revised: provenance
+    rubric_pass: gate
+    needs_attention: escalation
+    ignore: exclusion
+    human_sign_off: gate
+  comment_prefix: "[Strat Creator]"                     # strategy-review/SKILL.md:208 review comment header
+  summary_prefix:                                       # ADR-0003 [DRAFT] prefix lifecycle
+    value: "[DRAFT] "                                   # clone_issue.py:96-97 (prepended at clone); remove_draft_prefix.py:20 DRAFT_PREFIX
+    added_at: create                                    # clone_issue.py:96-97 runs from strategy-create (SKILL.md:95-104)
+    removed_at: signoff                                 # strategy-signoff/SKILL.md:99-101 Step 7 -> remove_draft_prefix.py
+
+schema:
+  task:
+    status_enum: [Draft, Ready, Refined, Reviewed]      # artifact_utils.py:166-170 (strat-task.status) — not rfe-creator's shared enum
+    extra_fields:                                       # strat-task fields beyond the shared base (artifact_utils.py:139-190)
+      source_rfe: { type: string, required: true, pattern: '^(RFE-\d+|RHAIRFE-\d+)$' }   # artifact_utils.py:149-153 (the inputs[0] id grammar: its key_prefixes plus rfe-creator's local prefix)
+      jira_key: { type: string, required: false, pattern: '^RHAISTRAT-\d+$', default: null }   # artifact_utils.py:154-159
+      workflow: { type: string, required: false, enum: [local, ci], default: null }   # artifact_utils.py:171-176; pull_strategy.py:205 writes "local"
+      latest_diff: { type: string, required: false, default: null }   # artifact_utils.py:177-181
+      refine_count: { type: int, required: false }      # artifact_utils.py:186-189 — NO default on purpose (absence != 0, ADR-0001); the key is omitted here for the same reason
+    priority:
+      enum: [Blocker, Critical, Major, Normal, Minor, Undefined]   # artifact_utils.py:160-165
+      map_to_tracker: {}                                # identity map: clone copies the Jira priority by name (clone_issue.py:89)
+  review:
+    score_fields: [feasibility, testability, scope, architecture]   # artifact_utils.py:211-214 (scores); generate-report.py:376 dimensions (order verbatim); eval/strat-refine.yaml:8
+    total_field: total                                  # artifact_utils.py:215 scores.total; strategy-review/SKILL.md:208 "Score: {total}/8"
+    recommendation_enum: [approve, revise, reject]      # artifact_utils.py:197-201 (strat-review.recommendation); :222-241 (reviewers.*)
+    extra_fields:
+      reviewers:                                        # artifact_utils.py:218-243 — one prose verdict per dimension, same enum as recommendation
+        type: dict
+        required: true
+        fields:
+          feasibility: { type: string, required: true, enum: [approve, revise, reject] }
+          testability: { type: string, required: true, enum: [approve, revise, reject] }
+          scope: { type: string, required: true, enum: [approve, revise, reject] }
+          architecture: { type: string, required: true, enum: [approve, revise, reject] }
+    verdict_rules:                                      # strategy-review/SKILL.md:127-129 (APPROVE total>=6 and no zeros; REVISE total>=3 and <=1 zero; else REJECT) — a rule the review skill applies in prose; unpinned by code
+      approve: { total_min: 6, zeros_max: 0 }
+      revise: { total_min: 3, zeros_max: 1 }
+
+pipeline:
+  stages: [create, refine, review, pull, push, signoff] # the six lifecycle skills .claude/skills/strategy-{create,refine,review,pull,push,signoff}/SKILL.md (assess-strat and export-rubric are utilities; strategy-common holds the shared scripts symlink)
+  context_sources:
+    - { name: architecture-context, bootstrap: scripts/fetch-architecture-context.sh, required: false }   # CLAUDE.md:122-134; strategy-review/SKILL.md:56-65 (optional: the architecture review is skipped without it)
+  scorer_agent: strat-scorer                            # .claude/agents/strat-scorer.md:2; assess-strat/SKILL.md:55 subagent_type
+  prompts:
+    template: .claude/skills/strategy-refine/strat-template.md   # the strategy template the create/refine skills fill; referenced, not moved
+  dimensions:                                           # the four reviewer skills strategy-review/SKILL.md:137-140 launches; which ones apply to other types is still open
+    - { name: feasibility, prompt: .claude/skills/strategy-feasibility-review/SKILL.md, blocking: true }     # strategy-review/SKILL.md:137,:145
+    - { name: testability, prompt: .claude/skills/strategy-testability-review/SKILL.md, blocking: true }     # :138,:146
+    - { name: scope, prompt: .claude/skills/strategy-scope-review/SKILL.md, blocking: true }                 # :139,:147
+    - name: architecture                                # :140,:148 "(if architecture context available)"; :172 "skipped — no context"
+      prompt: .claude/skills/strategy-architecture-review/SKILL.md
+      blocking: true
+      condition: { context_exists: .context/architecture-context }   # strategy-review/SKILL.md:94; CLAUDE.md:124
+  rubric:                                               # ADR-0005: the rubric is embedded in this repo — rfe-creator's D3 `repo: self` form
+    repo: self
+    path: scripts/assess-strat/agent_prompt.md          # export_rubric.py:21 "Source of truth"; the strat-scorer agent reads it
+    rubric_version: "93a3722cbd00076723679e3ec666a6e2fc15038791b69f670245671360d2e5f7"   # sha256 of that file at cc1ba8c (pinned by test; changes with the rubric)
+    export: artifacts/strat-rubric.md                   # export_rubric.py:15
+  lock:                                                 # lock_issues.py:43-56 — lock labels written on the SOURCE (RHAIRFE) issue
+    label: strat-creator-processing                     # :43 PROCESSING_LABEL (== conventions.labels.processing)
+    blocking_labels: [strat-creator-processing, strat-creator-needs-attention, strat-creator-human-sign-off]   # :45-49 BLOCKING_LABELS (a set; written order)
+    derived_required_label: strat-creator-auto-created  # :51 STRAT_REQUIRED_LABEL
+    derived_blocking_labels: [strat-creator-needs-attention, strat-creator-human-sign-off]   # :53-56 STRAT_BLOCKING_LABELS
+  body_overflow:                                        # push_strategy.py:400-415; ADR-0004 append-only attachments
+    on_error: CONTENT_LIMIT_EXCEEDED                    # push_strategy.py:407 (key is on_error: a bare `on` is boolean true in YAML 1.1)
+    attachment: "{issue_key}-strategy.md"               # push_strategy.py:51 STRATEGY_ATTACHMENT_TEMPLATE (pull_strategy.py:41 spells the placeholder {strat_key})
+    policy: append_only                                 # ADR-0004; push_strategy.py:62-198 per-issue writer lock, newest wins (attachment_sort_key)
+  section_ownership:                                    # the section-scoped body contract push_strategy.py:372-380 enforces
+    - { heading: "## Business Need (from RFE)", owner: source }                              # jira_utils.py:1127 BUSINESS_NEED_HEADING; strategy-create/SKILL.md:197-198 (verbatim, never rewritten)
+    - { heading: "## Strategy (AI Generated by Agentic SDLC Pipeline)", owner: pipeline }    # push_strategy.py:41 STRATEGY_HEADING (replaced on push :372-380)
+    - { heading: "## Staff Engineer / SME Input", owner: human }                              # push_strategy.py:42-44 STAFF_INPUT_HEADING / STAFF_INPUT_TEMPLATE (preserved on push)
+
+snapshot: { mode: none, processed_gate: inputs.0.skip_if }   # no snapshot files; "already processed" is the derived-side skip_if (jira_utils.py:285-343)
+reporting:
+  criterion_labels: { feasibility: Feasibility, testability: Testability, scope: Scope, architecture: Architecture }   # display names: no code literal — generate-report.py:376 iterates the lowercase keys; eval/strat-refine.yaml:8 spells the four names. Unpinned
+eval:
+  config: eval/strat-refine.yaml                        # the committed eval config (hand-written; strat-creator has no generate_eval_config)
+  dataset: eval/dataset/cases                           # eval/strat-refine.yaml:70 dataset.path "dataset/cases" (relative to eval/)
+  timeout: 2700                                         # eval/strat-refine.yaml:18 (per step)
+  thresholds:                                           # eval/strat-refine.yaml:425-437, verbatim judge names
+    files_exist: { min_pass_rate: 1.0 }
+    strategy_nonempty: { min_pass_rate: 1.0 }
+    frontmatter_valid: { min_pass_rate: 1.0 }
+    recommendation_consistency: { min_pass_rate: 1.0 }
+    architecture_context_used: { min_pass_rate: 0.7 }
+    feasibility_score: { min_mean: 1.0 }
+    testability_score: { min_mean: 1.0 }
+    scope_score: { min_mean: 1.5 }
+    architecture_score: { min_mean: 1.0 }
+    pipeline_total: { min_mean: 5.0 }
+    cost_budget: { min_pass_rate: 0.8 }

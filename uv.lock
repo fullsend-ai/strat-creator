@@ -1161,6 +1161,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "jira-emulator" },
+    { name = "jsonschema" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -1175,6 +1176,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "jira-emulator", git = "https://github.com/jctanner/jira-emulator.git" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "pytest" },
     { name = "ruff" },
 ]
