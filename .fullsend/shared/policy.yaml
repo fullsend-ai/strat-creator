@@ -1,0 +1,30 @@
+# Sandbox policy for strat-single and strat-batch.
+# Derived from the script-led POC's policies/strategy.yaml (see
+# ../SOURCE-PROVENANCE.md). The sandbox only needs Jira: architecture context
+# is fetched by the host pre-script, and publication runs in the host
+# post-script, so GitHub, GitLab and Org Pulse are not reachable from here.
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /proc, /dev/urandom, /app, /etc, /var/log]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: best_effort
+
+# Service permissions must be in the applied policy; an imported profile alone
+# does not attach them (Breadboard ADR-0010).
+network_policies:
+  jira:
+    name: strat-creator-jira
+    endpoints:
+    # Opaque tunnel: the Python client verifies the private CA and hostname
+    # itself. Host, port and executable lineage stay enforced. Strategy
+    # creation clones, links, labels and pushes, so this is read-write,
+    # unlike rfe-creator's read-only Jira profile.
+    - host: jira.local
+      port: 443
+      tls: skip
+    binaries:
+    - path: '**/python3*'
+    - path: '**/curl'

@@ -1,0 +1,11 @@
+# fullsend per-repo configuration for strat-creator.
+# https://github.com/fullsend-ai/fullsend
+#
+# Native prompt agents; see README.md for invocation and recovery.
+version: "1"
+agents:
+- source: strat-single/strat-single.yaml
+- source: strat-batch/strat-batch.yaml
+allowed_remote_resources:
+    - https://raw.githubusercontent.com/fullsend-ai/fullsend/
+    - https://raw.githubusercontent.com/fullsend-ai/agents/

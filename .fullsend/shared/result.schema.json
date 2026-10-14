@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "strat-creator-result.schema.json",
+  "title": "strat-creator agent result",
+  "description": "Structured output from strat-single and strat-batch. Schema validity is necessary but not sufficient: validate_result.py checks the claims against artifacts, progress state and Jira.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "mode", "run_id", "summary", "input_keys", "acquired_keys",
+               "skipped", "strategies", "completed_phases", "artifacts",
+               "architecture_context", "publication_ready", "errors"],
+  "properties": {
+    "action": {"type": "string", "enum": ["completed", "failed", "skipped"]},
+    "mode": {"type": "string", "enum": ["single", "batch"]},
+    "run_id": {"type": "string", "minLength": 1},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "input_keys": {"$ref": "#/$defs/rfe_keys"},
+    "acquired_keys": {"$ref": "#/$defs/rfe_keys"},
+    "skipped": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "reason"],
+        "properties": {
+          "key": {"$ref": "#/$defs/rfe_key"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+        }
+      }
+    },
+    "strategies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rfe", "strat", "recommendation", "needs_attention"],
+        "properties": {
+          "rfe": {"$ref": "#/$defs/rfe_key"},
+          "strat": {"type": "string", "pattern": "^RHAISTRAT-[0-9]+$"},
+          "recommendation": {"type": "string", "enum": ["approve", "revise", "reject"]},
+          "needs_attention": {"type": "boolean"}
+        }
+      }
+    },
+    "completed_phases": {
+      "type": "array",
+      "items": {"type": "string", "enum": ["create", "refine", "push", "review"]},
+      "uniqueItems": true
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^artifacts/[A-Za-z0-9._/-]+$"}
+    },
+    "architecture_context": {"type": "string", "enum": ["available", "missing"]},
+    "publication_ready": {"type": "boolean"},
+    "errors": {"type": "array", "items": {"type": "string", "maxLength": 1000}}
+  },
+  "$defs": {
+    "rfe_key": {"type": "string", "pattern": "^RHAIRFE-[0-9]+$"},
+    "rfe_keys": {"type": "array", "items": {"$ref": "#/$defs/rfe_key"}, "uniqueItems": true}
+  }
+}

@@ -1,0 +1,81 @@
+---
+# strat-batch: create, refine, push and review a discovered batch of RFEs.
+# Layout follows opendatahub-io/rfe-creator .fullsend/rfe-creator/rfe-creator.yaml
+# (see ../SOURCE-PROVENANCE.md).
+agent: strat-batch/prompt.md
+description: Create, refine, push and review strategies for a discovered batch of approved RHAIRFEs.
+model: claude-opus-4-6
+effort: high
+image: ghcr.io/fullsend-ai/fullsend-sandbox@sha256:259605fea321353552fdefd3a6a55e8b5c260998dfc5a622ed143e41a429995a
+policy: shared/policy.yaml
+role: strat-batch
+slug: jctanner-opendatahub-io-strat-creator
+
+host_files:
+  - src: shared/gcp-vertex.env
+    dest: /sandbox/workspace/.env.d/gcp-vertex.env
+    expand: true
+  - src: shared/local-ca.env
+    dest: /sandbox/workspace/.env.d/local-ca.env
+  - src: ${GOOGLE_APPLICATION_CREDENTIALS}
+    dest: /tmp/.gcp-credentials.json
+  # Private CA for local *.local services; absent outside the local stack.
+  - src: ${STRAT_LOCAL_CA_FILE}
+    dest: /tmp/local-ca.crt
+    optional: true
+
+pre_script: strat-batch/pre-strat-batch.sh
+post_script: shared/post-strategy.sh
+
+# Two attempts, as in rfe-creator: a second iteration runs in the same
+# sandbox and resumes from tmp/strat-progress.yaml (per-phase and
+# per-strategy markers), with the validator's findings appended to the
+# prompt. The skills' label gates refuse a second review of a STRAT that
+# already has a verdict. The validator still gates publication.
+validation_loop:
+  preflight_check: 'python3 -c "import jsonschema, yaml"'
+  script: shared/validate-output.sh
+  schema: shared/result.schema.json
+  max_iterations: 2
+  feedback_mode: append
+
+timeout_minutes: 295
+
+env:
+  sandbox:
+    STRAT_MODE: batch
+    JIRA_SERVER: "${JIRA_SERVER}"
+    JIRA_USER: "${JIRA_USER}"
+    # Jira uses an opaque TLS tunnel (no proxy credential injection), so the
+    # existing Python client needs the token directly.
+    JIRA_TOKEN: "${JIRA_TOKEN}"
+    RFE_SKIP_BOOTSTRAP: "1"
+    ANTHROPIC_DEFAULT_OPUS_MODEL: claude-opus-4-6
+    CLAUDE_CODE_SUBAGENT_MODEL: claude-opus-4-6
+    CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "8"
+  runner:
+    STRAT_MODE: batch
+    BATCH_SIZE: ${BATCH_SIZE}
+    BATCH_OFFSET: ${BATCH_OFFSET}
+    BATCH_EXPECTED_KEYS: ${BATCH_EXPECTED_KEYS}
+    STRAT_RUN_ID: ${STRAT_RUN_ID}
+    # Host-only run and lock record (prepare_run.py); never mounted in the
+    # sandbox. The outer CI releases locks from it (release-locks.sh).
+    STRAT_STATE_DIR: ${STRAT_STATE_DIR}
+    STRAT_ARCHITECTURE_CONTEXT_PATH: ${STRAT_ARCHITECTURE_CONTEXT_PATH}
+    JIRA_SERVER: ${JIRA_SERVER}
+    JIRA_USER: ${JIRA_USER}
+    JIRA_TOKEN: ${JIRA_TOKEN}
+    STRAT_LOCAL_CA_FILE: ${STRAT_LOCAL_CA_FILE}
+    STRAT_PUBLISH_DIR: ${STRAT_PUBLISH_DIR}
+    RESULTS_REPO_URL: ${RESULTS_REPO_URL}
+    RESULTS_PUSH_TOKEN: ${RESULTS_PUSH_TOKEN}
+    RESULTS_GIT_USER: ${RESULTS_GIT_USER}
+    ORG_PULSE_URL: ${ORG_PULSE_URL}
+    ORG_PULSE_API_TOKEN: ${ORG_PULSE_API_TOKEN}
+
+openshell:
+  profiles:
+    - https://raw.githubusercontent.com/fullsend-ai/agents/11dd3ad15ab5033fd04661d7faf6f7af45548d2f/profiles/fullsend-vertex-ai.yaml#sha256=71ea4699ec497d4b9592220adf7588019eb8445dbc77af8e0e6767e68dcb5585
+providers:
+  - https://raw.githubusercontent.com/fullsend-ai/agents/11dd3ad15ab5033fd04661d7faf6f7af45548d2f/providers/vertex-ai.yaml#sha256=ae5ebe527e5d7b0fa6994346fde3f6ba11b632a3ba78ece96591b5ed85083ec1
