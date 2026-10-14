@@ -23,7 +23,9 @@ Read `local/strat-tasks/<KEY>.md` if that exact file exists; otherwise read
 `artifacts/strat-tasks/<KEY>.md`. Do not Glob or Grep the strategy directory.
 Use `source_rfe` from that file's frontmatter to read only its source RFE:
 `local/strat-originals/<SOURCE_RFE>.md` in local mode, or
-`artifacts/rfe-tasks/<SOURCE_RFE>.md` in CI mode. Read only
+`artifacts/strat-originals/<SOURCE_RFE>.md` in CI mode. If that exact frozen
+CI source does not exist, use `artifacts/rfe-tasks/<SOURCE_RFE>.md` instead.
+Never select another RFE as a substitute. Read only
 `<mode>/strat-reviews/<KEY>-review.md` for a prior review, if present.
 
 The loaded strat-creator or strat-pipeline plugin enforces these paths with

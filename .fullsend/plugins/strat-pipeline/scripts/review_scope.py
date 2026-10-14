@@ -103,8 +103,11 @@ def inputs(root, key):
     source = metadata.get("source_rfe", "")
     if not isinstance(source, str) or not SOURCE.fullmatch(source):
         raise ScopeError("Strategy source_rfe is missing or invalid.")
-    rfe_dir = "strat-originals" if mode == "local" else "rfe-tasks"
-    rfe = safe_path(root, f"{mode}/{rfe_dir}/{source}.md")
+    # Fullsend create saves frozen source descriptions in strat-originals.
+    # Legacy/evaluation workspaces may contain only rfe-tasks instead.
+    original = safe_path(root, f"{mode}/strat-originals/{source}.md")
+    rfe = original if mode == "local" or original.is_file() else safe_path(
+        root, f"artifacts/rfe-tasks/{source}.md")
     if not rfe.is_file():
         raise ScopeError("Assigned strategy's source RFE is missing.")
     prior = safe_path(root, f"{mode}/strat-reviews/{key}-review.md")

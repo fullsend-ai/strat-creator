@@ -92,7 +92,8 @@ evaluated with `fullsend dispatch` on the event fixtures in
 The four forked reviewer Skills require exactly one strategy key. They select
 `strat-reviewer`, whose tools are Read, Grep and Glob. The loaded strat-pipeline
 plugin registers command hooks that restrict those tools to the assigned
-strategy, its frontmatter-linked source RFE, its prior review and shared
+strategy, its frontmatter-linked source RFE (the frozen strat-originals file,
+with rfe-tasks as a CI compatibility fallback), its prior review and shared
 architecture context. Root and batch-directory searches are blocked. A local
 file for another ticket does not switch this review into local mode.
 

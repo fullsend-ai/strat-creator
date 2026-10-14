@@ -47,6 +47,20 @@ def test_local_mode_depends_on_the_assigned_ticket(batch):
     assert scope.inputs(root, "RHAISTRAT-2")["rfe"].parent == root / "local/strat-originals"
 
 
+def test_fullsend_frozen_source_is_preferred_and_does_not_require_rfe_tasks(batch):
+    root, inputs = batch
+    original = root / "artifacts/strat-originals/RHAIRFE-1.md"
+    original.parent.mkdir()
+    original.write_text("Frozen source RFE description.\n")
+    selected = scope.inputs(root, "RHAISTRAT-1")
+    assert selected["rfe"] == original
+    inputs["rfe"].unlink()
+    assert scope.inputs(root, "RHAISTRAT-1")["rfe"] == original
+    scope.check_tool(root, selected, "Read", {"file_path": str(original)})
+    with pytest.raises(scope.ScopeError):
+        scope.check_tool(root, selected, "Read", {"file_path": "artifacts/strat-originals/RHAIRFE-2.md"})
+
+
 @pytest.mark.parametrize("name,value", [
     ("Read", {"file_path": "artifacts/strat-tasks/RHAISTRAT-2.md"}),
     ("Read", {"file_path": "artifacts/rfe-tasks/RHAIRFE-2.md"}),
