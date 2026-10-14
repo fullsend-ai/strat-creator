@@ -5,6 +5,7 @@ jql:
     - strat-creator-3.5
     - strat-creator-3.6
     - strat-creator-3.7
+    - strat-creator-3.8
   target_versions:     # OR'd with required_labels via cf[10855]
     # Legacy short names (still on older tickets)
     - rhoai-3.5
@@ -16,6 +17,7 @@ jql:
     # Release-level names
     - rhai-3.6
     - rhai-3.7
+    - rhai-3.8
     # 3.5 milestones — RHAII, RHOAI, RHELAI
     - "3.5 EA1 RHAII RELEASE"
     - "3.5 EA1 RHOAI RELEASE"
@@ -43,6 +45,18 @@ jql:
     - "3.7 GA  RHAII RELEASE"   # double space matches the Jira version name
     - "3.7 GA RHOAI RELEASE"
     - "3.7 GA RHELAI RELEASE"
+    # 3.8 milestones — RHAII, RHOAI, RHELAI
+    # Not yet created in Jira; names follow the 3.6 pattern. Verify once
+    # they exist, since unknown names are silently ignored by JQL.
+    - "3.8 EA1 RHAII RELEASE"
+    - "3.8 EA1 RHOAI RELEASE"
+    - "3.8 EA1 RHELAI RELEASE"
+    - "3.8 EA2 RHAII RELEASE"
+    - "3.8 EA2 RHOAI RELEASE"
+    - "3.8 EA2 RHELAI RELEASE"
+    - "3.8 GA RHAII RELEASE"
+    - "3.8 GA RHOAI RELEASE"
+    - "3.8 GA RHELAI RELEASE"
   quality_labels:      # at least one required
     - rfe-creator-autofix-rubric-pass
     - tech-reviewed
