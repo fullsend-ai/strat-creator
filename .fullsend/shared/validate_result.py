@@ -269,6 +269,14 @@ def validate(result_path, repo, schema_path, run_path, env):
     elif result["action"] == "skipped":
         c.fail("the agent may not skip: the host pre-script already chose and locked work")
     run = read_json(run_path)
+    from strat_freshness import verify, verify_progress
+    try:
+        if "freshness" not in run or read_json(repo / "tmp/strat-input.json").get("freshness") != run["freshness"]:
+            raise ValueError("freshness: missing baseline or downloaded input differs from trusted host")
+        verify(repo, read_json(repo / "tmp/strat-input.json"), trusted_source=ROOT)
+        verify_progress(repo, read_json(repo / "tmp/strat-input.json"), read_json(repo / "tmp/strat-progress.json"))
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        c.fail(str(error))
     check_run_record(c, result, run)
     check_coverage(c, result)
     check_create_skips(c, result, run)

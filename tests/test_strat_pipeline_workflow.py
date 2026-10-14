@@ -81,7 +81,9 @@ def _install_stubs(repo, mode):
     agents = repo / ".claude" / "agents"
     shutil.copy2(repo / ".fullsend" / f"strat-{mode}" / "prompt.md", agents / f"strat-{mode}.md")
     (repo / "tmp").mkdir()
-    (repo / "tmp" / "strat-input.json").write_text(json.dumps(RUN_INPUT, indent=2) + "\n")
+    from strat_freshness import initialize
+    data = initialize(repo, dict(RUN_INPUT))
+    (repo / "tmp" / "strat-input.json").write_text(json.dumps(data, indent=2) + "\n")
 
 
 def _events(stream):

@@ -73,6 +73,11 @@ def business_errors(root, data, progress, result):
     a recorded push is visible in Jira. Trusted host validation reads Jira back.
     """
     errors = []
+    from strat_freshness import verify_progress
+    try:
+        verify_progress(root, data, progress)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        errors.append(str(error))
 
     def check(condition, message):
         if not condition:
@@ -242,6 +247,8 @@ def verify_completion(root, result_path=None, *, allow_failed=False):
         raise ValueError("unsupported completion contract")
     data = read_json(regular(root, "tmp/strat-input.json"))
     progress = read_json(regular(root, "tmp/strat-progress.json"))
+    from strat_freshness import verify_progress
+    verify_progress(root, data, progress)
     if receipt.get("run_id") != data.get("run_id"):
         raise ValueError("completion belongs to another run")
     for relative, identity in receipt["inputs"].items():

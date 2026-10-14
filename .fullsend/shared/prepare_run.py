@@ -51,6 +51,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from find_strat_for_rfe import find_strat_clones  # noqa: E402
 from jira_utils import get_issue, require_env  # noqa: E402
 from lock_issues import BLOCKING_LABELS  # noqa: E402
+from strat_freshness import initialize, reusable  # noqa: E402
 
 EXIT_SKIP = 78
 RFE_RE = re.compile(r"^RHAIRFE-\d+$")
@@ -144,7 +145,10 @@ def resume_point(rfe, previous):
     # A dry run's push is recorded as skipped: nothing reached Jira, so refine again.
     if strategies.get(rfe) == strat and strat in push.get("strategies", []) and not push.get("skipped") \
             and strat not in previous.get("review", {}):
-        return "review", None
+        target = Path(os.environ.get("TARGET_REPO_DIR") or ROOT)
+        if reusable(target, rfe, strat, previous, trusted_source=ROOT):
+            return "review", None
+        print(f"prepare-run: {rfe} previous push lacks matching freshness; refinement required", file=sys.stderr)
     return "refine", None
 
 
@@ -271,6 +275,9 @@ def main(argv, env):
            "prepared_at": now()}
     if not dry_run:
         run["lock_owner"] = run_id
+    run["request"] = {name: env.get(name, "") for name in (
+        "STRAT_MODE", "RFE_KEY", "STRAT_RESUME_KEY", "BATCH_SIZE", "BATCH_OFFSET", "BATCH_EXPECTED_KEYS",
+        "STRAT_DRY_RUN", "STRAT_ARCHITECTURE_CONTEXT_PATH")}
     if not candidates:
         write_json(state_dir / "run.json", run)
         return request_skip(env, "discovery returned no eligible RFEs")
@@ -316,6 +323,15 @@ def main(argv, env):
     run["resume_from"] = min(run["resume_points"].values(), key=STEPS.index, default=None)
     run["skipped"] = [{"key": k, "reason": gated[k] if k in gated else skip_reason(labels[k])}
                       for k in candidates if k not in acquired]
+    run["reused_push"] = {}
+    for rfe in acquired:
+        if points[rfe] == "review":
+            pair = next(p for p in previous["create"]["strategies"] if p["rfe"] == rfe)
+            reuse = reusable(target, rfe, pair["strat"], previous, trusted_source=ROOT)
+            if reuse is None:
+                raise ValueError("reusable push changed during preparation; preserve lock intent and reconcile")
+            run["reused_push"][rfe] = reuse
+    initialize(target, run, live=True, trusted_source=ROOT)
     write_json(state_dir / "run.json", run)
     if not acquired:
         return request_skip(env, "every candidate is locked, done, or waiting for a human")

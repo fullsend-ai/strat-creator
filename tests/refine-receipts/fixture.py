@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 from artifact_utils import read_frontmatter, write_frontmatter  # noqa: E402
+from strat_freshness import initialize, record  # noqa: E402
 
 PROPOSALS = {
     "STRAT-9401": ("Serving request timeout", "Add a configured HTTP timeout at the routing component; "
@@ -28,6 +29,7 @@ def setup(keys):
     data = {"run_id": "refine-receipts-fixture", "mode": "batch", "dry_run": True,
             "acquired_keys": [pair["rfe"] for pair in pairs], "input_keys": [pair["rfe"] for pair in pairs],
             "resume_points": {}, "skipped": [], "expected_skips": []}
+    initialize(ROOT, data)
     (directory / "strat-input.json").write_text(json.dumps(data) + "\n")
     (directory / "strat-progress.json").write_text(json.dumps({"run_id": data["run_id"],
         "create": {"done_at": "2026-01-01T00:00:00Z", "strategies": pairs},
@@ -39,6 +41,11 @@ def setup(keys):
         write_frontmatter(path, {"strat_id": pair["strat"], "source_rfe": pair["rfe"],
             "title": PROPOSALS[pair["strat"]][0], "priority": "Major", "status": "Draft",
             "refine_count": 0}, "strat-task")
+    path = directory / "strat-progress.json"
+    progress = json.loads(path.read_text())
+    for pair in pairs:
+        record(ROOT, data, progress, "create", pair["strat"], pair["rfe"])
+    path.write_text(json.dumps(progress) + "\n")
 
 
 def apply(key):

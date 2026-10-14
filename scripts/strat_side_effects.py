@@ -100,6 +100,12 @@ def perform(server, kind, target, payload, read, write, guard=None, slot=None):
     Model/Workflow restarts call this same function; HTTP retries do not append.
     """
     directory, data = context()
+    if data and Path("tmp/strat-input.json").exists():
+        from strat_freshness import verify_progress
+        root = Path.cwd()
+        progress_path = root / "tmp/strat-progress.json"
+        progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
+        verify_progress(root, data, progress)
     identity = {"server_hash": digest(server.rstrip("/")), "kind": kind, "target": target,
                 "payload_hash": digest(payload)}
     name = identity if slot is None else {"server_hash": identity["server_hash"], "kind": kind,

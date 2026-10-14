@@ -14,6 +14,16 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "^(Workflow|Skill)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/strat_freshness_guard.py\"",
+            "timeout": 30
+          }
+        ]
+      },
+      {
         "matcher": ".*",
         "hooks": [
           {

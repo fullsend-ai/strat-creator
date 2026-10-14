@@ -14,8 +14,8 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model" ANTHROPIC_DEFAULT_FABLE_MODEL="$mo
 export CLAUDE_CODE_EFFORT_LEVEL=medium DISABLE_AUTOUPDATER=1
 export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=1200000
 unset JIRA_SERVER JIRA_USER JIRA_TOKEN
-python3 tests/refine-receipts/fixture.py setup STRAT-9401 STRAT-9402
 cp "$fixture/strategy-refine.md" .claude/skills/strategy-refine/SKILL.md
+python3 tests/refine-receipts/fixture.py setup STRAT-9401 STRAT-9402
 cp "$fixture/plugin/workflows/refine-receipts.js" "$out/fixture-workflow.js"
 cp "$fixture/strategy-refine.md" "$out/fixture-skill.md"
 printf '%s\n' '{"enableWorkflows":true,"effortLevel":"medium"}' > "$out/fixture-settings.json"

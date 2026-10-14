@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 from artifact_utils import write_frontmatter  # noqa: E402
+from strat_freshness import initialize, record  # noqa: E402
 
 CASES = {
     "STRAT-9501": {
@@ -184,6 +185,16 @@ return results
     workflow = fixture / "plugin/workflows/review-composition.js"
     workflow.parent.mkdir(parents=True, exist_ok=True)
     workflow.write_text(code)
+    import shutil
+    shutil.copytree(fixture / "context", ROOT / ".context/architecture-context", dirs_exist_ok=True)
+    initialize(ROOT, data)
+    (directory / "strat-input.json").write_text(json.dumps(data) + "\n")
+    path = directory / "strat-progress.json"
+    progress = json.loads(path.read_text())
+    for pair in pairs:
+        for step in ("create", "refine", "push"):
+            record(ROOT, data, progress, step, pair["strat"], pair["rfe"])
+    path.write_text(json.dumps(progress) + "\n")
 
 
 def prepare_score(key):

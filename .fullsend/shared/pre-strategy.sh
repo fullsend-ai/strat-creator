@@ -44,7 +44,6 @@ if [[ "$(git -C "${CLONE}" rev-parse HEAD)" != "${REF}" ]]; then
   echo "strat-${MODE} pre-script: clone of ${REPO_URL} is not at ${REF}" >&2
   exit 1
 fi
-python3 "${CLONE}/.fullsend/shared/vendor.py" "${CLONE}" "${TARGET_REPO_DIR}" "${REF}"
 
 cd -- "${TARGET_REPO_DIR}"
 # A repeated pre-script for the same prepared run must preserve recovery data.
@@ -56,12 +55,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]) / 'scripts'))
 from jira_utils import require_env
 from strat_side_effects import check_owner
+from strat_freshness import verify
 saved = json.load(open(sys.argv[2]))
 current = json.load(open('tmp/strat-input.json'))
 if current['run_id'] != os.environ['STRAT_RUN_ID']:
     sys.exit(78)
 if current != saved:
     sys.exit('pre-script: prepared input differs from host run record')
+if 'freshness' not in current:
+    sys.exit('pre-script: legacy prepared run lacks freshness; recovery data preserved')
+if current.get('request') != {name: os.environ.get(name, '') for name in current.get('request', {})}:
+    sys.exit('pre-script: invocation changed; recovery data preserved')
+verify(Path.cwd(), current, trusted_source=Path(sys.argv[1]))
 if not current['dry_run']:
     for key in current['acquired_keys']:
         check_owner(*require_env(), key, current)
@@ -81,9 +86,27 @@ if [[ -s "${STRAT_STATE_DIR}/owned-rfe-ids.txt" ]]; then
   exit 1
 fi
 if [[ -f tmp/strat-input.json && ! -f "${STRAT_STATE_DIR}/run.json" ]]; then
-  echo "strat-${MODE} pre-script: prepared input has no host record; recovery data preserved" >&2
-  exit 1
+  python3 - "${CLONE}" <<'PY'
+import json, os, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / 'scripts'))
+from jira_utils import get_issue, require_env
+from strat_side_effects import OWNER_PREFIX, digest
+previous = json.load(open('tmp/strat-input.json'))
+if previous['run_id'] == os.environ['STRAT_RUN_ID']:
+    sys.exit('pre-script: prepared input has no host record; recovery data preserved')
+if not previous['dry_run']:
+    credentials = require_env()
+    expected_server = previous.get('freshness', {}).get('server')
+    if not expected_server or expected_server != digest(credentials[0].rstrip('/')):
+        sys.exit('pre-script: previous upstream/ownership cannot be verified; recovery data preserved')
+    for key in previous['acquired_keys']:
+        labels = get_issue(*credentials, key, fields=['labels'])['fields'].get('labels', [])
+        if 'strat-creator-processing' in labels or any(x.startswith(OWNER_PREFIX) for x in labels):
+            sys.exit('pre-script: previous owner has not released its claim; recovery data preserved')
+PY
 fi
+python3 "${CLONE}/.fullsend/shared/vendor.py" "${CLONE}" "${TARGET_REPO_DIR}" "${REF}"
 # The previous run's progress may live in this checkout's artifacts/, which the
 # clean-up below removes: keep a host copy for prepare_run.py first.
 if [[ -n "${STRAT_PREVIOUS_PROGRESS:-}" && -f "${STRAT_PREVIOUS_PROGRESS}" ]]; then

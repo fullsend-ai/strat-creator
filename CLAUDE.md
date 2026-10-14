@@ -85,6 +85,17 @@ Never substitute an MCP mutation or raw POST after a helper error. Use
 numeric verdict labels. Jira ownership labels are recovery guards, not atomic
 distributed locks; foreign or multiple owners stop work and cleanup.
 
+### Freshness on recovery
+
+The S1 host records `strat-freshness-v1` before agent work. Same-run reuse and
+writes require unchanged code/Skills/instructions, pinned architecture files,
+prepared parameters, live RFE fields/comments, staff input and recorded artifact
+identity. Changed or unverifiable inputs stop the run and preserve its work and
+mutation intent. Do not rewrite the baseline or clear progress to bypass this.
+A later run may skip refinement/push only with matching prior provenance and
+live published-strategy read-back. Legacy progress requires refinement again.
+Launch a fresh Workflow by name; native `resumeFromRunId` replay is unsupported.
+
 ## Jira Field Mappings
 
 ### RHAISTRAT Project

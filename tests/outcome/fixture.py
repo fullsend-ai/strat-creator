@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "scripts"))
 from review_composition_support import prepare  # noqa: E402
+from strat_freshness import initialize, record  # noqa: E402
 from strat_pipeline_outcome import atomic_json, observe, verify_completion  # noqa: E402
 
 
@@ -26,6 +27,7 @@ def setup():
         "resume_points": {},
         "architecture_context": "available",
     }
+    initialize(root, data)
     atomic_json(root / "tmp/strat-input.json", data)
     when = "2026-10-14T00:00:00Z"
     progress = {
@@ -52,6 +54,8 @@ def setup():
         progress["refine"][key] = when
         progress["push"]["strategies"].append(key)
         progress["review"][key] = {**decision, "done_at": when, "composition_session": started["session_id"]}
+        for step in ("create", "refine", "push", "review"):
+            record(root, data, progress, step, key, rfe)
     atomic_json(root / "tmp/strat-progress.json", progress)
     source = (root / "workflows/strat-pipeline.js").read_text()
     schema = source[source.index("const RESULT = {") : source.index("const failed = []")]

@@ -13,6 +13,7 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model" ANTHROPIC_DEFAULT_FABLE_MODEL="$mo
 export CLAUDE_CODE_EFFORT_LEVEL=medium DISABLE_AUTOUPDATER=1
 export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=1200000
 unset JIRA_SERVER JIRA_USER JIRA_TOKEN
+export RFE_SKIP_BOOTSTRAP=1
 python3 tests/review-composition/fixture.py setup
 cp tests/fixtures/review-composition/plugin/workflows/review-composition.js "$out/fixture-workflow.js"
 cp -a .claude/skills "$out/fixture-skills"

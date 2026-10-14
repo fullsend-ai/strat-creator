@@ -11,6 +11,12 @@ from review_composition import verify_review
 
 
 def publish(root, key, check_only=False, dry_run=False):
+    from strat_freshness import verify_progress
+    input_path, progress_path = root / "tmp/strat-input.json", root / "tmp/strat-progress.json"
+    if input_path.exists():
+        data = json.loads(input_path.read_text())
+        progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
+        verify_progress(root, data, progress)
     path = root / "artifacts/strat-reviews" / f"{key}-review.md"
     if not path.exists():
         return None

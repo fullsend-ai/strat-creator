@@ -67,6 +67,8 @@ def load_input():
     if not INPUT.is_file():
         die(f"{INPUT} not found; the host pre-script writes it")
     data = json.loads(INPUT.read_text())
+    from strat_freshness import verify
+    verify(Path.cwd(), data)
     for key in data.get("acquired_keys", []):
         if not RFE_RE.match(key):
             die(f"invalid key in {INPUT}: {key!r}")
@@ -77,6 +79,8 @@ def load_progress(run_id):
     if PROGRESS.is_file():
         progress = json.loads(PROGRESS.read_text())
         if progress.get("run_id") == run_id:
+            from strat_freshness import verify_progress
+            verify_progress(Path.cwd(), json.loads(INPUT.read_text()), progress)
             return progress
     return {"run_id": run_id, "create": None, "refine": {}, "push": None,
             "review": {}}
@@ -293,6 +297,10 @@ def cmd_record_create(_args):
                 prepare_score_dir(pair["strat"], clean=True)
         progress["create"] = {"done_at": None if pending else now(), "strategies": strategies,
                               "skipped": skipped, "pending": pending}
+        from strat_freshness import bind, record
+        bind(data, progress)
+        for pair in strategies:
+            record(Path.cwd(), data, progress, "create", pair["strat"], pair["rfe"])
         save_progress(progress)
     print(json.dumps({"strategies": strategies, "skipped": skipped, "pending": pending}, indent=2))
 
@@ -321,6 +329,8 @@ def _mark(args, progress, data):
         if error:
             die(f"cannot record refine {strategy}: {error}")
         progress["refine"][strategy] = now()
+        from strat_freshness import record
+        record(Path.cwd(), data, progress, "refine", strategy, pairs[0]["rfe"])
         recorded = strategy
     elif args.step == "push":
         # push_refined_strategies.py pushes every artifacts/strat-tasks/RHAISTRAT-*.md
@@ -333,6 +343,10 @@ def _mark(args, progress, data):
             refined_now = {k for k in refined_now if pushable(k)}
         covered = set(pushed(progress)) | refined_now
         progress["push"] = {"done_at": now(), "skipped": bool(args.skipped), "strategies": sorted(covered)}
+        from strat_freshness import record
+        for pair in (progress.get("create") or {}).get("strategies", []):
+            if pair["strat"] in refined_now:
+                record(Path.cwd(), data, progress, "push", pair["strat"], pair["rfe"])
         recorded = "push"
     else:
         die(f"cannot mark {args.step!r}")
@@ -364,6 +378,9 @@ def cmd_record_review(args):
     with progress_lock():
         progress = load_progress(data["run_id"])
         progress["review"][key] = verdict
+        from strat_freshness import record
+        pair = next(p for p in progress["create"]["strategies"] if p["strat"] == key)
+        record(Path.cwd(), data, progress, "review", key, pair["rfe"])
         save_progress(progress)
     print(json.dumps({"key": key, "recommendation": recommendation,
                       "needs_attention": verdict["needs_attention"]}))

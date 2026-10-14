@@ -77,6 +77,8 @@ def snapshot(root, key):
 
 
 def begin(root, key, scorer):
+    from strat_freshness import verify
+    verify(root)
     from artifact_utils import read_frontmatter_validated
     scope, source = snapshot(root, key)
     fm, _ = read_frontmatter_validated(scope["prior"], "strat-review")
@@ -216,6 +218,8 @@ def rendered(key, scores, decision, reports, scorer):
 
 
 def compose(root, key):
+    from strat_freshness import verify
+    verify(root)
     from artifact_utils import write_frontmatter
     with locked(root, key) as directory:
         path, session = active(root, directory)
@@ -265,6 +269,8 @@ def compose(root, key):
 def verify_review(root, key):
     """Read the repository only as data; safe for use by the trusted host validator."""
     from artifact_utils import read_frontmatter_validated
+    from strat_freshness import verify
+    verify(root)
     scope, source = snapshot(root, key)
     review = scope["prior"]
     provenance = regular(root, review.with_name(f"{key}-review-provenance.json"))
@@ -335,4 +341,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # CLI plugin hooks run inside the vendored workspace. Trusted host imports
+    # never execute this branch or import code from the downloaded repository.
+    sys.path.insert(0, str(Path.cwd().resolve() / "scripts"))
     raise SystemExit(main())
