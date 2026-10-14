@@ -316,7 +316,16 @@ def scan_runs(data_dir, max_runs=None):
         try:
             ts = datetime.strptime(entry, "%Y%m%d-%H%M%S")
         except ValueError:
-            continue
+            # S1 publication uses an immutable run identity, with the sealed
+            # original generation timestamp in pipeline-data.json.
+            manifest = Path(entry_path) / ".publication.json"
+            pdata_path = Path(entry_path) / "pipeline-data.json"
+            if not entry.startswith("run-") or not manifest.is_file() or not pdata_path.is_file():
+                continue
+            identity = json.loads(manifest.read_text())
+            if identity.get("contract") != "strat-publication-v1" or entry != "run-" + identity.get("run_id", ""):
+                raise ValueError("published run identity mismatch")
+            ts = datetime.fromisoformat(json.loads(pdata_path.read_text())["timestamp"])
 
         print(f"  Scanning run {entry}...", file=sys.stderr)
         run_data = extract_run(entry_path)
@@ -345,7 +354,7 @@ def scan_runs(data_dir, max_runs=None):
 
         runs.append(run_data)
 
-    runs.sort(key=lambda r: r["run_id"])
+    runs.sort(key=lambda r: (r["timestamp"], r["run_id"]))
     if max_runs and len(runs) > max_runs:
         runs = runs[-max_runs:]
 
@@ -471,6 +480,7 @@ def main():
     group.add_argument("--run-dir", help="Path to a single run directory (flat artifacts)")
     parser.add_argument("--output-dir", help="Directory to write runs.json and summary.json")
     parser.add_argument("--output", help="Single file output")
+    parser.add_argument("--generated-at", help="Use a saved generation timestamp for repeatable publication")
     parser.add_argument("--max-runs", type=int, default=None, help="Maximum runs to include (default: all)")
     parser.add_argument("--no-body", action="store_true",
                         help="Exclude strategy/review body text (metadata only)")
@@ -486,7 +496,7 @@ def main():
     if not args.output_dir and not args.output:
         parser.error("Either --output-dir or --output is required")
 
-    generated_at = datetime.now().isoformat()
+    generated_at = args.generated_at or datetime.now().isoformat()
 
     if args.run_dir:
         print(f"Extracting single run from {args.run_dir}...", file=sys.stderr)

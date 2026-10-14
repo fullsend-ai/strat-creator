@@ -216,6 +216,9 @@ def test_expected_create_skips_follow_the_pipeline_gates(host, jira):
     _strat(jira, "RHAISTRAT-8015", "RHAIRFE-7014", [])
     for key in ("RHAIRFE-7012", "RHAIRFE-7013", "RHAIRFE-7014"):
         shutil.rmtree(host["state"], ignore_errors=True)
+        # These are independent dry-run preparations, not recovery after
+        # deliberately losing the host receipt for an already prepared run.
+        shutil.rmtree(host["target"] / "tmp", ignore_errors=True)
         assert _pre(host, "single", RFE_KEY=key, STRAT_DRY_RUN="1").returncode == 0
         expected = {s["key"]: s["reason"] for s in _run_record(host)["expected_skips"]}
         if key == "RHAIRFE-7012":
@@ -266,6 +269,46 @@ def test_dry_run_takes_no_lock(host, jira):
     assert "selected (dry run) RHAIRFE-7007:create" in result.stdout
     assert PROCESSING not in _labels(jira, "RHAIRFE-7007")
     assert _run_record(host)["dry_run"] is True
+
+
+def test_repeated_pre_script_preserves_recovery_data(host, jira):
+    jira.create("RHAIRFE-7021", "Recovery RFE", "Need.")
+    assert _pre(host, "single", RFE_KEY="RHAIRFE-7021").returncode == 0
+    data = host["target"] / "tmp/strat-effects/fixture.json"
+    data.parent.mkdir()
+    data.write_text('{"status": "pending"}\n')
+    run = _run_record(host)
+    repeated = _pre(host, "single", RFE_KEY="RHAIRFE-7021")
+    assert repeated.returncode == 0, repeated.stderr
+    assert data.read_text() == '{"status": "pending"}\n'
+    assert _run_record(host) == run
+    assert "recovery data preserved" in repeated.stdout
+
+
+def test_pre_script_keeps_uncertain_work_when_host_record_is_lost(host, jira):
+    jira.create("RHAIRFE-7022", "Recovery RFE", "Need.")
+    assert _pre(host, "single", RFE_KEY="RHAIRFE-7022").returncode == 0
+    saved = (host["target"] / "tmp/strat-input.json").read_bytes()
+    (host["state"] / "run.json").unlink()
+    repeated = _pre(host, "single", RFE_KEY="RHAIRFE-7022")
+    assert repeated.returncode != 0
+    assert (host["target"] / "tmp/strat-input.json").read_bytes() == saved
+
+
+def test_old_cleanup_cannot_unlock_a_new_owner(host, jira):
+    from strat_side_effects import OWNER_PREFIX, owner_label
+    jira.create("RHAIRFE-7023", "Recovery RFE", "Need.")
+    assert _pre(host, "single", RFE_KEY="RHAIRFE-7023").returncode == 0
+    labels = [x for x in _labels(jira, "RHAIRFE-7023") if not x.startswith(OWNER_PREFIX)]
+    labels.append(owner_label("different-run"))
+    jira.request("PUT", "/rest/api/3/issue/RHAIRFE-7023", {"fields": {"labels": labels}})
+    release = host["state"] / "strat-creator/.fullsend/shared/release-locks.sh"
+    result = subprocess.run(["bash", str(release), str(host["state"])], env=host["env"],
+                            capture_output=True, text=True)
+    assert result.returncode != 0
+    assert PROCESSING in _labels(jira, "RHAIRFE-7023")
+    assert owner_label("different-run") in _labels(jira, "RHAIRFE-7023")
+    assert (host["state"] / "owned-rfe-ids.txt").is_file()
 
 
 def test_vendoring_never_overwrites_consumer_files(host, jira):
@@ -585,6 +628,39 @@ def test_post_script_hands_off_regular_files_and_builds_the_report(host, jira, v
     assert (results / "pipeline-data.json").is_file()
     assert not (results / "agent-result.json").exists()
     assert "RESULTS_REPO_URL not set" in result.stdout
+
+
+def test_post_script_retry_does_not_duplicate_remote_run_or_summary(host, jira, validated_run):
+    jira.create("RHAIRFE-7221", "RFE", "Need.")
+    assert _pre(host, "single", RFE_KEY="RHAIRFE-7221").returncode == 0
+    repo, _, _ = validated_run
+    remote, initial = host["tmp"] / "results.git", host["tmp"] / "initial"
+    remote.mkdir()
+    _git(remote, "init", "--bare", "--initial-branch=main")
+    _git(host["tmp"], "clone", str(remote), str(initial))
+    (initial / "README.md").write_text("Isolated result publication.\n")
+    _git(initial, "add", "README.md")
+    _git(initial, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-m", "initial")
+    _git(initial, "push", "origin", "main")
+    iteration = host["tmp"] / "iteration"
+    iteration.mkdir()
+    shutil.copy(repo / "output/agent-result.json", iteration / "agent-result.json")
+    env = {**host["env"], "REPO_DIR": str(repo), "FULLSEND_VALIDATED_ITERATION_DIR": str(iteration),
+           "FULLSEND_RUN_DIR": str(host["tmp"] / "run"), "RESULTS_REPO_URL": str(remote),
+           "RESULTS_PUSH_TOKEN": "isolated-local-placeholder", "ORG_PULSE_URL": "", "ORG_PULSE_API_TOKEN": ""}
+    first = subprocess.run(["bash", str(SHARED / "post-strategy.sh")], env=env, capture_output=True, text=True)
+    assert first.returncode == 0, first.stdout + first.stderr
+    accepted = _git(remote, "rev-parse", "main")
+    sealed = (host["tmp"] / "run/publish/bundle.json").read_bytes()
+    second = subprocess.run(["bash", str(SHARED / "post-strategy.sh")], env=env, capture_output=True, text=True)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert _git(remote, "rev-parse", "main") == accepted
+    assert (host["tmp"] / "run/publish/bundle.json").read_bytes() == sealed
+    results = host["tmp"] / "run/publish/results/RHAISTRAT"
+    summary = json.loads((results / "summary-production.json").read_text())
+    assert summary["summary"]["total_strategies"] == 2
+    assert {s["run_id"] for s in summary["summary"]["strategies"]} == {"run-run-2"}
+    assert [p.name for p in results.iterdir() if p.is_dir() and not p.is_symlink()] == ["run-run-2"]
 
 
 def test_jira_lookup_failure_is_reported_without_a_traceback(host):

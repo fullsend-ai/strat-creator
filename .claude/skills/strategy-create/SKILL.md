@@ -96,9 +96,10 @@ If **all** selected RFEs are skipped, stop and tell the user all selected RFEs w
 
 For each selected RFE that needs a new STRAT (Path B from Step 5a), clone it into the RHAISTRAT project. This creates a new RHAISTRAT issue with the same summary, description, priority, and labels, and links the two with a Cloners link.
 
-**Try MCP first.** If `mcp__atlassian__*` tools are available, use Jira's clone operation via MCP.
-
-**If MCP is NOT available, use the REST API clone script:**
+**Always use the recoverable clone script for writes.** MCP may still serve reads.
+Do not fall back to an MCP clone, raw POST, or another create path after a write
+error. The script reconciles its atomic clone marker and existing Cloners links;
+a pending write with no visible match requires reconciliation, not another clone.
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/clone_issue.py RHAIRFE-NNNN --target-project RHAISTRAT --issue-type Feature

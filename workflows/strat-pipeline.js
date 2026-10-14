@@ -255,7 +255,10 @@ if (toReview.length) {
     async (p) => {
       const runDir = `/tmp/strat-assess/${p.strat}`
       const scored = await agent(
-        'You are a strategy quality assessor. Your task:\n' +
+        'You are a strategy quality assessor. Before scoring, run ' +
+          `\`python3 scripts/publish_review.py ${p.strat} --check-only\`. ` +
+          'Exit 0 means a verified current-run review already exists: return without scoring. ' +
+          'Exit 3 means no review; follow the rubric below. Any other error stops this step.\n' +
           `1. Read \`${run.cwd}/scripts/assess-strat/agent_prompt.md\` for the full scoring rubric.\n` +
           '2. Follow its instructions exactly, substituting {KEY} for the strategy key and {RUN_DIR} for ' +
           "the run directory. Read the strategy from the data file below (not the path in the rubric's step 1).\n" +

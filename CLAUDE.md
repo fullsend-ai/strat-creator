@@ -76,7 +76,14 @@ Read operations support two modes:
 
 ### Write Operations
 
-Not yet implemented for strat-creator. Strategy submission to Jira will be added as a future skill.
+Use the versioned Python write helpers. Cloning, links, field updates, comments
+and attachments reconcile their existing effects before publication. Pipeline
+write intent lives in `tmp/strat-effects/`, separate from Claude's agent journal.
+Preserve it on retries; an uncertain absent write stops for reconciliation.
+Never substitute an MCP mutation or raw POST after a helper error. Use
+`scripts/publish_review.py` for the composed review's summary, attachment and
+numeric verdict labels. Jira ownership labels are recovery guards, not atomic
+distributed locks; foreign or multiple owners stop work and cleanup.
 
 ## Jira Field Mappings
 

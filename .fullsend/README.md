@@ -220,6 +220,46 @@ launching another.
 
 Concurrency is the Workflow default: min(16, CPUs - 2) agents at a time.
 
+## Publication and restart recovery
+
+Jira mutations use a separate durable intent ledger in `tmp/strat-effects/`.
+Before sending a write, the helper fsyncs intent; before repeating it, the helper
+reads Jira. Identical comments and byte-identical named attachments are reused,
+clone creation carries a searchable marker in the same request as the ticket,
+and existing links, fields and labels are reconciled. Reads may retry transient
+HTTP errors; append writes never receive blind HTTP retries. If a pending write
+is absent or differs, preserve the ledger and reconcile it instead of reposting.
+Search may lag a committed create, so absence alone cannot authorize recreation.
+
+`python3 scripts/publish_review.py KEY --check-only` verifies an existing
+current-run composed review. Without the flag it finishes publication using a
+stable summary, the original full review and the numeric verdict labels. A
+Workflow retry can reuse this review without rerunning scoring or specialists.
+The numeric approval policy and dissent in the attached report are unchanged.
+MCP is for reads on this path; write helpers must not be bypassed after errors.
+
+The host records lock intent before acquisition, adds a run owner label, and
+checks that owner at each pipeline write. Cleanup needs the matching owner;
+foreign, mixed or orphaned claims are never cleared automatically. A repeated
+pre-script preserves the same prepared run and recovery data. Jira label
+operations are not compare-and-swap and do not prove distributed exclusivity;
+concurrent-job qualification needs an atomic lease/fencing backend.
+
+The post-script seals the validated handoff and generated reports once. Results
+use `RHAISTRAT/run-<run_id>` with an immutable hash manifest. Death during copy,
+after local commit or after accepted push reuses that identity. Different content
+under the same run ID fails. A clean local tree still pushes an unpushed commit;
+reconciling an existing remote run does not move `current` over a newer run.
+Org Pulse remains a keyed bulk upsert; its deployment behavior is separate
+qualification, not an exactly-once event-delivery claim.
+
+Validate these mechanics without inference using
+`uv run pytest tests/test_side_effect_recovery.py`; the isolated Jira/Git
+fixtures inject SIGKILL after committed writes and authored lost responses.
+They do not exercise Fullsend/OpenShell or prove power-loss recovery. Preserve
+the sandbox workspace/ledger and host state for restart; a lost workspace must
+not be treated as a verified new attempt.
+
 ## Resume points and human gates
 
 A human stop is a run boundary, not a pause inside a run. The pre-script gives
@@ -401,7 +441,9 @@ resumes at `review`.
 
 If the CI job itself is lost, the locks stay. Find them with the JQL
 `labels = strat-creator-processing`, and release them with
-`python3 scripts/lock_issues.py unlock <keys>`.
+the original `release-locks.sh <STRAT_STATE_DIR>` with its owner record. If that
+record is lost, reconcile the owner before manual cleanup; a bare `unlock`
+refuses owned claims.
 
 ## Install in another repository
 

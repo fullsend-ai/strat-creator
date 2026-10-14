@@ -28,8 +28,10 @@ Exit codes:
         strat-creator-auto-created label, or no linked RFE)
 """
 
+import json
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -39,6 +41,7 @@ from jira_utils import (
     remove_labels,
     require_env,
 )
+from strat_side_effects import OWNER_PREFIX, atomic, locked, owner_label
 
 PROCESSING_LABEL = "strat-creator-processing"
 
@@ -101,7 +104,7 @@ def lock(server, user, token, keys, locked_keys_file=None):
 
     for key in keys:
         labels = _get_labels(server, user, token, key)
-        blocked_by = labels & BLOCKING_LABELS
+        blocked_by = (labels & BLOCKING_LABELS) | {x for x in labels if x.startswith(OWNER_PREFIX)}
         if blocked_by:
             print(f"BLOCKED {key} — has label(s): "
                   f"{', '.join(sorted(blocked_by))}", file=sys.stderr)
@@ -143,8 +146,75 @@ def lock(server, user, token, keys, locked_keys_file=None):
 def unlock(server, user, token, keys):
     """Unlock RFE(s) by removing strat-creator-processing label."""
     for key in keys:
+        if any(x.startswith(OWNER_PREFIX) for x in _get_labels(server, user, token, key)):
+            raise RuntimeError("owned lock requires its matching --owner; refusing unowned cleanup")
         remove_labels(server, user, token, key, [PROCESSING_LABEL])
         print(f"UNLOCKED {key}", file=sys.stderr)
+    return 0
+
+
+def lock_owned(server, user, token, keys, record, owner):
+    """Persist candidate intent first; reconcile this owner's existing claim.
+
+    Label claims are not an atomic Jira lease. Detect foreign/multiple owners
+    and stop; no automatic stealing or clearing of an orphaned lock.
+    """
+    record = Path(record)
+    label = owner_label(owner)
+    with locked(Path(str(record) + ".lock")):
+        owner_path = Path(str(record) + ".owner.json")
+        if owner_path.exists() and json.loads(owner_path.read_text()) != {"owner": owner}:
+            raise RuntimeError("lock record belongs to another run")
+        atomic(owner_path, {"owner": owner})
+        recorded = record.read_text().split() if record.exists() else []
+        acquired = []
+        for key in keys:
+            labels = _get_labels(server, user, token, key)
+            owners = {x for x in labels if x.startswith(OWNER_PREFIX)}
+            if owners == {label} and PROCESSING_LABEL in labels:
+                if labels & (BLOCKING_LABELS - {PROCESSING_LABEL}):
+                    raise RuntimeError("owned RFE moved to a human gate")
+            elif owners or labels & BLOCKING_LABELS:
+                print(f"BLOCKED {key} — existing lock or human gate", file=sys.stderr)
+                continue
+            else:
+                # The record is intent, not proof of acquisition. Cleanup reads
+                # the matching remote owner, including death before response.
+                if key not in recorded:
+                    with record.open("a") as stream:
+                        stream.write(key + "\n")
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    recorded.append(key)
+                add_labels(server, user, token, key, [PROCESSING_LABEL, label])
+            current = _get_labels(server, user, token, key)
+            if {x for x in current if x.startswith(OWNER_PREFIX)} != {label} or PROCESSING_LABEL not in current:
+                raise RuntimeError("conflicting ownership after lock request; no work is authorized")
+            if key not in recorded:
+                with record.open("a") as stream:
+                    stream.write(key + "\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                recorded.append(key)
+            acquired.append(key)
+            print(f"LOCKED {key} owner={owner}", file=sys.stderr)
+        print(" ".join(acquired))
+        return 0, acquired
+
+
+def unlock_owned(server, user, token, keys, owner):
+    label = owner_label(owner)
+    for key in keys:
+        labels = _get_labels(server, user, token, key)
+        owners = {x for x in labels if x.startswith(OWNER_PREFIX)}
+        if owners and owners != {label}:
+            raise RuntimeError("foreign or conflicting lock owner; cleanup refused")
+        if not owners:
+            if PROCESSING_LABEL in labels:
+                raise RuntimeError("unowned processing label; cleanup refused")
+            continue  # Already released (or died before acquiring).
+        remove_labels(server, user, token, key, [PROCESSING_LABEL, label])
+        print(f"UNLOCKED {key} owner={owner}", file=sys.stderr)
     return 0
 
 
@@ -202,6 +272,14 @@ def main():
     command = sys.argv[1]
     args = sys.argv[2:]
 
+    owner = None
+    if "--owner" in args:
+        idx = args.index("--owner")
+        if idx + 1 >= len(args):
+            return 2
+        owner = args[idx + 1]
+        args = args[:idx] + args[idx + 2:]
+
     locked_keys_file = None
     if command in ("lock", "lock-strat") and "--locked-keys-file" in args:
         idx = args.index("--locked-keys-file")
@@ -214,7 +292,7 @@ def main():
 
     keys = args
 
-    if locked_keys_file is not None:
+    if locked_keys_file is not None and not owner:
         try:
             _init_locked_keys_file(locked_keys_file)
         except OSError as exc:
@@ -229,10 +307,17 @@ def main():
         return 2
 
     if command == "lock":
+        if owner:
+            if not locked_keys_file:
+                raise ValueError("owned locking requires --locked-keys-file")
+            code, _ = lock_owned(server, user, token, keys, locked_keys_file, owner)
+            return code
         exit_code, _ = lock(server, user, token, keys,
                             locked_keys_file=locked_keys_file)
         return exit_code
     elif command == "unlock":
+        if owner:
+            return unlock_owned(server, user, token, keys, owner)
         return unlock(server, user, token, keys)
     elif command == "lock-strat":
         if len(keys) != 1:

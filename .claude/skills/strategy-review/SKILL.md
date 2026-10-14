@@ -31,6 +31,22 @@ Local mode is also active if any strategy file's frontmatter contains `workflow:
 
 If both `local/strat-tasks/` and `artifacts/strat-tasks/` have files, prefer `local/strat-tasks/`.
 
+## Recovery Before Generation
+
+For a pipeline invocation with `tmp/strat-input.json`, first run:
+
+```bash
+python3 scripts/publish_review.py RHAISTRAT-NNNN --check-only
+```
+
+Exit 0 means a current-run composed review and all its source hashes verify.
+Run the same command without `--check-only` to finish/reconcile publication,
+then return its numeric verdict. Skip scoring, specialist calls and the label
+gate in this recovery path. Exit 3 means no review exists; continue below.
+Any other failure stops recovery; do not overwrite invalid or changed evidence.
+This preserves a review completed before a crash even if its verdict label is
+already present. Local mode remains separate and does not publish to Jira.
+
 ## Step 1: Verify Artifacts Exist
 
 This skill processes exactly **one strategy per invocation**. `$ARGUMENTS` must contain a strategy key (e.g., `RHAISTRAT-1531` or `STRAT-001`). If no key is provided, **stop with an error**: "No strategy key provided. Usage: /strategy-review RHAISTRAT-NNNN"
@@ -215,98 +231,23 @@ never as an invented approval.
 A passing numeric gate can coexist with specialist dissent. State both facts to
 the human reader; do not describe the review as unanimous or concerns as resolved.
 
-## Step 7a: Post Review Summary to Jira
+## Step 7: Publish the Verified Review
 
-Compose a review summary comment and post it to the RHAISTRAT issue (or save to file in dry-run mode).
-
-Read the review file frontmatter to get scores and recommendation:
-
-```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py read artifacts/strat-reviews/{id}-review.md
-```
-
-Compose the comment in markdown using this format:
-
-```markdown
-*[Strat Creator]* Strategy Review — {VERDICT} (Score: {total}/8)
-
-| Criterion | Score | Status |
-|-----------|-------|--------|
-| Feasibility | {F}/2 | {✓ if 2, ⚠ if 1, ✗ if 0} |
-| Testability | {T}/2 | {✓ if 2, ⚠ if 1, ✗ if 0} |
-| Scope | {S}/2 | {✓ if 2, ⚠ if 1, ✗ if 0} |
-| Architecture | {A}/2 | {✓ if 2, ⚠ if 1, ✗ if 0} |
-
-{For each dimension scored < 2, one sentence summarizing the issue from the prose review.}
-
-**Specialist dissent:** {list roles whose recommendation differs from the numeric
-verdict, with a brief description of their concerns; say none only if they all
-agree. The numeric verdict remains the gate. Link readers to the full attached review.}
-
-**Action:** {verdict-specific guidance}
-```
-
-Action text by verdict:
-- **APPROVE**: "No action needed — strategy passed quality review."
-- **REVISE**: "Edit the strategy to address flagged issues, then remove the `needs-attention` label. The pipeline will re-evaluate automatically."
-- **REJECT**: "This strategy has fundamental problems. Consider revisiting the source RFE or re-running `/strategy-refine` with different constraints."
-
-**Posting:**
-
-Save the composed markdown to a temp file, then post:
+Use the deterministic publisher. It builds a stable numeric summary with
+specialist dissent, saves `{id}-review-comment.md`, reconciles an existing
+comment and matching attachment, and applies the numeric verdict label.
+Do not post through MCP, curl, inline Python, or another write path.
 
 ```bash
-python3 -c "
-import sys; sys.path.insert(0, '${CLAUDE_SKILL_DIR}/scripts')
-from jira_utils import add_comment, markdown_to_adf
-import os
-comment_md = open(sys.argv[1]).read()
-add_comment(os.environ['JIRA_SERVER'], os.environ['JIRA_USER'],
-            os.environ['JIRA_TOKEN'], sys.argv[2], markdown_to_adf(comment_md))
-" /tmp/strat-review-comment-{KEY}.md RHAISTRAT-NNNN
+python3 scripts/publish_review.py RHAISTRAT-NNNN
 ```
 
-- **Dry-run mode**: Write the comment markdown to `artifacts/strat-reviews/{id}-review-comment.md` instead. Print `[DRY RUN] Review comment saved to artifacts/strat-reviews/{id}-review-comment.md`.
-- **Jira credentials unavailable**: Save to file (same as dry-run) and notify the user.
+In dry-run mode use `--dry-run`; it saves the summary and skips external writes.
+Missing credentials also saves locally. For local human review, skip this step.
 
-## Step 7b: Attach Full Review File to Jira
-
-If NOT in dry-run mode and `jira_key` is not null, attach the full review file to the RHAISTRAT issue as a Jira attachment. This gives reviewers access to the complete prose reviews alongside the summary comment.
-
-```bash
-python3 -c "
-import sys; sys.path.insert(0, 'scripts')
-from jira_utils import add_attachment, require_env
-s, u, t = require_env()
-add_attachment(s, u, t, sys.argv[1], sys.argv[2])
-" RHAISTRAT-NNNN artifacts/strat-reviews/{id}-review.md
-```
-
-Print `[ATTACHMENT] Review file attached to RHAISTRAT-NNNN`.
-
-In dry-run mode, skip and print `[DRY RUN] Skipping attachment for RHAISTRAT-NNNN`.
-
-## Step 7c: Apply Verdict Labels
-
-If NOT in dry-run mode and `jira_key` is not null, add the appropriate label based on the verdict:
-
-```bash
-python3 -c "
-import sys; sys.path.insert(0, 'scripts')
-from jira_utils import add_labels, require_env
-s, u, t = require_env()
-add_labels(s, u, t, sys.argv[1], sys.argv[2:])
-" RHAISTRAT-NNNN <labels>
-```
-
-Labels by verdict:
-- **APPROVE**: add `strat-creator-rubric-pass`
-- **REVISE**: add `strat-creator-needs-attention`
-- **REJECT**: add `strat-creator-needs-attention`
-
-Print `[LABEL] <label> added to RHAISTRAT-NNNN`.
-
-In dry-run mode, skip and print `[DRY RUN] Skipping labels for RHAISTRAT-NNNN`.
+A pending or conflicting write stops publication. Preserve `tmp/strat-effects/`
+and the verified review. Do not regenerate reports, change the summary, delete
+write intent or repeat an uncertain POST to make recovery appear successful.
 
 ## Step 8: Advise the User
 

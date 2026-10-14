@@ -187,7 +187,7 @@ def expected_create_skip(rfe, settings):
 def lock(keys, record, env):
     proc = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "lock_issues.py"), "lock",
-         "--locked-keys-file", str(record), *keys],
+         "--owner", env["STRAT_RUN_ID"], "--locked-keys-file", str(record), *keys],
         capture_output=True, text=True, cwd=ROOT, env=env)
     sys.stderr.write(proc.stderr)
     recorded = record.read_text().split() if record.exists() else []
@@ -269,6 +269,8 @@ def main(argv, env):
            "expected_skips": None,
            "architecture_context": "available", "architecture_version": version,
            "prepared_at": now()}
+    if not dry_run:
+        run["lock_owner"] = run_id
     if not candidates:
         write_json(state_dir / "run.json", run)
         return request_skip(env, "discovery returned no eligible RFEs")

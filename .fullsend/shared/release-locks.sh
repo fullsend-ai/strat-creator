@@ -33,6 +33,12 @@ if [[ ${#keys[@]} -eq 0 ]]; then
   exit 0
 fi
 echo "release-locks: releasing ${keys[*]}"
-python3 "${ROOT}/scripts/lock_issues.py" unlock "${keys[@]}"
+OWNER_RECORD="${RECORD}.owner.json"
+if [[ ! -f "${OWNER_RECORD}" ]]; then
+  echo "release-locks: ERROR: no owner record; reconcile legacy locks manually" >&2
+  exit 1
+fi
+owner=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["owner"])' "${OWNER_RECORD}")
+python3 "${ROOT}/scripts/lock_issues.py" unlock --owner "${owner}" "${keys[@]}"
 # Keep the record as evidence, renamed so a rerun does not treat it as live.
 mv -f -- "${RECORD}" "${RECORD}.released"

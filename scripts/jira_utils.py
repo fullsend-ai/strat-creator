@@ -10,15 +10,19 @@ Environment variables:
 
 import base64
 import collections
+import hashlib
 import json
 import os
 import re
 import ssl
 import sys
+import tempfile
 import time
 import unicodedata
 import urllib.error
 import urllib.request
+
+from strat_side_effects import check_owner, digest, perform
 
 ssl_ctx = ssl.create_default_context()
 try:
@@ -116,7 +120,14 @@ def api_call(server, path, user, token, body=None, method=None):
 
 def api_call_with_retry(server, path, user, token, body=None, method=None,
                         max_retries=3):
-    """Wrap api_call with retry on transient errors."""
+    """Retry reads only; writes must reconcile a possibly committed request.
+
+    POST search is a read. Even a transient write error can arrive after Jira
+    commits, so an HTTP retry must not silently repeat that mutation.
+    """
+    actual_method = method or ("POST" if body is not None else "GET")
+    if actual_method not in ("GET", "HEAD") and path != "/search/jql":
+        return api_call(server, path, user, token, body, method)
     last_error = None
     for attempt in range(max_retries):
         try:
@@ -373,10 +384,41 @@ def get_comments(server, user, token, issue_key):
 
 
 def add_comment(server, user, token, issue_key, body_adf):
-    """POST a comment with ADF body."""
+    """Post once per exact body, reconciling visible comments before retry."""
     path = f"/issue/{issue_key}/comment"
-    return api_call_with_retry(server, path, user, token,
-                               body={"body": body_adf})
+    def read():
+        matches = [c for c in get_comments(server, user, token, issue_key) if c.get("body") == body_adf]
+        if len(matches) > 1:
+            raise RuntimeError("duplicate matching review comments require reconciliation")
+        return matches[0] if matches else None
+    return perform(server, "comment", issue_key, body_adf, read,
+                   lambda: api_call(server, path, user, token, body={"body": body_adf}),
+                   lambda data: check_owner(server, user, token, issue_key, data), slot="review-summary")
+
+
+def create_clone(server, user, token, source_key, **fields):
+    """Create with an atomic searchable marker; recover even before linking.
+
+    A missing search result after pending intent is uncertain, not permission
+    to create again. Both marker and Cloners links must resolve uniquely.
+    """
+    marker = "strat-creator-clone-" + digest({"server": server.rstrip("/"), "source": source_key,
+                                           "project": fields["project"]})[:32]
+    fields = dict(fields)
+    fields["labels"] = sorted(set(fields.get("labels", [])) | {marker})
+    def read():
+        linked = get_issue(server, user, token, source_key, fields=["issuelinks"])["fields"].get("issuelinks", [])
+        keys = {link.get(side, {}).get("key", "") for link in linked
+                if link.get("type", {}).get("name") == "Cloners" for side in ("inwardIssue", "outwardIssue")
+                if link.get(side, {}).get("key", "").startswith(fields["project"] + "-")}
+        issues = search_issues(server, user, token, f'project = "{fields["project"]}" AND labels = "{marker}"')
+        keys.update(issue["key"] for issue in issues)
+        if len(keys) > 1:
+            raise RuntimeError("multiple clone candidates require reconciliation")
+        return next(iter(keys)) if keys else None
+    return perform(server, "clone", source_key, fields, read,
+                   lambda: create_issue(server, user, token, **fields),
+                   lambda data: check_owner(server, user, token, source_key, data), slot=fields["project"])
 
 
 def create_issue(server, user, token, project, issue_type, summary,
@@ -415,21 +457,12 @@ def create_issue(server, user, token, project, issue_type, summary,
 
 def update_issue(server, user, token, issue_key, summary, description_adf):
     """PUT to update an existing issue's summary and description."""
-    body = {
-        "fields": {
-            "summary": summary,
-            "description": description_adf,
-        }
-    }
-    path = f"/issue/{issue_key}"
-    api_call_with_retry(server, path, user, token, body=body, method="PUT")
+    set_fields_verified(server, user, token, issue_key, {"summary": summary, "description": description_adf})
 
 
 def update_summary(server, user, token, issue_key, summary):
     """PUT to update only an issue's summary field."""
-    body = {"fields": {"summary": summary}}
-    path = f"/issue/{issue_key}"
-    api_call_with_retry(server, path, user, token, body=body, method="PUT")
+    set_fields_verified(server, user, token, issue_key, {"summary": summary})
 
 
 def add_labels(server, user, token, issue_key, labels):
@@ -440,7 +473,7 @@ def add_labels(server, user, token, issue_key, labels):
         }
     }
     path = f"/issue/{issue_key}"
-    api_call_with_retry(server, path, user, token, body=body, method="PUT")
+    _label_write(server, user, token, issue_key, labels, body, path, adding=True)
 
 
 def remove_labels(server, user, token, issue_key, labels):
@@ -451,7 +484,27 @@ def remove_labels(server, user, token, issue_key, labels):
         }
     }
     path = f"/issue/{issue_key}"
-    api_call_with_retry(server, path, user, token, body=body, method="PUT")
+    _label_write(server, user, token, issue_key, labels, body, path, adding=False)
+
+
+def _label_write(server, user, token, key, labels, body, path, adding):
+    def read():
+        current = set(get_issue(server, user, token, key, fields=["labels"])["fields"].get("labels", []))
+        done = set(labels) <= current if adding else not set(labels) & current
+        return True if done else None
+    perform(server, "add-labels" if adding else "remove-labels", key, sorted(labels), read,
+            lambda: api_call(server, path, user, token, body=body, method="PUT"),
+            lambda data: check_owner(server, user, token, key, data))
+
+
+def set_fields_verified(server, user, token, key, fields):
+    """Reconcile field replacement, halting if a pending write was overwritten."""
+    def read():
+        current = get_issue(server, user, token, key, fields=list(fields))["fields"]
+        return True if all(current.get(k) == v for k, v in fields.items()) else None
+    return perform(server, "fields", key, fields, read,
+                   lambda: api_call(server, f"/issue/{key}", user, token, body={"fields": fields}, method="PUT"),
+                   lambda data: check_owner(server, user, token, key, data))
 
 
 def create_issue_link(server, user, token, type_name, inward_key, outward_key):
@@ -461,12 +514,23 @@ def create_issue_link(server, user, token, type_name, inward_key, outward_key):
         "inwardIssue": {"key": inward_key},
         "outwardIssue": {"key": outward_key},
     }
-    api_call_with_retry(server, "/issueLink", user, token, body=body)
+    def read():
+        links = get_issue(server, user, token, inward_key, fields=["issuelinks"])["fields"].get("issuelinks", [])
+        matches = [x for x in links if x.get("type", {}).get("name") == type_name
+                   and x.get("outwardIssue", {}).get("key") == outward_key]
+        if len(matches) > 1:
+            raise RuntimeError("duplicate matching links require reconciliation")
+        return True if matches else None
+    # Cloners is created before the target has a source link; check the RFE.
+    target = outward_key if outward_key.startswith("RHAIRFE-") else inward_key
+    perform(server, "link", inward_key, body, read,
+            lambda: api_call(server, "/issueLink", user, token, body=body),
+            lambda data: check_owner(server, user, token, target, data))
 
 
 def add_attachment(server, user, token, issue_key, filepath, filename=None,
                    max_retries=3):
-    """POST /rest/api/3/issue/{key}/attachments — upload a file."""
+    """Upload once per filename and exact bytes; never blindly retry POST."""
     import mimetypes
     if filename is None:
         filename = os.path.basename(filepath)
@@ -488,29 +552,28 @@ def add_attachment(server, user, token, issue_key, filepath, filename=None,
         "Content-Type": f"multipart/form-data; boundary={boundary}",
         "X-Atlassian-Token": "no-check",
     }
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            req = urllib.request.Request(url, data=body, headers=headers,
-                                        method="POST")
-            with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:
-                return json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            if e.code in (429, 502, 503, 504):
-                wait = max(int(e.headers.get("Retry-After", 1)), 4 ** attempt)
-                print(f"  HTTP {e.code}, retrying in {wait}s...",
-                      file=sys.stderr)
-                time.sleep(wait)
-                last_error = e
+    def read():
+        attachments = get_issue(server, user, token, issue_key, fields=["attachment"])["fields"].get("attachment", [])
+        matches = []
+        for att in attachments:
+            if att.get("filename") != filename:
                 continue
-            raise
-        except urllib.error.URLError as e:
-            wait = 4 ** attempt
-            print(f"  Network error: {e.reason}, retrying in {wait}s...",
-                  file=sys.stderr)
-            time.sleep(wait)
-            last_error = e
-    raise last_error
+            with tempfile.TemporaryDirectory() as temp:
+                local = os.path.join(temp, "attachment")
+                download_attachment(server, user, token, att["content"], local)
+                with open(local, "rb") as stream:
+                    if stream.read() == file_data:
+                        matches.append(att)
+        if len(matches) > 1:
+            raise RuntimeError("duplicate matching attachments require reconciliation")
+        return matches if matches else None
+    def write():
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:
+            return json.loads(resp.read())
+    return perform(server, "attachment", issue_key,
+                   {"filename": filename, "sha256": hashlib.sha256(file_data).hexdigest()}, read, write,
+                   lambda data: check_owner(server, user, token, issue_key, data), slot=filename)
 
 
 def download_attachment(server, user, token, content_url, dest_path):

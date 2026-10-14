@@ -47,6 +47,43 @@ fi
 python3 "${CLONE}/.fullsend/shared/vendor.py" "${CLONE}" "${TARGET_REPO_DIR}" "${REF}"
 
 cd -- "${TARGET_REPO_DIR}"
+# A repeated pre-script for the same prepared run must preserve recovery data.
+# An absent host record, different run, or lost/foreign owner is not adopted.
+if [[ -f tmp/strat-input.json && -f "${STRAT_STATE_DIR}/run.json" ]]; then
+  if python3 - "${CLONE}" "${STRAT_STATE_DIR}/run.json" <<'PY'
+import json, os, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / 'scripts'))
+from jira_utils import require_env
+from strat_side_effects import check_owner
+saved = json.load(open(sys.argv[2]))
+current = json.load(open('tmp/strat-input.json'))
+if current['run_id'] != os.environ['STRAT_RUN_ID']:
+    sys.exit(78)
+if current != saved:
+    sys.exit('pre-script: prepared input differs from host run record')
+if not current['dry_run']:
+    for key in current['acquired_keys']:
+        check_owner(*require_env(), key, current)
+sys.exit(0)
+PY
+  then
+    echo "strat-${MODE} pre-script: reusing verified preparation; recovery data preserved"
+    exit 0
+  else
+    rc=$?
+    [[ "${rc}" == 78 ]] || exit "${rc}"
+  fi
+fi
+# Do not erase uncertain work/ownership when preparation lost its final receipt.
+if [[ -s "${STRAT_STATE_DIR}/owned-rfe-ids.txt" ]]; then
+  echo "strat-${MODE} pre-script: outstanding lock intent; reconcile/release before new preparation" >&2
+  exit 1
+fi
+if [[ -f tmp/strat-input.json && ! -f "${STRAT_STATE_DIR}/run.json" ]]; then
+  echo "strat-${MODE} pre-script: prepared input has no host record; recovery data preserved" >&2
+  exit 1
+fi
 # The previous run's progress may live in this checkout's artifacts/, which the
 # clean-up below removes: keep a host copy for prepare_run.py first.
 if [[ -n "${STRAT_PREVIOUS_PROGRESS:-}" && -f "${STRAT_PREVIOUS_PROGRESS}" ]]; then

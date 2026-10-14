@@ -44,13 +44,21 @@ fi
 PUBLISH_DIR="${STRAT_PUBLISH_DIR:-${FULLSEND_RUN_DIR:-${PWD}}/publish}"
 HANDOFF="${PUBLISH_DIR}/handoff"
 RESULTS="${PUBLISH_DIR}/results"
+BUNDLE="${PUBLISH_DIR}/bundle"
 mkdir -p -- "${PUBLISH_DIR}"
+# Serialize the whole post-script, including results clone replacement.
+exec 9>"${PUBLISH_DIR}/post.lock"
+flock -x 9
 python3 "${SHARED}/handoff.py" "${REPO_DIR}" "${HANDOFF}" "${RESULT_FILE}" "${HANDOFF}/strat-progress.json"
 cp -f "${RESULT_FILE}" "${HANDOFF}/agent-result.json"
 # The run's record lives in the target repository: artifacts/ as CI uploads it.
 mkdir -p -- "${TARGET_REPO_DIR}/artifacts"
 for dir in strat-tasks strat-reviews strat-originals; do rm -rf -- "${TARGET_REPO_DIR}/artifacts/${dir}"; done
 cp -R "${HANDOFF}/." "${TARGET_REPO_DIR}/artifacts/"
+
+label=single-rfe
+[[ "${MODE}" != batch ]] || label=pipeline-settings
+python3 "${SHARED}/prepare_publication.py" "${HANDOFF}" "${BUNDLE}" "${RESULT_FILE}" "${label}"
 
 rm -rf -- "${RESULTS}"
 if [[ -n "${RESULTS_REPO_URL:-}" ]]; then
@@ -67,26 +75,20 @@ if [[ -n "${RESULTS_REPO_URL:-}" ]]; then
 else
   mkdir -p "${RESULTS}"
 fi
-cp -R "${HANDOFF}/." "${RESULTS}/"
-rm -f -- "${RESULTS}/agent-result.json" "${RESULTS}/strat-progress.json"
-
-label=single-rfe
-[[ "${MODE}" != batch ]] || label=pipeline-settings
-python3 "${CLONE}/scripts/generate-report.py" \
-  --artifacts "${RESULTS}" --output "${RESULTS}/reports/report.html"
-python3 "${CLONE}/scripts/extract-pipeline-data.py" \
-  --run-dir "${RESULTS}" --output "${RESULTS}/pipeline-data.json" --config "${label}"
+cp -R "${BUNDLE}/." "${RESULTS}/"
 
 if [[ -z "${RESULTS_REPO_URL:-}" ]]; then
   echo "INFO: RESULTS_REPO_URL not set; results assembled at ${RESULTS}, nothing pushed"
   exit 0
 fi
 
-python3 "${SHARED}/publish/push-results.py" --results-dir "${RESULTS}" --results-repo "${RESULTS_REPO_URL}"
+python3 "${SHARED}/publish/push-results.py" --results-dir "${RESULTS}" \
+  --results-repo "${RESULTS_REPO_URL}" --run-id "$(field run_id)"
 cd -- "${RESULTS}"
 git pull --rebase -X theirs origin main || true
 python3 "${CLONE}/scripts/extract-pipeline-data.py" \
-  --data-dir "${RESULTS}/RHAISTRAT" --output "${RESULTS}/RHAISTRAT/summary.json" --no-body
+  --data-dir "${RESULTS}/RHAISTRAT" --output "${RESULTS}/RHAISTRAT/summary.json" --no-body \
+  --generated-at "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generated_at"])' "${BUNDLE}/pipeline-data.json")"
 git add RHAISTRAT/summary.json RHAISTRAT/summary-production.json
 if git diff --cached --quiet; then
   echo "Summaries unchanged, nothing to push."
