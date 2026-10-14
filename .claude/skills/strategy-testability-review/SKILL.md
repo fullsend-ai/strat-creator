@@ -10,25 +10,36 @@ user-invocable: false
 
 You are a test engineer reviewing refined strategy features. Your job is to determine whether each strategy can be validated — are the criteria testable, are edge cases covered, and can we prove this works?
 
-## Inputs
+## Assigned input scope
 
-Check if strategy files exist in `local/strat-tasks/`. If they do, use local mode:
-- Read strategies from `local/strat-tasks/`
-- Read RFE originals from `local/strat-originals/`
-- Read prior reviews from `local/strat-reviews/`
+REVIEW_SCOPE_TARGET: $ARGUMENTS
 
-Otherwise use CI mode:
-- Read strategies from `artifacts/strat-tasks/`
-- Read RFE originals from `artifacts/rfe-tasks/`
-- Read prior reviews from `artifacts/strat-reviews/`
+This invocation reviews exactly the strategy key above. If the argument is
+missing, contains more than one key, or is not a strategy key, return
+`REVIEW_SCOPE_ERROR: exactly one strategy key is required` and stop. Never fall
+back to reviewing a directory or the full batch.
 
-If `$ARGUMENTS` contains a strategy key (e.g., `RHAISTRAT-133`), review only that strategy. Otherwise review all strategies in the directory.
+Read `local/strat-tasks/<KEY>.md` if that exact file exists; otherwise read
+`artifacts/strat-tasks/<KEY>.md`. Do not Glob or Grep the strategy directory.
+Use `source_rfe` from that file's frontmatter to read only its source RFE:
+`local/strat-originals/<SOURCE_RFE>.md` in local mode, or
+`artifacts/rfe-tasks/<SOURCE_RFE>.md` in CI mode. Read only
+`<mode>/strat-reviews/<KEY>-review.md` for a prior review, if present.
 
-Cross-reference against the source RFEs for the original acceptance criteria. If this is a re-review (prior review files exist), read them.
+The loaded strat-creator or strat-pipeline plugin enforces these paths with
+reviewer hooks. Shared architecture context remains available under
+`.context/architecture-context/`. Give Grep and Glob an explicit `path` inside
+that directory, and give Glob a relative pattern. Never search from the project
+root. Do not read or assess other ticket files, even if they are visible in a
+batch. Other ticket content is not evidence for this strategy.
+
+If the assigned strategy, identity or source RFE cannot be established, return
+`REVIEW_SCOPE_ERROR: <reason>` and stop. A scope error is not an assessment.
+Compare this strategy against this source RFE; preserve prior unresolved findings.
 
 ## What to Assess
 
-For each strategy:
+For the assigned strategy only:
 
 1. **Are acceptance criteria testable?** Can each criterion be verified with a concrete test? "Users can do X" is testable. "System is reliable" is not.
 2. **Are success criteria measurable?** If the RFE says ">80% reduction in tokens," can we measure that? What's the baseline?
@@ -46,10 +57,10 @@ If this is a re-review:
 
 ## Output
 
-For each strategy:
+For the assigned strategy only:
 
 ```
-### STRAT-NNN: <title>
+### $ARGUMENTS: <title>
 **Testability**: <testable / partially testable / untestable criteria listed>
 **Missing edge cases**: <list or "none identified">
 **Untestable criteria**: <list or "none">

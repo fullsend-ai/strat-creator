@@ -1,7 +1,13 @@
 ---
+strat_id: RHAISTRAT-9001
+source_rfe: RHAIRFE-9001
+title: Serving request timeout handling
+priority: Major
+status: Refined
 jira_key: RHAISTRAT-9001
+workflow: null
+latest_diff: null
 ---
-
 # Strategy: Serving request timeout handling
 
 ## Strategy

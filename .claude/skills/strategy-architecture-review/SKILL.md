@@ -10,21 +10,32 @@ user-invocable: false
 
 You are a platform architect reviewing refined strategy features. Your job is to verify that the strategy's technical approach is architecturally sound — correct dependencies, valid integration patterns, and no conflicts with existing platform architecture.
 
-## Inputs
+## Assigned input scope
 
-Check if strategy files exist in `local/strat-tasks/`. If they do, use local mode:
-- Read strategies from `local/strat-tasks/`
-- Read RFE originals from `local/strat-originals/`
-- Read prior reviews from `local/strat-reviews/`
+REVIEW_SCOPE_TARGET: $ARGUMENTS
 
-Otherwise use CI mode:
-- Read strategies from `artifacts/strat-tasks/`
-- Read RFE originals from `artifacts/rfe-tasks/`
-- Read prior reviews from `artifacts/strat-reviews/`
+This invocation reviews exactly the strategy key above. If the argument is
+missing, contains more than one key, or is not a strategy key, return
+`REVIEW_SCOPE_ERROR: exactly one strategy key is required` and stop. Never fall
+back to reviewing a directory or the full batch.
 
-If `$ARGUMENTS` contains a strategy key (e.g., `RHAISTRAT-133`), review only that strategy. Otherwise review all strategies in the directory.
+Read `local/strat-tasks/<KEY>.md` if that exact file exists; otherwise read
+`artifacts/strat-tasks/<KEY>.md`. Do not Glob or Grep the strategy directory.
+Use `source_rfe` from that file's frontmatter to read only its source RFE:
+`local/strat-originals/<SOURCE_RFE>.md` in local mode, or
+`artifacts/rfe-tasks/<SOURCE_RFE>.md` in CI mode. Read only
+`<mode>/strat-reviews/<KEY>-review.md` for a prior review, if present.
 
-Cross-reference against the source RFEs. If this is a re-review (prior review files exist), read them.
+The loaded strat-creator or strat-pipeline plugin enforces these paths with
+reviewer hooks. Shared architecture context remains available under
+`.context/architecture-context/`. Give Grep and Glob an explicit `path` inside
+that directory, and give Glob a relative pattern. Never search from the project
+root. Do not read or assess other ticket files, even if they are visible in a
+batch. Other ticket content is not evidence for this strategy.
+
+If the assigned strategy, identity or source RFE cannot be established, return
+`REVIEW_SCOPE_ERROR: <reason>` and stop. A scope error is not an assessment.
+Compare this strategy against this source RFE; preserve prior unresolved findings.
 
 ## Architecture Context
 
@@ -32,12 +43,14 @@ Read `.context/architecture-context/LATEST_VERSION` directly with the Read tool 
 
 If the Read on `LATEST_VERSION` returns an error (file not found) or the PLATFORM.md read fails, skip this review and output:
 ```
-Architecture review skipped — no architecture context available.
+### $ARGUMENTS: Architecture review skipped
+**Architecture assessment**: no architecture context available
+**Recommendation**: context unavailable; no architecture verdict
 ```
 
 ## Architecture Context Overlays
 
-Check for overlay files with the Glob tool: `.context/architecture-context/overlays/*.md`. Read each match except `README.md` and keep the ones with `status: active` in their frontmatter. Frontmatter can run to 40 lines and keeps growing, so pass `limit: 60` to Read for this filtering pass rather than loading whole files. Use Glob and Read for this, never a Bash glob or `for` loop - Bash is not among this skill's allowed tools, so a loop costs a denied turn and then falls back to Read anyway. These overlays are human-authored corrections to the generated architecture docs - version bumps, maturity changes, dependency shifts.
+Check for overlay files with the Glob tool: `*.md` with path `.context/architecture-context/overlays`. Read each match except `README.md` and keep the ones with `status: active` in their frontmatter. Frontmatter can run to 40 lines and keeps growing, so pass `limit: 60` to Read for this filtering pass rather than loading whole files. Use Glob and Read for this, never a Bash glob or `for` loop - Bash is not among this skill's allowed tools, so a loop costs a denied turn and then falls back to Read anyway. These overlays are human-authored corrections to the generated architecture docs - version bumps, maturity changes, dependency shifts.
 
 Filter for relevant overlays:
 1. **Status**: `status` must be `active` (ignore `superseded`)
@@ -59,7 +72,7 @@ If no overlays directory exists or no overlays match, proceed without them.
 
 ## What to Assess
 
-For each strategy:
+For the assigned strategy only:
 
 1. **Are dependencies correctly identified?** Check every component mentioned against the architecture docs. Are there dependencies the strategy missed? Are any listed dependencies incorrect or outdated?
 2. **Are integration patterns correct?** Does the strategy propose integrations that match how components actually communicate? Does it assume APIs or capabilities that don't exist?
@@ -75,10 +88,10 @@ If this is a re-review:
 
 ## Output
 
-For each strategy:
+For the assigned strategy only:
 
 ```
-### STRAT-NNN: <title>
+### $ARGUMENTS: <title>
 **Architecture assessment**: <sound / concerns identified / conflicts with platform>
 **Missing dependencies**: <list or "none">
 **Incorrect assumptions**: <list or "none">

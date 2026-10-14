@@ -87,6 +87,33 @@ evaluated with `fullsend dispatch` on the event fixtures in
 6. **review**: `/strategy-review <KEY> --scores-from /tmp/strat-assess/<KEY>`.
 7. **result**: `scripts/strat_pipeline_state.py result` writes `agent-result.json`, then `fullsend-check-output` checks it.
 
+### Reviewer ticket scope
+
+The four forked reviewer Skills require exactly one strategy key. They select
+`strat-reviewer`, whose tools are Read, Grep and Glob. The loaded strat-pipeline
+plugin registers command hooks that restrict those tools to the assigned
+strategy, its frontmatter-linked source RFE, its prior review and shared
+architecture context. Root and batch-directory searches are blocked. A local
+file for another ticket does not switch this review into local mode.
+
+The completion hook requires one assessment heading for the assigned key and
+rejects other strategy or unrelated RFE keys. An explicit `REVIEW_SCOPE_ERROR:`
+may return to the caller, which must stop before composition or publication.
+The receiving agent and scorer keep their existing tools and status schema.
+
+The plugin bundles `scripts/review_scope.py`; its copy matches the project
+helper in a repository test. The interactive strat-creator plugin bundles the
+same hooks. Keep the plugin loaded and hooks enabled: standalone Skill files
+alone supply instructions, without this enforced tool boundary.
+
+This adapter targets Claude Code 2.1.296. It binds scope using each agent's
+initial assignment transcript and the hook's agent ID, not a shared current-key
+file. It waits up to two seconds for the asynchronous transcript flush and
+blocks access if the assignment remains unavailable. Per-agent decisions are
+recorded in `tmp/review-scope/`. It depends on this transcript layout; qualify
+Claude upgrades against the scope control. These are application scope checks,
+not a replacement for the OpenShell sandbox.
+
 A workflow has no shell of its own, so every command runs in a step agent.
 Each step records its outcome in `tmp/strat-progress.json` through
 `scripts/strat_pipeline_state.py`. When `agent()` returns `null` (the agent
