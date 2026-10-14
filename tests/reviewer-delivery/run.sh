@@ -38,15 +38,18 @@ git rev-parse HEAD > "$out/source-ref.txt"
 set +e
 timeout 1200 claude --print --verbose --output-format stream-json --max-turns 20 \
   --model "$model" --effort medium --dangerously-skip-permissions \
+  --disallowed-tools Bash Edit Write Agent \
   --settings "$out/fixture-settings.json" \
-  --plugin-dir "$root/.fullsend/plugins/strat-pipeline" "$fixture/plugin" "/$scenario:$scenario" \
+  --plugin-dir "$root/.fullsend/plugins/strat-pipeline" \
+  --plugin-dir "$fixture/plugin" "/$scenario:$scenario" \
   2> >(tee "$out/claude-stderr.log" >&2) | tee "$out/stream.jsonl"
 code=${PIPESTATUS[0]}
 set -e
 printf '%s\n' "$code" > "$out/claude-exit.txt"
 for name in projects tasks; do
-  if [[ -d "$HOME/.claude/$name" ]]; then
-    cp -a "$HOME/.claude/$name" "$out/native-$name"
+  config_root=${CLAUDE_CONFIG_DIR:-"$HOME/.claude"}
+  if [[ -d "$config_root/$name" ]]; then
+    cp -a "$config_root/$name" "$out/native-$name"
   fi
 done
 if [[ -d tmp/review-scope ]]; then
