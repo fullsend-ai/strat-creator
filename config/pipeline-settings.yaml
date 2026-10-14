@@ -13,6 +13,9 @@ jql:
     - rhoai-3.6
     - rhoai-3.6.EA1
     - rhoai-3.6.EA2
+    # Release-level names
+    - rhai-3.6
+    - rhai-3.7
     # 3.5 milestones — RHAII, RHOAI, RHELAI
     - "3.5 EA1 RHAII RELEASE"
     - "3.5 EA1 RHOAI RELEASE"
@@ -37,7 +40,7 @@ jql:
     - "3.7 EA RHAII RELEASE"
     - "3.7 EA RHOAI RELEASE"
     - "3.7 EA RHELAI RELEASE"
-    - "3.7 GA RHAII RELEASE"
+    - "3.7 GA  RHAII RELEASE"   # double space matches the Jira version name
     - "3.7 GA RHOAI RELEASE"
     - "3.7 GA RHELAI RELEASE"
   quality_labels:      # at least one required
