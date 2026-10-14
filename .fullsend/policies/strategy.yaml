@@ -1,0 +1,61 @@
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /proc, /dev/urandom, /app, /etc, /var/log]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: best_effort
+
+# Service permissions must be part of the applied sandbox policy. Importing a
+# credential provider profile alone does not attach its network permissions.
+network_policies:
+  local_services:
+    name: strat-creator-services
+    endpoints:
+    # The client verifies local services against the mounted local CA. OpenShell does
+    # not terminate these private-CA connections; endpoint/port policy remains.
+    - host: jira.local
+      port: 443
+      tls: skip
+    - host: gitlab.local
+      port: 443
+      tls: skip
+    - host: orgpulse.local
+      port: 443
+      tls: skip
+    # Git smart HTTP clone/fetch is GET */info/refs then POST */git-upload-pack,
+    # which the read-only preset (GET/HEAD/OPTIONS) denies. Allow that POST for
+    # the architecture context only; git-receive-pack (push) stays denied.
+    - host: github.com
+      port: 443
+      protocol: rest
+      enforcement: enforce
+      rules:
+      - allow: {method: GET, path: '**'}
+      - allow: {method: HEAD, path: '**'}
+      - allow: {method: OPTIONS, path: '**'}
+      - allow: {method: POST, path: /opendatahub-io/architecture-context/git-upload-pack}
+    - host: api.github.com
+      port: 443
+      protocol: rest
+      access: read-only
+      enforcement: enforce
+    - host: raw.githubusercontent.com
+      port: 443
+      protocol: rest
+      access: read-only
+      enforcement: enforce
+    - host: codeload.github.com
+      port: 443
+      protocol: rest
+      access: read-only
+      enforcement: enforce
+    binaries:
+    - path: '**/bash'
+    - path: '**/sh'
+    - path: '**/git'
+    - path: '**/python3*'
+    - path: '**/node'
+    - path: '**/claude'
+    - path: '**/fullsend-claude'

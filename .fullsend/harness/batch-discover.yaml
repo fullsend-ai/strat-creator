@@ -1,0 +1,44 @@
+entrypoint:
+  command:
+    - scripts/strategy-entrypoint.sh
+    - batch-discover
+  stream_format: none
+
+role: triage
+description: Discover, create, refine, and review approved RFEs through strat-creator.
+image: ghcr.io/fullsend-ai/fullsend-sandbox@sha256:259605fea321353552fdefd3a6a55e8b5c260998dfc5a622ed143e41a429995a
+policy: policies/strategy.yaml
+model: claude-opus-4-6
+effort: high
+timeout_minutes: 295
+sandbox_timeout_seconds: 300
+providers:
+  - vertex-ai
+host_files:
+  - src: ${GOOGLE_APPLICATION_CREDENTIALS}
+    dest: /tmp/.gcp-credentials.json
+  - src: /etc/gitlab-runner/certs/ca.crt
+    dest: /tmp/gitlab-ca.crt
+openshell:
+  profiles:
+    - profiles/fullsend-vertex-ai.yaml
+env:
+  sandbox:
+    BATCH_SIZE: "${BATCH_SIZE}"
+    BATCH_OFFSET: "${BATCH_OFFSET}"
+    BATCH_EXPECTED_KEYS: "${BATCH_EXPECTED_KEYS}"
+    JIRA_SERVER: "${JIRA_SERVER}"
+    JIRA_USER: "${JIRA_USER}"
+    JIRA_TOKEN: "${JIRA_TOKEN}"
+    RESULTS_REPO_URL: "${RESULTS_REPO_URL}"
+    RESULTS_PUSH_TOKEN: "${RESULTS_PUSH_TOKEN}"
+    RESULTS_GIT_USER: "${RESULTS_GIT_USER}"
+    CLAUDE_CODE_USE_VERTEX: "1"
+    ANTHROPIC_DEFAULT_OPUS_MODEL: claude-opus-4-6
+    CLAUDE_CODE_SUBAGENT_MODEL: claude-opus-4-6
+    CLAUDE_CODE_SUBAGENT_MODEL_FORCE: "1"
+    ANTHROPIC_VERTEX_PROJECT_ID: "${ANTHROPIC_VERTEX_PROJECT_ID}"
+    CLOUD_ML_REGION: "global"
+    GOOGLE_APPLICATION_CREDENTIALS: /tmp/.gcp-credentials.json
+    ORG_PULSE_URL: "${ORG_PULSE_URL}"
+    ORG_PULSE_API_TOKEN: "${ORG_PULSE_API_TOKEN}"

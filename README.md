@@ -206,3 +206,28 @@ Tests run automatically on PRs and pushes to `main` via GitHub Actions (Python 3
 - **strat-pipeline** (GitLab) — CI runner for this pipeline
 - **strat-pipeline-data** (GitLab) — Data repo with timestamped run artifacts and JSON outputs
 - **strat-dashboard** (GitLab) — GitLab Pages site serving the dashboard and JSON API
+
+### Fullsend CI progress
+
+The script entrypoint forwards its readable stdout to CI and retains it in the
+iteration output artifact. The Claude renderer supports completed assistant
+messages and partial event streams without printing a response twice. Tool
+summaries remain compact; transcripts retain complete tool inputs and results.
+The integration caller masks credentials before forwarding live logs.
+
+The Fullsend strategy entrypoint removes the unused `/tmp/strat-assess`
+additional-directory permission from its disposable checkout before starting
+Claude. That directory belongs to local assessment tooling. Other project
+settings and Fullsend security hooks are preserved. The entrypoint merges
+this project's trust acceptance into
+`$CLAUDE_CONFIG_DIR/.claude.json` with an atomic, owner-only write, preserving
+existing config. Missing config is created; malformed config fails startup.
+Each Claude invocation retains a separate stderr artifact and prints it once.
+Historical working stderr logs are cleared after cloning results.
+
+The entrypoint fetches architecture context before starting Claude, with a
+180-second setup timeout. stdout/stderr and exit status are visible in the job
+trace and retained as `architecture-context-fetch.log` and
+`architecture-context-fetch.exit-code`. Fetch failure remains optional under
+the existing skill contract; it is reported explicitly. GitHub API failures
+include curl's HTTP error instead of being hidden by JSON parsing.

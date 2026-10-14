@@ -1,0 +1,47 @@
+id: fullsend-vertex-ai
+display_name: Fullsend Vertex AI
+description: Anthropic API and Google Cloud APIs for inference
+category: inference
+credentials:
+  - name: gcloud_adc_token
+    description: Google Cloud access token refreshed via gcloud Application Default Credentials
+    env_vars: [GOOGLE_VERTEX_AI_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    refresh:
+      strategy: oauth2_refresh_token
+      token_url: https://oauth2.googleapis.com/token
+      scopes: [https://www.googleapis.com/auth/cloud-platform]
+      refresh_before_seconds: 300
+      max_lifetime_seconds: 3600
+      material:
+        - name: client_id
+          description: Google OAuth2 client ID from gcloud ADC
+          required: true
+        - name: client_secret
+          description: Google OAuth2 client secret from gcloud ADC
+          required: true
+          secret: true
+        - name: refresh_token
+          description: Google OAuth2 refresh token from gcloud ADC
+          required: true
+          secret: true
+endpoints:
+  - host: api.anthropic.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+    allow_uninspected_credentials: true
+  - host: "*.googleapis.com"
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+    allow_uninspected_credentials: true
+binaries:
+  - "**/claude"
+  - "**/claude.exe"
+  - "**/node"
+  - "**/pi"

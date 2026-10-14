@@ -16,6 +16,7 @@ test-unit:          ## Run unit tests only
 	       tests/test_jql_builder.py tests/test_list_rfe_ids.py \
 	       tests/test_dashboard_metrics.py \
 	       tests/test_render_html.py \
+	       tests/test_fullsend_entrypoint.py tests/test_claude_ci_stream.py \
 	       tests/test_eval_checks.py \
 	       tests/test_skill_integrity.py \
 	       tests/assess_strat -v --tb=short

@@ -6,6 +6,8 @@
 #   bash scripts/fetch-architecture-context.sh                  # fetch from remote (default)
 #   bash scripts/fetch-architecture-context.sh /path/to/local   # use local checkout (copies into .context/)
 
+set -eo pipefail
+
 if [ -n "${RFE_SKIP_BOOTSTRAP:-}" ]; then
   echo "RFE_SKIP_BOOTSTRAP set - skipping dependency bootstrapping step"
   exit 0
@@ -28,7 +30,8 @@ if [ -n "$1" ]; then
   exit 0
 fi
 
-LATEST=$(curl -sL https://api.github.com/repos/opendatahub-io/architecture-context/contents/architecture | python3 -c "import sys,json; entries=json.load(sys.stdin); names=sorted(e['name'] for e in entries if e['name'].startswith('rhoai-')); print(names[-1] if names else '')")
+ARCHITECTURE_LISTING=$(curl --fail --silent --show-error --location --connect-timeout 10 --max-time 60 https://api.github.com/repos/opendatahub-io/architecture-context/contents/architecture) || exit $?
+LATEST=$(printf '%s' "$ARCHITECTURE_LISTING" | python3 -c "import sys,json; entries=json.load(sys.stdin); names=sorted(e['name'] for e in entries if e['name'].startswith('rhoai-')); print(names[-1] if names else '')")
 
 if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
   echo "Could not detect latest architecture version"

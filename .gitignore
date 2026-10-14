@@ -211,6 +211,11 @@ artifacts/**
 !artifacts/**/
 !artifacts/**/.gitkeep
 
+# Per-job Fullsend/OpenShell output and sandbox state
+.fullsend-ci/
+fullsend-ci-artifacts/
+fullsend-run-output/
+
 # Human review workspace — pulled from Jira, never commit
 local/
 

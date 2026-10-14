@@ -116,3 +116,25 @@ class TestMissingConfig:
         ids = result.stdout.strip().split("\n")
         assert len(ids) >= 5
         assert all(i.startswith("RHAIRFE-") for i in ids)
+
+
+def test_jql_processed_filter_precedes_size_offset(monkeypatch, capsys, tmp_path):
+    """Exercise the native discovery CLI with a processed historical RFE."""
+    import importlib.util
+    from pathlib import Path
+    monkeypatch.syspath_prepend(str(Path(SCRIPT).resolve().parent))
+    import jira_utils
+    spec = importlib.util.spec_from_file_location('batch_discovery', SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    settings = tmp_path / 'settings.yaml'
+    settings.write_text(yaml.safe_dump({'batch_size': 10, 'skip_labels': ['strat-creator-needs-attention']}))
+    monkeypatch.setattr(jira_utils, 'require_env', lambda: ('server', 'user', 'token'))
+    monkeypatch.setattr(jira_utils, 'build_jql_from_config', lambda path: 'native configured JQL')
+    monkeypatch.setattr(module, 'ids_from_jql', lambda query: ['RHAIRFE-1', 'RHAIRFE-2', 'RHAIRFE-3', 'RHAIRFE-4'])
+    monkeypatch.setattr(jira_utils, 'find_processed_rfe_ids', lambda *a, **kw: {'RHAIRFE-1'})
+    monkeypatch.setattr(sys, 'argv', [SCRIPT, '--jql-default', str(settings), '--batch-size', '2', '--batch-offset', '1'])
+    module.main()
+    captured = capsys.readouterr()
+    assert captured.out.split() == ['RHAIRFE-3', 'RHAIRFE-4']
+    assert 'Excluded 1 already-processed' in captured.err

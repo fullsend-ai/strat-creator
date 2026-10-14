@@ -1,0 +1,85 @@
+%% GitHub-compatible Mermaid. Paste into a fenced mermaid block to render in Markdown.
+%% Source: Breadboard var/demos/fullsend-entrypoint-poc/strategy-ci/ and this .fullsend/ tree.
+%% Solid arrows show execution or data flow; dotted arrows show supporting relationships.
+flowchart TB
+    single["Manual single-rfe kickoff<br/>STRATEGY_MODE=single-rfe + RFE_KEY"]
+    batch["Manual or scheduled batch-discover kickoff<br/>BATCH_SIZE / BATCH_OFFSET<br/>Optional expected-key guard"]
+    creator["github.com/jctanner-opendatahub-io/strat-creator<br/>Pinned feature commit<br/>Harness, scripts, skills and policy"]
+    fullsendSource["github.com/jctanner/fullsend<br/>Pinned feat/entrypoint-harness commit"]
+    archctx["github.com/opendatahub-io/architecture-context<br/>Public; sparse, blob-filtered clone<br/>Newest rhoai-* version + overlays"]
+    vertex["Google Vertex AI<br/>claude-opus-4-6<br/>Parent and subagents pinned"]
+
+    subgraph cluster["Breadboard K3s cluster"]
+        gitlab["gitlab.local: strat-pipeline<br/>.gitlab-ci.yml on feat/fullsend-strategy-poc"]
+        runner["One maintained GitLab Runner<br/>Kubernetes executor creates CI job pods<br/>Up to 4 concurrent jobs; batches use strat-batch resource group"]
+
+        subgraph buildPod["Build job pod: build-fullsend-feature"]
+            compile["Fetch and verify both source commits<br/>build-fullsend.sh compiles Fullsend with go build"]
+            binary["Upload GitLab build artifact<br/>Fullsend executable, checksum and source metadata"]
+            compile --> binary
+        end
+
+        subgraph jobPod["Strategy job pod: single-rfe OR batch-discover"]
+            prepare["Reference OpenShell CI image<br/>Download Fullsend artifact; fetch same strat-creator commit<br/>Prepare job credentials and public + local CA trust"]
+            runtime["with-openshell.sh starts job-local runtime<br/>Podman API + TLS OpenShell gateway, Podman provider<br/>Separate container storage, state and network per job"]
+            run["fullsend run strategy OR batch-discover<br/>--model claude-opus-4-6<br/>Checkout supplies target repo and .fullsend config"]
+
+            subgraph sandbox["Nested Podman sandbox: Fullsend image + OpenShell supervisor"]
+                stage["Fullsend stages checkout and installs hooks/helper<br/>Supervisor applies filesystem and network policy<br/>Local services: TLS passthrough, endpoint/port only<br/>GitHub: inspected read-only, plus upload-pack for architecture-context; push denied"]
+                entry["Bash strategy-entrypoint.sh<br/>Claude settings/trust and CA bundle<br/>Clone results and fetch architecture context<br/>Single: supplied RFE; batch: filtered JQL + size/offset"]
+                locks{"Acquire eligible RFE locks<br/>Any owned work?"}
+                phases["Create strategies for owned RFEs<br/>Refine each new strategy; push refinements to Jira<br/>Review each new strategy<br/>Architecture criterion needs the fetched context"]
+                helper["Each model phase: run-claude.sh<br/>calls Fullsend's fullsend-claude helper<br/>Claude Code; hooks enabled; effort high"]
+                publish["pipeline-post.sh<br/>Post reviews, generate reports<br/>Commit run/summary and publish to Org Pulse"]
+                finish["Entrypoint cleanup<br/>Release recorded owned locks<br/>Retain outputs and failure diagnostics"]
+                stage --> entry --> locks
+                locks -->|Yes| phases --> publish --> finish
+                locks -->|No: no model calls| finish
+                phases -.-> helper
+            end
+
+            collect["Fullsend collects outputs/transcripts and removes sandbox<br/>Wrapper stops gateway and removes job containers/network<br/>CI redacts and uploads artifacts, preserving failure status"]
+            prepare --> runtime --> run
+            run -->|Create and execute sandbox through gateway| stage
+            finish --> collect
+        end
+
+        jira["jira.local<br/>RFEs, owned locks, linked strategies<br/>Refinements and review attachments"]
+        results["gitlab.local: strat-pipeline-data<br/>Versioned run artifacts and summary"]
+        pulse["orgpulse.local<br/>Per-strategy review data<br/>Verify readback; reset-era keys may need Jira sync"]
+        dashboard["Downstream strat-dashboard CI job<br/>Build from published results<br/>Emulator starts bridges early: verify a fresh post-run build"]
+        archives["GitLab job traces and sanitized artifacts<br/>Retained for 30 days"]
+    end
+
+    single --> gitlab
+    batch --> gitlab
+    gitlab -->|Queue selected workflow| runner
+    runner -->|Start build pod| compile
+    runner -.->|Start strategy pod after build| prepare
+    creator --> compile
+    fullsendSource --> compile
+    binary --> prepare
+    creator -.->|Same pinned checkout| prepare
+    helper -->|Inference| vertex
+    results -.->|Clone at start| entry
+    entry -.->|"Fetch: optional; log and exit status kept, agents continue"| archctx
+    entry -.->|Read candidates| jira
+    locks -.->|Check and acquire locks| jira
+    phases -.->|Create, link and refine| jira
+    publish -->|Post review| jira
+    finish -.->|Unlock| jira
+    publish --> results
+    publish --> pulse
+    collect --> archives
+    collect -->|Successful strategy job| dashboard
+    results --> dashboard
+
+    %% Sandbox traffic to these endpoints passes through the applied network policy.
+    %% A failed architecture fetch is not a completed architecture review: the
+    %% skipped-check-recorded-as-approve schema bug is tracked separately.
+    %% Credentials come from CI variables and the runner's mounted local CA.
+    %% Failure/handled termination also invokes cleanup. Hard pod loss cannot run
+    %% traps: reconcile owned Jira locks and partial effects before any retry.
+    %% Nested DNS remains an open reliability issue; successful runs do not fix it.
+    %% Connectivity/model/lifecycle diagnostics live in a separate opt-in validation
+    %% pipeline on the same runner. batch-selected and reprocess-strat are deferred.
