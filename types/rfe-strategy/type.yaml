@@ -5,8 +5,9 @@
 # artifact_utils.py, lock_issues.py, apply_scores.py, remove_draft_prefix.py and the Jira scripts (pull_strategy.py,
 # push_strategy.py, clone_issue.py, find_strat_for_rfe.py) read identity, inputs[0], discovery, dirs, workspace,
 # schema.*, conventions.{labels,label_categories,summary_prefix,comment_prefix}, pipeline.{lock,body_overflow.attachment} and
-# reporting.criterion_labels through the default type (list-rfe-ids.py --type picks another); generate-report.py and
-# extract-pipeline-data.py read every type's local_prefix and key_prefixes;
+# reporting.criterion_labels through the default type (list-rfe-ids.py --type picks another; the twin is
+# types/initiative-strategy); generate-report.py and extract-pipeline-data.py read every type's
+# local_prefix and key_prefixes;
 # tests/test_type_registry_pins.py pins every other value below equal to the literal a
 # script still carries, so the descriptor is source of truth BY TEST until each consumer migrates
 # (rfe-creator's discipline, its types/README.md "Adoption status"). Every value is the live literal on

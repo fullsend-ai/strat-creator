@@ -12,6 +12,7 @@ from rfe-creator PR #172 §3.5.
 | type | source → derived | status |
 |---|---|---|
 | `rfe-strategy` | RHAIRFE Feature Request → RHAISTRAT Feature (Cloners link) | today's pipeline, plus the `type:` stamp on task files; every value is a live literal with its `file:line @ cc1ba8c` |
+| `initiative-strategy` | RHOAIENG Initiative → the same ticket (`relation.kind: self`) | draft twin; the open questions are marked inline |
 
 ## Selecting a type
 

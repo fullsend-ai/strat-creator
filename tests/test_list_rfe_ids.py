@@ -147,3 +147,10 @@ class TestTypeMode:
             result = _run(source + ["--type", "rfe-strategy"])
             assert result.returncode == 2, source
             assert "--type works with --jql-default (no settings path) or --jql" in result.stderr
+
+    def test_type_selects_the_twin(self):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("JIRA_")}
+        result = _run(["--jql-default", "--type", "initiative-strategy"], env=env)
+        assert result.returncode != 0
+        assert result.stderr.startswith("TYPE RESOLVED: initiative-strategy (--type)\n")
+        assert 'JQL: project = RHOAIENG AND (labels = "initiative-autofix-rubric-pass"' in result.stderr

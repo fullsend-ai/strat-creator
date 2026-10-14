@@ -1,0 +1,25 @@
+# Settings for JQL-based Initiative discovery: the file types/initiative-strategy/type.yaml names
+# (discovery.settings), in config/pipeline-settings.yaml's shape. No Initiative pipeline runs yet, so
+# every value is authored; the ones still to decide with the Initiative owners (AISDLC-301) say so.
+jql:
+  project: RHOAIENG
+  quality_labels:
+    - initiative-autofix-rubric-pass   # rfe-creator's initiative rubric-pass label, its published contract
+    - tech-reviewed                    # open question: does tech-reviewed apply to Initiatives
+  excluded_labels:
+    - strat-creator-processing         # the lock, same label as RFEs
+  excluded_statuses:                   # open question: RHOAIENG's workflow states (RFEs also exclude Draft)
+    - Closed
+    - Resolved
+  order_by: key ASC
+
+batch_size: 10
+
+# The strategy is written on the Initiative itself, so these labels on it mean "already processed"
+skip_labels:
+  - strat-creator-rubric-pass
+  - strat-creator-needs-attention
+  - strat-creator-processing
+
+# An Initiative's own status says nothing about its strategy (open question)
+excluded_strat_statuses: []

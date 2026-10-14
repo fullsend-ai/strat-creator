@@ -140,7 +140,7 @@ strat-creator/
 │   ├── assess-strat/                # In-repository scoring rubric and scripts
 │   ├── generate-report.py      # Per-run HTML report
 │   └── generate-dashboard.py   # Aggregate dashboard across runs
-├── types/                  # Work-item type descriptors — see types/README.md
+├── types/                  # Work-item type descriptors (rfe-strategy, initiative-strategy) — see types/README.md
 ├── .claude/
 │   ├── skills/                 # Claude Code skills (pipeline steps + reviewers)
 │   └── agents/                 # Agent definitions

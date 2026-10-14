@@ -28,6 +28,8 @@ import validate_types  # noqa: E402
 # Hermetic: the shipped root only, no drop-in roots from the environment.
 REG = type_registry.load(extra_roots=[], env={})
 SHIPPED = "rfe-strategy"
+TWIN = "initiative-strategy"
+SHIPPED_ALL = [TWIN, SHIPPED]  # directory order
 
 
 def _dropin(root, name, mutate=None):
@@ -45,10 +47,10 @@ def _dropin(root, name, mutate=None):
 
 
 def test_shipped_types():
-    assert REG.names() == [SHIPPED]
-    assert SHIPPED in REG
-    assert len(REG) == 1
-    assert [d.name for d in REG] == [SHIPPED]
+    assert REG.names() == SHIPPED_ALL
+    assert SHIPPED in REG and TWIN in REG
+    assert len(REG) == 2
+    assert [d.name for d in REG] == SHIPPED_ALL
 
 
 def test_get_dotted_path():
@@ -63,7 +65,7 @@ def test_get_dotted_path():
 
 
 def test_unknown_type_names_the_registered_ones():
-    with pytest.raises(KeyError, match=f"registered: {SHIPPED}"):
+    with pytest.raises(KeyError, match=f"registered: {', '.join(SHIPPED_ALL)}"):
         REG.get("nope")
 
 
@@ -77,6 +79,8 @@ def test_owns_and_detect():
     assert REG.detect("RHAISTRAT-400") is d
     assert REG.detect("STRAT-7") is d
     assert REG.detect("RHAIRFE-1") is None
+    assert REG.detect("RHOAIENG-5").name == TWIN
+    assert REG.detect("ISTRAT-2").name == TWIN
     assert REG.detect(None) is None
 
 
@@ -111,11 +115,11 @@ def test_projections():
 
 
 def test_extra_roots_by_argument_and_by_env(tmp_path):
-    root = _dropin(tmp_path, "initiative-strategy")
-    assert type_registry.load(extra_roots=[root], env={}).names() == [SHIPPED, "initiative-strategy"]
+    root = _dropin(tmp_path, "third-strategy")
+    assert type_registry.load(extra_roots=[root], env={}).names() == SHIPPED_ALL + ["third-strategy"]
     env = {type_registry.EXTRA_ROOTS_ENV: str(root)}
-    assert type_registry.load(env=env).names() == [SHIPPED, "initiative-strategy"]
-    assert type_registry.load(env={type_registry.EXTRA_ROOTS_ENV: ""}).names() == [SHIPPED]
+    assert type_registry.load(env=env).names() == SHIPPED_ALL + ["third-strategy"]
+    assert type_registry.load(env={type_registry.EXTRA_ROOTS_ENV: ""}).names() == SHIPPED_ALL
 
 
 def test_duplicate_type_across_roots(tmp_path):
@@ -138,7 +142,7 @@ def test_missing_descriptor_and_root(tmp_path):
     with pytest.raises(type_registry.RegistryError, match="not a directory"):
         type_registry.load(root=tmp_path / "absent", extra_roots=[], env={})
     # an absent EXTRA root is skipped, not an error
-    assert type_registry.load(extra_roots=[tmp_path / "absent"], env={}).names() == [SHIPPED]
+    assert type_registry.load(extra_roots=[tmp_path / "absent"], env={}).names() == SHIPPED_ALL
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────────────────
@@ -147,7 +151,7 @@ def test_missing_descriptor_and_root(tmp_path):
 def test_cli(capsys, tmp_path, monkeypatch):
     monkeypatch.delenv(type_registry.EXTRA_ROOTS_ENV, raising=False)
     assert type_registry.main(["list"]) == 0
-    assert capsys.readouterr().out.strip() == SHIPPED
+    assert capsys.readouterr().out.split() == SHIPPED_ALL
 
     assert type_registry.main(["get", SHIPPED, "identity.jira.project"]) == 0
     assert capsys.readouterr().out.strip() == "RHAISTRAT"
@@ -259,7 +263,7 @@ def test_resolve_cli(capsys, monkeypatch):
 
 def test_gate1_passes_on_the_shipped_types(capsys):
     assert validate_types.main([]) == 0
-    assert f"OK: 1 descriptor(s) valid: {SHIPPED}" in capsys.readouterr().out
+    assert f"OK: 2 descriptor(s) valid: {', '.join(SHIPPED_ALL)}" in capsys.readouterr().out
 
 
 def test_gate1_findings(tmp_path, capsys):
@@ -421,7 +425,7 @@ def test_type_stamp(tmp_path):
     stamped = typed.read_text(encoding="utf-8")
     assert "type:" not in before
     assert stamped == before.replace("status: Draft\n", f"status: Draft\ntype: {SHIPPED}\n", 1)
-    for other in ("initiative-strategy", "bogus"):
+    for other in (TWIN, "bogus"):
         _, run = fm_set("typed", f"type={other}")
         assert run.returncode == 1 and f"type: '{other}' not in ['{SHIPPED}']" in run.stderr, other
     assert typed.read_text(encoding="utf-8") == stamped
@@ -439,13 +443,40 @@ def test_strat_schemas_follow_a_drop_in_type(tmp_path):
         data["schema"]["review"]["extra_fields"]["reviewers"]["fields"] = {
             k: v for k, v in data["schema"]["review"]["extra_fields"]["reviewers"]["fields"].items()
             if k in ("feasibility", "scope")}
-    root = _dropin(tmp_path, "initiative-strategy", mutate)
-    desc = type_registry.load(extra_roots=[root], env={}).get("initiative-strategy")
+    root = _dropin(tmp_path, "other-strategy", mutate)
+    desc = type_registry.load(extra_roots=[root], env={}).get("other-strategy")
     schemas = artifact_utils._strat_schemas(desc)
     assert schemas["strat-task"]["strat_id"]["pattern"] == r"^(INIT-\d+|RHAIINIT-\d+)$"
     assert list(schemas["strat-review"]["scores"]["fields"]) == ["feasibility", "scope", "total"]
     assert list(schemas["strat-review"]["reviewers"]["fields"]) == ["feasibility", "scope"]
     assert list(schemas["strat-task"]) == list(artifact_utils.SCHEMAS["strat-task"])
+
+
+# ── the twin ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_initiative_strategy_descriptor():
+    twin = REG.get(TWIN)
+    rfe = REG.get(SHIPPED)
+    assert twin.get("identity.jira.project") == "RHOAIENG" and twin.write_prefix == "RHOAIENG-"
+    assert twin.get("inputs.0.relation.kind") == "self" and twin.get("inputs.0.from_type") == "initiative"
+    assert twin.labels == rfe.labels, "one label vocabulary per station"
+    assert twin.stages == rfe.stages
+    assert twin.get("pipeline.rubric.rubric_version") == rfe.get("pipeline.rubric.rubric_version")
+    assert jira_utils.build_jql_from_type(twin) == (
+        'project = RHOAIENG AND (labels = "initiative-autofix-rubric-pass" OR labels = "tech-reviewed") '
+        'AND (labels NOT IN ("strat-creator-processing") OR labels IS EMPTY) AND status NOT IN ("Closed", "Resolved") '
+        'ORDER BY key ASC')
+    schemas = artifact_utils._strat_schemas(twin)
+    assert schemas["strat-task"]["strat_id"]["pattern"] == r"^(ISTRAT-\d+|RHOAIENG-\d+)$"
+    assert "source_initiative" in schemas["strat-task"] and "source_rfe" not in schemas["strat-task"]
+    assert list(schemas["strat-task"])[:4] == ["strat_id", "title", "source_initiative", "jira_key"]
+    # A second type resolves with --type and from its own ids; the input's id still names rfe-strategy.
+    assert type_registry.resolve(REG, explicit_type=TWIN, env={}).desc is twin
+    assert type_registry.resolve(REG, ids=["RHOAIENG-1"], env={}).line() == f"TYPE RESOLVED: {TWIN} (id grammar)"
+    assert type_registry.resolve(REG, ids=["RHAIRFE-1"], env={"CI": "true"}).type_name == SHIPPED
+    with pytest.raises(ValueError, match="not 'self'"):  # its already-processed rule is not decided yet
+        jira_utils.find_processed_rfe_ids("s", "u", "t", ["x"], desc=twin)
 
 
 # ── the Jira scripts ──────────────────────────────────────────────────────────────────────
@@ -484,8 +515,8 @@ def test_jira_scripts_equal_the_4c6ae1c_literals():
 
 def test_reporters_read_every_types_files(tmp_path):
     """generate-report and extract-pipeline-data list every registered type's tasks, reviews and review
-    comments: rfe-strategy's STRAT- and RHAISTRAT- (the 4c6ae1c globs)."""
-    ids = ["RHAISTRAT-2", "STRAT-1"]
+    comments: rfe-strategy's STRAT- and RHAISTRAT- (the 4c6ae1c globs) plus the twin's RHOAIENG-."""
+    ids = ["RHAISTRAT-2", "RHOAIENG-3", "STRAT-1"]
     (tmp_path / "strat-tasks").mkdir()
     (tmp_path / "strat-reviews").mkdir()
     for strat_id in ids:

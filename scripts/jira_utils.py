@@ -1190,7 +1190,7 @@ def _bare(pattern):
 # (schema.task.extra_fields.source_rfe), then this type's local and tracker grammars.
 _TITLE_KEY_RE = re.compile(
     r"^#\s+("
-    + _bare(_TYPE.get("schema.task.extra_fields.source_rfe.pattern"))
+    + _bare(_TYPE.get(f"schema.task.extra_fields.{_TYPE.get('inputs.0.source_ref_field')}.pattern"))
     + "|" + _bare(_TYPE.local_id_pattern)
     + "|" + _TYPE.write_prefix + r"\d+"
     + "):"

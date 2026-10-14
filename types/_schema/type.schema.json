@@ -849,7 +849,7 @@
           "required": ["kind"],
           "additionalProperties": false,
           "properties": {
-            "kind": { "type": "string", "enum": ["clones", "parent", "link"] },
+            "kind": { "type": "string", "enum": ["clones", "parent", "link", "self"], "description": "self: the derived record IS the input item (same ticket); link_type and direction do not apply. Added for initiative-strategy (same-ticket Initiatives)." },
             "link_type": { "type": "string", "minLength": 1, "description": "Issue-link type name when kind is clones or link (e.g. Cloners)." },
             "direction": { "type": "string", "enum": ["derived_is_inward", "derived_is_outward"] },
             "dependency_link_type": { "type": "string", "minLength": 1, "description": "Link type used between sibling items derived from the same input (e.g. Blocks)." }

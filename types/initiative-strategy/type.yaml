@@ -1,0 +1,169 @@
+# types/initiative-strategy/type.yaml — the initiative-strategy work-item type: a strategy for an RHAI Initiative
+# (an RHOAIENG Initiative written by rfe-creator's `initiative` type), produced on the SAME ticket. The twin of
+# rfe-strategy (AISDLC-60). Contract: types/_schema/type.schema.json.
+#
+# Provenance differs from rfe-strategy: no initiative pipeline runs yet, so nothing here is a live literal — every
+# value is AUTHORED. Values shared with rfe-strategy (labels, dirs, stages, rubric, eval) are the station's and are
+# copied, not decided here. Values marked `open question` wait for the Initiative owners (AISDLC-301):
+#   Same ticket or clone. This file follows the agreed direction (Initiatives run RFE Creator and Strategy
+#       Creator on the same Jira ticket): relation.kind: self and identity = the input's own binding. A clone would
+#       need a target binding for Initiative strategies; none exists today.
+#   Review dimensions: which apply to Initiatives (rfe-creator's initiative type reviews feasibility + alignment).
+#       All four are listed until decided — the twin's list is decided by omission.
+#   Sign-off: human sign-off stays (the signoff stage is present). On a shared ticket the [DRAFT] prefix, the
+#       Business Need heading and the auto-created lock guard are rfe-creator's to own — flagged where they appear.
+# Selected by --type initiative-strategy or by its ids (type_registry.resolve); the default stays rfe-strategy.
+schema_version: 1
+type: initiative-strategy
+display: { entity: Initiative Strategy, entity_plural: Initiative Strategies }
+kind: strategy
+
+identity:
+  tracker: jira
+  jira:
+    project: RHOAIENG                                   # open question (same ticket): the derived record IS the Initiative
+    issue_type: Initiative                              # rfe-creator types/initiative/type.yaml identity.jira (its PUBLISHED binding)
+    key_prefixes: ["RHOAIENG-"]
+  local_prefix: "ISTRAT-"                               # local drafts before a key exists; authored; the reporters glob it
+  local_id_pattern: '^ISTRAT-\d+$'                      # ONE backslash
+  id_field: strat_id
+  tracker_key_field: jira_key
+
+inputs:
+  - from_type: initiative                               # rfe-creator's type name, carried as data — the stations import nothing from each other
+    jira:
+      project: RHOAIENG
+      issue_type: Initiative
+      key_prefixes: ["RHOAIENG-"]
+    relation:
+      kind: self                                        # open question (see header); the alternative is `clones` plus a target binding
+    source_ref_field: source_initiative
+    removed_context_marker:                             # rfe-creator initiative conventions.comment_prefix + removed_context_preamble — a CONSUMED contract (R7)
+      comment_prefix: "[Initiative Creator]"
+      phrase: "The following technical implementation details were removed from the Initiative description during review."
+    skip_if:                                            # "already processed", evaluated on the same ticket; the skip labels are in discovery.settings
+      single_open_unlabeled_override: false             # no clones -> nothing to re-import
+
+discovery:                                              # open question (batch beside event dispatch) as for rfe-strategy
+  settings: config/initiative-settings.yaml             # the intake gate, skip lists and batch size, in config/pipeline-settings.yaml's shape
+
+dirs:                                                   # shared with rfe-strategy: one artifacts tree, file names differ by key
+  tasks: artifacts/strat-tasks
+  originals: artifacts/strat-originals
+  reviews: artifacts/strat-reviews
+workspace: { root: local }
+files:
+  tickets: artifacts/strat-tickets.md
+  skipped: artifacts/strat-skipped.md
+index: { enabled: false }
+companions:
+  comments: true
+  removed_context: false
+
+conventions:                                            # the station's label vocabulary — one per station, shared with rfe-strategy
+  label_prefix: strat-creator
+  labels:
+    rubric_pass: strat-creator-rubric-pass
+    needs_attention: strat-creator-needs-attention
+    ignore: strat-creator-ignore
+    auto_created: strat-creator-auto-created
+    auto_refined: strat-creator-auto-refined
+    auto_revised: strat-creator-auto-revised
+    human_sign_off: strat-creator-human-sign-off
+    processing: strat-creator-processing
+  label_categories:
+    auto_created: provenance
+    auto_refined: provenance
+    auto_revised: provenance
+    rubric_pass: gate
+    needs_attention: escalation
+    ignore: exclusion
+    human_sign_off: gate
+  comment_prefix: "[Strat Creator]"
+  summary_prefix:                                       # open question: on a shared ticket the summary is rfe-creator's; kept for parity
+    value: "[DRAFT] "
+    added_at: create
+    removed_at: signoff
+
+schema:
+  task:
+    status_enum: [Draft, Ready, Refined, Reviewed]
+    extra_fields:
+      source_initiative: { type: string, required: true, pattern: '^(INIT-\d+|RHOAIENG-\d+)$' }   # the input's id grammar: its key prefix plus rfe-creator's initiative local prefix INIT-
+      jira_key: { type: string, required: false, pattern: '^RHOAIENG-\d+$', default: null }
+      workflow: { type: string, required: false, enum: [local, ci], default: null }
+      latest_diff: { type: string, required: false, default: null }
+      refine_count: { type: int, required: false }      # no default on purpose (ADR-0001), as for rfe-strategy
+    priority:
+      enum: [Blocker, Critical, Major, Normal, Minor, Undefined]
+      map_to_tracker: {}
+  review:
+    score_fields: [feasibility, testability, scope, architecture]   # open question (see header)
+    total_field: total
+    recommendation_enum: [approve, revise, reject]
+    extra_fields:
+      reviewers:
+        type: dict
+        required: true
+        fields:
+          feasibility: { type: string, required: true, enum: [approve, revise, reject, pending] }
+          testability: { type: string, required: true, enum: [approve, revise, reject, pending] }
+          scope: { type: string, required: true, enum: [approve, revise, reject, pending] }
+          architecture: { type: string, required: true, enum: [approve, revise, reject, skipped, pending] }
+    verdict_rules:
+      approve: { total_min: 6, zeros_max: 0 }
+      revise: { total_min: 3, zeros_max: 1 }
+
+pipeline:
+  stages: [create, refine, review, pull, push, signoff] # human sign-off stays
+  context_sources:
+    - { name: architecture-context, bootstrap: scripts/fetch-architecture-context.sh, required: false }
+  scorer_agent: strat-scorer
+  prompts:
+    template: .claude/skills/strategy-refine/strat-template.md
+  dimensions:                                           # open question: decided by omission, never by addition
+    - { name: feasibility, prompt: .claude/skills/strategy-feasibility-review/SKILL.md, blocking: true }
+    - { name: testability, prompt: .claude/skills/strategy-testability-review/SKILL.md, blocking: true }
+    - { name: scope, prompt: .claude/skills/strategy-scope-review/SKILL.md, blocking: true }
+    - name: architecture
+      prompt: .claude/skills/strategy-architecture-review/SKILL.md
+      blocking: true
+      condition: { context_exists: .context/architecture-context }
+  rubric:                                               # rfe-strategy's rubric until an initiative rubric exists — open question
+    repo: self
+    path: scripts/assess-strat/agent_prompt.md
+    rubric_version: "93a3722cbd00076723679e3ec666a6e2fc15038791b69f670245671360d2e5f7"
+    export: artifacts/strat-rubric.md
+  lock:                                                 # open question: derived_required_label assumes a clone we created; on a shared ticket the guard needs rethinking
+    label: strat-creator-processing
+    blocking_labels: [strat-creator-processing, strat-creator-needs-attention, strat-creator-human-sign-off]
+    derived_required_label: strat-creator-auto-created
+    derived_blocking_labels: [strat-creator-needs-attention, strat-creator-human-sign-off]
+  body_overflow:
+    on_error: CONTENT_LIMIT_EXCEEDED
+    attachment: "{issue_key}-strategy.md"
+    policy: append_only
+  section_ownership:                                    # open question: on a shared ticket the source section is rfe-creator's
+    - { heading: "## Business Need (from Initiative)", owner: source }
+    - { heading: "## Strategy (AI Generated by Agentic SDLC Pipeline)", owner: pipeline }
+    - { heading: "## Staff Engineer / SME Input", owner: human }
+
+snapshot: { mode: none, processed_gate: inputs.0.skip_if }
+reporting:
+  criterion_labels: { feasibility: Feasibility, testability: Testability, scope: Scope, architecture: Architecture }
+eval:                                                   # rfe-strategy's eval until an initiative dataset exists — open question
+  config: eval/strat-refine.yaml
+  dataset: eval/dataset/cases
+  timeout: 2700
+  thresholds:
+    files_exist: { min_pass_rate: 1.0 }
+    strategy_nonempty: { min_pass_rate: 1.0 }
+    frontmatter_valid: { min_pass_rate: 1.0 }
+    recommendation_consistency: { min_pass_rate: 1.0 }
+    architecture_context_used: { min_pass_rate: 0.7 }
+    feasibility_score: { min_mean: 1.0 }
+    testability_score: { min_mean: 1.0 }
+    scope_score: { min_mean: 1.5 }
+    architecture_score: { min_mean: 1.0 }
+    pipeline_total: { min_mean: 5.0 }
+    cost_budget: { min_pass_rate: 0.8 }
