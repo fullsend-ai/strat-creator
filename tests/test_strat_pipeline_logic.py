@@ -51,6 +51,8 @@ def _full(responses=None):
         "strategy-create": {"strategies": PAIRS},
         "refine RHAISTRAT-1": {"recorded": "RHAISTRAT-1"},
         "refine RHAISTRAT-2": {"recorded": "RHAISTRAT-2"},
+        "verify refinement progress": {"kind": "strat-refine-readiness", "run_id": "r1",
+                                       "refined": [p["strat"] for p in PAIRS], "rejected": []},
         "push": {"recorded": "push", "strategies": ["RHAISTRAT-1", "RHAISTRAT-2"]},
         "score RHAISTRAT-1": "scored", "score RHAISTRAT-2": "scored",
         "review RHAISTRAT-1": _verdict("RHAISTRAT-1"), "review RHAISTRAT-2": _verdict("RHAISTRAT-2"),
@@ -65,7 +67,7 @@ def test_fresh_run_runs_every_step_in_order(tmp_path):
     calls = out["calls"]
     assert calls[:2] == ["read input", "strategy-create"]
     assert set(calls[2:4]) == {"refine RHAISTRAT-1", "refine RHAISTRAT-2"}
-    assert calls[4] == "push"
+    assert calls[4:6] == ["verify refinement progress", "push"]
     assert calls.index("score RHAISTRAT-1") < calls.index("review RHAISTRAT-1")
     assert calls[-1] == "write result"
     assert out["result"] == {"action": "completed", "check_exit": 0, "failed": []}
@@ -113,3 +115,35 @@ def test_only_strategies_the_push_covered_are_reviewed(tmp_path):
                                 "write result": {"action": "failed", "check_exit": 0}}))
     assert "review RHAISTRAT-1" in out["calls"]
     assert "score RHAISTRAT-2" not in out["calls"] and "review RHAISTRAT-2" not in out["calls"]
+
+
+@pytest.mark.parametrize("receipt", [None, {"recorded": '{"recorded":"RHAISTRAT-2"}'},
+                                     {"recorded": "RHAISTRAT-1"}, {"recorded": "none"}])
+def test_bad_handoff_recovers_verified_completion_without_repeating_refine(tmp_path, receipt):
+    out = _run(tmp_path, _full({"refine RHAISTRAT-2": receipt}))
+    assert out["calls"].count("refine RHAISTRAT-2") == 1
+    assert "review RHAISTRAT-2" in out["calls"]
+    assert out["result"]["failed"] == []
+    assert any("completion verified from saved progress" in line for line in out["logs"])
+
+
+def test_a_valid_receipt_cannot_promote_unrecorded_work(tmp_path):
+    out = _run(tmp_path, _full({"verify refinement progress": {
+        "kind": "strat-refine-readiness", "run_id": "r1", "refined": ["RHAISTRAT-1"],
+        "rejected": [{"key": "RHAISTRAT-2", "reason": "not_recorded"}]},
+        "push": {"recorded": "push", "strategies": ["RHAISTRAT-1"]},
+        "write result": {"action": "failed", "check_exit": 0}}))
+    assert "review RHAISTRAT-1" in out["calls"]
+    assert "score RHAISTRAT-2" not in out["calls"]
+    assert out["result"]["failed"] == ["refine:RHAISTRAT-2"]
+
+
+@pytest.mark.parametrize("snapshot", [None,
+    {"kind": "strat-refine-readiness", "run_id": "old", "refined": ["RHAISTRAT-1", "RHAISTRAT-2"], "rejected": []},
+    {"kind": "strat-refine-readiness", "run_id": "r1", "refined": ["RHAISTRAT-1", "RHAISTRAT-9"], "rejected": []},
+    {"kind": "strat-refine-readiness", "run_id": "r1", "refined": ["RHAISTRAT-1"], "rejected": []}])
+def test_unverified_or_wrong_run_checkpoint_holds_back_push_and_review(tmp_path, snapshot):
+    out = _run(tmp_path, _full({"verify refinement progress": snapshot,
+                              "write result": {"action": "failed", "check_exit": 0}}))
+    assert not [c for c in out["calls"] if c.startswith(("score", "review")) or c == "push"]
+    assert set(out["result"]["failed"]) == {"refine:RHAISTRAT-1", "refine:RHAISTRAT-2"}

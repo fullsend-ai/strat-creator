@@ -11,6 +11,7 @@ host validator reads the same file from the downloaded repository.
 Commands (run from the repository root):
   read                      input and progress as one JSON object
   record-create             strategies created for this run's RFEs
+  refine-status             verified refinement readiness for this run
   mark refine KEY | mark push [--skipped]   (push covers every refined strategy)
   record-review KEY         verdict from the review file
   result [--failed STEP[:KEY]]...
@@ -182,6 +183,62 @@ def created_strategies(acquired):
     return sorted(pairs, key=lambda p: (acquired.index(p["rfe"]), p["strat"]))
 
 
+def refinement_error(pair, data):
+    """Check identity, schema and completion evidence, not strategy quality."""
+    key, rfe = pair["strat"], pair["rfe"]
+    if rfe not in data.get("acquired_keys", []) or not STRAT_RE.fullmatch(key):
+        return "strategy is outside this run's created targets"
+    path = TASKS / f"{key}.md"
+    if not path.is_file() or any(part.is_symlink() for part in (path, TASKS, TASKS.parent)):
+        return "strategy artifact is missing or symlinked"
+    try:
+        fm, body = read_frontmatter_validated(path, "strat-task")
+    except Exception:
+        return "strategy frontmatter is invalid"
+    if fm.get("strat_id") != key or fm.get("source_rfe") != rfe:
+        return "strategy identity/source does not match the recorded target"
+    if key.startswith("RHAISTRAT-") and fm.get("jira_key") != key:
+        return "strategy Jira key does not match the recorded target"
+    if fm.get("status") not in ("Refined", "Reviewed"):
+        return "strategy is not Refined or Reviewed"
+    section = re.search(r"^## Strategy(?:[ \t][^\n]*)?\r?\n(.*?)(?=^##\s|\Z)", body, re.M | re.S)
+    content = re.sub(r"<!--.*?-->", "", section.group(1), flags=re.S).strip() if section else ""
+    if not content or "To be filled by /strategy-refine" in body:
+        return "strategy section is missing, empty or still a placeholder"
+    return None
+
+
+def refinement_status(data, progress):
+    """Current-run readiness requires both a saved mark and a valid artifact."""
+    refined, rejected = [], []
+    skip = set(review_only(data))
+    pairs = sorted((progress.get("create") or {}).get("strategies", []), key=lambda p: p["strat"])
+    for pair in pairs:
+        if pair["rfe"] in skip:
+            continue
+        key = pair["strat"]
+        record = progress.get("refine", {}).get(key)
+        try:
+            recorded = isinstance(record, str) and datetime.fromisoformat(record).tzinfo is not None
+        except ValueError:
+            recorded = False
+        if not recorded:
+            rejected.append({"key": key, "reason": "not_recorded"})
+        elif refinement_error(pair, data):
+            rejected.append({"key": key, "reason": "invalid_artifact"})
+        else:
+            refined.append(key)
+    return {"kind": "strat-refine-readiness", "run_id": data["run_id"],
+            "refined": refined, "rejected": rejected}
+
+
+def cmd_refine_status(_args):
+    data = load_input()
+    with progress_lock():
+        status = refinement_status(data, load_progress(data["run_id"]))
+    print(json.dumps(status))
+
+
 def cmd_read(_args):
     data = load_input()
     progress = load_progress(data["run_id"])
@@ -206,7 +263,7 @@ def cmd_read(_args):
         "create_done": bool(create.get("done_at")),
         "pending_create": pending,
         "strategies": strategies,
-        "refined": sorted(progress.get("refine", {})),
+        "refined": refinement_status(data, progress)["refined"],
         "pushed": pushed(progress),
         "reviewed": reviewed,
     }, indent=2))
@@ -243,18 +300,25 @@ def cmd_mark(args):
     data = load_input()
     with progress_lock():
         progress = load_progress(data["run_id"])
-        recorded = _mark(args, progress)
+        recorded = _mark(args, progress, data)
     out = {"recorded": recorded}
     if recorded == "push":
         out["strategies"] = pushed(progress)
     print(json.dumps(out))
 
 
-def _mark(args, progress):
+def _mark(args, progress, data):
     if args.step == "refine":
         if not args.key:
             die("mark refine needs a strategy key")
         strategy = check_strat(args.key)
+        pairs = [p for p in (progress.get("create") or {}).get("strategies", [])
+                 if p["strat"] == strategy]
+        if len(pairs) != 1:
+            die(f"{strategy} is not one unique created target in this run")
+        error = refinement_error(pairs[0], data)
+        if error:
+            die(f"cannot record refine {strategy}: {error}")
         progress["refine"][strategy] = now()
         recorded = strategy
     elif args.step == "push":
@@ -403,6 +467,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("read").set_defaults(func=cmd_read)
     sub.add_parser("record-create").set_defaults(func=cmd_record_create)
+    sub.add_parser("refine-status").set_defaults(func=cmd_refine_status)
     mark = sub.add_parser("mark")
     mark.add_argument("step", choices=["refine", "push"])
     mark.add_argument("key", nargs="?")

@@ -81,7 +81,7 @@ evaluated with `fullsend dispatch` on the event fixtures in
 
 1. **read**: one agent returns `tmp/strat-input.json` and `tmp/strat-progress.json` as JSON.
 2. **create**: `/strategy-create` over the locked keys. It returns the RFE to STRAT map.
-3. **refine**: `parallel()` runs one `/strategy-refine` per strategy.
+3. **refine**: `parallel()` runs one `/strategy-refine` per strategy, then a fresh persisted-state check determines readiness.
 4. **push**: one agent runs `scripts/push_refined_strategies.py`.
 5. **score**: one `strat-scorer` agent per strategy, with a separate run directory for each, `/tmp/strat-assess/<KEY>`.
 6. **review**: `/strategy-review <KEY> --scores-from /tmp/strat-assess/<KEY>`.
@@ -115,11 +115,28 @@ recorded in `tmp/review-scope/`. It depends on this transcript layout; qualify
 Claude upgrades against the scope control. These are application scope checks,
 not a replacement for the OpenShell sandbox.
 
+### Refinement receipts
+
+Each refinement agent can return only its assigned strategy key or `none`.
+The completion helper refuses to record a strategy unless it belongs to this
+run and its saved file has valid identity/source metadata, Refined or Reviewed
+status, and a nonempty Strategy section. These are structural checks, not a
+content quality assessment.
+
+After refinement, one agent runs `strat_pipeline_state.py refine-status`.
+The StructuredOutput hook compares its returned JSON with the actual saved
+progress and files. A missing or malformed receipt can recover when that
+evidence verifies completion; a plausible receipt alone cannot advance a
+strategy. The initial read also verifies saved refinement readiness. Completed
+work is not repeated just to repair its receipt.
+
 A workflow has no shell of its own, so every command runs in a step agent.
 Each step records its outcome in `tmp/strat-progress.json` through
-`scripts/strat_pipeline_state.py`. When `agent()` returns `null` (the agent
-failed or was stopped), the script records the step and key with `--failed`,
-and the result is `failed`. It is never reported as completed.
+`scripts/strat_pipeline_state.py`. For steps other than refinement, when
+`agent()` returns `null` (the agent failed or was stopped), the script records
+the step and key with `--failed`, and the result is `failed`. Refinement uses
+the verified saved evidence described above before deciding whether to record
+a failure.
 
 Parallel steps take a file lock around each progress update, so no step's
 entry is lost. A create that leaves some RFEs with neither a strategy nor a

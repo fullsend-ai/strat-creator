@@ -234,3 +234,6 @@ tmp/
 
 # fullsend lock/run resource cache
 .fullsend/.fullsend-cache/
+
+# Generated receipt diagnostic Workflow (archived by the test runner)
+tests/fixtures/refine-receipts/plugin/workflows/refine-receipts.js

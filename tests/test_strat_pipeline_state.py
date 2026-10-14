@@ -23,7 +23,7 @@ def _task(repo, strat, rfe):
     path = repo / "artifacts" / "strat-tasks" / f"{strat}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\nstrat_id: {strat}\nsource_rfe: {rfe}\njira_key: {strat}\ntitle: T\n"
-                    "priority: Major\nstatus: Refined\n---\nBody.\n")
+                    "priority: Major\nstatus: Refined\n---\n## Strategy\nBody.\n")
 
 
 def _review(repo, strat, recommendation):
@@ -97,6 +97,12 @@ def test_rejects_bad_keys_and_failed_values(repo):
 def test_parallel_marks_are_not_lost(repo):
     env = {**os.environ, "FULLSEND_OUTPUT_DIR": str(repo / "output")}
     keys = [f"RHAISTRAT-{n}" for n in range(1, 13)]
+    data = json.loads((repo / "tmp/strat-input.json").read_text())
+    data["acquired_keys"] = [f"RHAIRFE-{n}" for n in range(1, 13)]
+    (repo / "tmp/strat-input.json").write_text(json.dumps(data))
+    for n, key in enumerate(keys, 1):
+        _task(repo, key, f"RHAIRFE-{n}")
+    _run(repo, "record-create")
     procs = [subprocess.Popen([sys.executable, str(SCRIPT), "mark", "refine", k], cwd=repo, env=env,
                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE) for k in keys]
     assert all(p.wait() == 0 for p in procs)
@@ -120,9 +126,9 @@ def test_partial_create_stays_open_for_the_missing_rfes(repo):
 def test_push_covers_only_what_the_push_script_pushes(repo):
     _task(repo, "RHAISTRAT-2", "RHAIRFE-2")
     path = repo / "artifacts" / "strat-tasks" / "RHAISTRAT-2.md"
-    path.write_text(path.read_text().replace("status: Refined", "status: Draft"))
     _run(repo, "record-create")
     _run(repo, "mark", "refine", "RHAISTRAT-2")
+    path.write_text(path.read_text().replace("status: Refined", "status: Draft"))
     _run(repo, "mark", "push")
     state = json.loads(_run(repo, "read").stdout)
     assert state["pushed"] == []
@@ -148,11 +154,72 @@ def test_an_unexpected_create_skip_stays_pending(repo):
 def test_push_does_not_cover_a_task_the_push_script_rejects(repo):
     _task(repo, "RHAISTRAT-2", "RHAIRFE-2")
     path = repo / "artifacts" / "strat-tasks" / "RHAISTRAT-2.md"
-    path.write_text(path.read_text().replace("title: T\n", ""))  # fails the strat-task schema
     _run(repo, "record-create")
     _run(repo, "mark", "refine", "RHAISTRAT-2")
+    path.write_text(path.read_text().replace("title: T\n", ""))  # fails the strat-task schema
     out = json.loads(_run(repo, "mark", "push").stdout)
     assert out == {"recorded": "push", "strategies": []}
+
+
+@pytest.mark.parametrize("change", [
+    ("status: Refined", "status: Draft"),
+    ("source_rfe: RHAIRFE-2", "source_rfe: RHAIRFE-9"),
+    ("strat_id: RHAISTRAT-2", "strat_id: RHAISTRAT-9"),
+    ("jira_key: RHAISTRAT-2", "jira_key: RHAISTRAT-9"),
+    ("## Strategy\nBody.", "## Strategy\n<!-- To be filled by /strategy-refine -->"),
+    ("title: T\n", ""),
+])
+def test_refine_mark_rejects_unfinished_or_wrong_artifacts(repo, change):
+    _task(repo, "RHAISTRAT-2", "RHAIRFE-2")
+    _run(repo, "record-create")
+    path = repo / "artifacts/strat-tasks/RHAISTRAT-2.md"
+    path.write_text(path.read_text().replace(*change))
+    assert _run(repo, "mark", "refine", "RHAISTRAT-2", check=False).returncode != 0
+    assert json.loads(_run(repo, "refine-status").stdout)["refined"] == []
+
+
+def test_only_valid_saved_completion_is_ready(repo):
+    _task(repo, "RHAISTRAT-2", "RHAIRFE-2")
+    _run(repo, "record-create")
+    missing = json.loads(_run(repo, "refine-status").stdout)
+    assert missing["refined"] == []
+    assert missing["rejected"] == [{"key": "RHAISTRAT-2", "reason": "not_recorded"}]
+    _run(repo, "mark", "refine", "RHAISTRAT-2")
+    done = json.loads(_run(repo, "refine-status").stdout)
+    assert done["refined"] == ["RHAISTRAT-2"] and done["rejected"] == []
+    path = repo / "artifacts/strat-tasks/RHAISTRAT-2.md"
+    path.write_text(path.read_text().replace("status: Refined", "status: Draft"))
+    stale = json.loads(_run(repo, "refine-status").stdout)
+    assert stale["refined"] == []
+    assert stale["rejected"] == [{"key": "RHAISTRAT-2", "reason": "invalid_artifact"}]
+    assert json.loads(_run(repo, "read").stdout)["refined"] == []
+
+
+def test_unknown_target_and_arbitrary_record_are_not_completion(repo):
+    _task(repo, "RHAISTRAT-2", "RHAIRFE-2")
+    assert _run(repo, "mark", "refine", "RHAISTRAT-2", check=False).returncode != 0
+    _run(repo, "record-create")
+    path = repo / "tmp/strat-progress.json"
+    progress = json.loads(path.read_text())
+    progress["refine"]["RHAISTRAT-2"] = '{"recorded":"RHAISTRAT-2"}'
+    path.write_text(json.dumps(progress))
+    assert json.loads(_run(repo, "refine-status").stdout)["refined"] == []
+
+
+def test_readiness_hook_rejects_model_invented_completion(repo, monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("guard", SCRIPT.with_name("refine_checkpoint_guard.py"))
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    monkeypatch.syspath_prepend(str(SCRIPT.parent))
+    _task(repo, "RHAISTRAT-2", "RHAIRFE-2")
+    _run(repo, "record-create")
+    snapshot = json.loads(_run(repo, "refine-status").stdout)
+    event = {"cwd": str(repo), "hook_event_name": "PreToolUse", "tool_name": "StructuredOutput", "tool_input": snapshot}
+    assert guard.guard(event)["verified"] == snapshot
+    event["tool_input"] = {**snapshot, "refined": ["RHAISTRAT-2"], "rejected": []}
+    with pytest.raises(ValueError):
+        guard.guard(event)
 
 
 def test_refuses_a_symlinked_score_dir(repo, tmp_path, monkeypatch):

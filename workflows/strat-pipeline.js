@@ -81,6 +81,40 @@ const RECORDED = {
     strategies: { type: 'array', items: { type: 'string', pattern: STRAT } },
   },
 }
+const refineReceipt = (key) => ({
+  type: 'object',
+  additionalProperties: false,
+  required: ['recorded'],
+  properties: { recorded: { type: 'string', enum: [key, 'none'] } },
+})
+
+async function refinementCheckpoint(run, keys) {
+  const key = { type: 'string', enum: keys }
+  const snapshot = await agent(
+    HEADLESS + 'Run `python3 scripts/strat_pipeline_state.py refine-status` once. ' +
+      'Return its JSON field for field. This verifies current-run saved progress and ' +
+      'the actual refined artifacts. Do not mark, edit or rerun refinement here. ' +
+      'The plugin checks this structured result against the saved state.',
+    { label: 'verify refinement progress', phase: 'Refine', effort: 'low', schema: {
+      type: 'object', additionalProperties: false,
+      required: ['kind', 'run_id', 'refined', 'rejected'],
+      properties: {
+        kind: { type: 'string', const: 'strat-refine-readiness' },
+        run_id: { type: 'string', const: run.run_id },
+        refined: { type: 'array', items: key, uniqueItems: true },
+        rejected: { type: 'array', items: {
+          type: 'object', additionalProperties: false, required: ['key', 'reason'],
+          properties: { key, reason: { type: 'string', enum: ['not_recorded', 'invalid_artifact'] } },
+        } },
+      },
+    } },
+  )
+  if (!snapshot || snapshot.kind !== 'strat-refine-readiness' || snapshot.run_id !== run.run_id) return null
+  const covered = [...snapshot.refined, ...snapshot.rejected.map((item) => item.key)]
+  if (covered.length !== keys.length || new Set(covered).size !== keys.length ||
+      covered.some((value) => !keys.includes(value))) return null
+  return snapshot
+}
 const VERDICT = {
   type: 'object',
   required: ['key', 'recommendation', 'needs_attention'],
@@ -135,6 +169,7 @@ if (!run.create_done && run.pending_create.length) {
 
 const reviewOnly = new Set(run.review_only)
 const refined = new Set(run.refined)
+const receipts = new Map()
 const toRefine = strategies.filter((p) => !refined.has(p.strat) && !reviewOnly.has(p.rfe))
 if (reviewOnly.size) log(`resume point review: refine and push skipped for ${[...reviewOnly].join(' ')}`)
 if (toRefine.length) {
@@ -148,13 +183,27 @@ if (toRefine.length) {
           `run \`python3 scripts/strat_pipeline_state.py mark refine ${p.strat}\` and return what it prints. ` +
           'If the skill stopped without refining (for example a label gate), do not run the command; ' +
           'return {"recorded": "none"}.',
-        { label: `refine ${p.strat}`, phase: 'Refine', schema: RECORDED },
+        { label: `refine ${p.strat}`, phase: 'Refine', schema: refineReceipt(p.strat) },
       ),
     ),
   )
   results.forEach((r, i) => {
-    if (r && r.recorded === toRefine[i].strat) refined.add(r.recorded)
-    else fail('refine', toRefine[i].strat)
+    receipts.set(toRefine[i].strat, r)
+  })
+}
+
+// A missing/malformed handoff is not proof that work failed, and a plausible
+// handoff is not proof it finished. Reconcile disk evidence before push/review.
+const refineKeys = strategies.filter((p) => !reviewOnly.has(p.rfe)).map((p) => p.strat)
+if (refineKeys.length) {
+  const snapshot = await refinementCheckpoint(run, refineKeys)
+  refined.clear()
+  if (snapshot) snapshot.refined.forEach((key) => refined.add(key))
+  refineKeys.forEach((key) => {
+    if (!refined.has(key)) fail('refine', key)
+    else if (receipts.has(key) && (!receipts.get(key) || receipts.get(key).recorded !== key)) {
+      log(`refine ${key}: receipt rejected/missing; completion verified from saved progress`)
+    }
   })
 }
 
