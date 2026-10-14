@@ -3,8 +3,9 @@
 install:            ## Install all dependencies via uv
 	uv sync
 
-lint:               ## Lint Python files with ruff
+lint:               ## Lint Python files with ruff; validate types/ against its schema (gate 1)
 	uv run ruff check scripts/ tests/
+	uv run python scripts/validate_types.py
 
 test:               ## Run all tests
 	uv run pytest tests/ -v --tb=short
@@ -17,6 +18,7 @@ test-unit:          ## Run unit tests only
 	       tests/test_render_html.py \
 	       tests/test_eval_checks.py \
 	       tests/test_skill_integrity.py \
+	       tests/test_type_registry.py tests/test_type_registry_pins.py \
 	       tests/assess_strat -v --tb=short
 
 test-integration:   ## Run integration tests (jira-emulator)
