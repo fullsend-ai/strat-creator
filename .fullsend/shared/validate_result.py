@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from artifact_utils import compute_strat_labels, read_frontmatter  # noqa: E402
 from handoff import allowed as handoff_allows  # noqa: E402
 from parse_results import CRITERIA, compute_verdict  # noqa: E402
+from review_composition import verify_review  # noqa: E402
 
 RESUME = ("Resume: call the Workflow tool with name \"strat-pipeline:strat-pipeline\" again; it reads "
           "tmp/strat-progress.json and runs only the steps that are not recorded.")
@@ -222,6 +223,14 @@ def check_artifacts(c, result, repo):
         if derived:
             c.check(derived == (s["recommendation"], s["needs_attention"]),
                     f"{s['strat']} scores give {derived[0]}, not {s['recommendation']}")
+        try:
+            manifest = verify_review(repo.resolve(), s["strat"])
+            for entry in [manifest["review"], manifest["scorer"], *manifest["reports"].values()]:
+                c.check(entry["path"] in listed, f"review source {entry['path']} is not in artifacts")
+            provenance = f"artifacts/strat-reviews/{s['strat']}-review-provenance.json"
+            c.check(provenance in listed, f"review source {provenance} is not in artifacts")
+        except Exception as error:
+            c.fail(f"{s['strat']} review composition: {error}")
 
 
 def check_jira(c, result):

@@ -149,6 +149,21 @@ REJECT:   total < 3   OR   2+ zeros       → needs_attention=true
 
 ## Step 6: Run Prose Reviews
 
+Before invoking any reviewer, begin a fresh, target-specific capture session:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/review_composition.py begin {KEY} \
+    --scorer-result /tmp/strat-assess/review/{KEY}.result.md
+```
+
+With --scores-from, substitute the supplied directory here too. This command
+checks the score source and prepared review. Loaded plugin PostToolUse hooks bind
+this session to the actual caller and save each delivered Skill result. Hook
+capture is required; standalone Skill text without the plugin is insufficient.
+Run begin in its own Bash call; do not launch two begin sessions in one call.
+Do not substitute transcripts, earlier scorer feedback or invented reports.
+
+
 Use the **Skill tool** to invoke all four reviewer skills in parallel. Each runs in its own isolated `context: fork` — no reviewer sees another's output. Pass the strategy key to each:
 
 ```
@@ -173,48 +188,32 @@ checks each completed assessment's target. If any return begins with
 key, stop with an error before composition or Jira publication. Do not treat
 that result as a review, rewrite it into a valid report, or rerun the reviewer.
 
-## Step 7: Write Prose to Review Files
+## Step 7: Compose the captured reviews (AUTOMATED)
 
-Update the review file body in `artifacts/strat-reviews/{id}-review.md` with the prose from all four reviewers. The scores table was already written by `apply_scores.py` in Step 5 — add the prose sections after it.
-
-The review file body should contain:
-
-```markdown
-## Scores
-[already written by apply_scores.py — do not overwrite]
-
-## Feasibility Review: {STRAT_ID} — {title}
-<assessment from feasibility reviewer>
-
-## Testability Review: {STRAT_ID} — {title}
-<assessment from testability reviewer>
-
-## Scope Review: {STRAT_ID} — {title}
-<assessment from scope reviewer>
-
-## Architecture Review: {STRAT_ID} — {title}
-<assessment from architecture reviewer, or "skipped — no context">
-
-## Agreements
-<where reviewers aligned>
-
-## Disagreements
-<where reviewers diverged — preserve both views>
-```
-
-After writing prose, update the `reviewers.*` frontmatter fields with each prose reviewer's individual verdict:
+Run the deterministic composer once:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-reviews/<id>-review.md \
-    reviewers.feasibility=<prose_verdict> \
-    reviewers.testability=<prose_verdict> \
-    reviewers.scope=<prose_verdict> \
-    reviewers.architecture=<prose_verdict>
+python3 ${CLAUDE_SKILL_DIR}/scripts/review_composition.py compose {KEY}
+python3 ${CLAUDE_SKILL_DIR}/scripts/review_composition.py verify {KEY}
 ```
 
-**Important:** The `recommendation` field is NEVER changed by prose reviewers. It comes from the numeric scores only. Prose reviewers set their own `reviewers.*` verdicts for informational purposes — these do NOT affect the gate decision.
+It writes the final review from the four actual delivered Skill results, preserving
+all report text unchanged with role, caller/tool and source-hash attribution. It
+exports each role report, the separate scorer assessment and a provenance manifest
+beside the final file. Do not rewrite, summarize, harmonize or replace these
+sections. Scorer feedback is labeled separately and cannot stand in for a missing
+specialist. Missing or invalid required reports stop composition and publication.
 
-**Preserve disagreements.** If the feasibility reviewer says "this is fine" but the scope reviewer says "this is too big," report both views. Do not average or harmonize.
+The **numeric scores remain the sole approval gate**. The composer derives both
+recommendation and needs_attention from those scores. Reviewer recommendations
+populate reviewers.* from their own reports, remain informational and do not
+change the numeric gate. Disagreements with that gate are explicitly listed and
+all opposing findings remain in the full reports. Do not change either gate field
+or reviewer frontmatter yourself. An architecture skip is recorded as skipped,
+never as an invented approval.
+
+A passing numeric gate can coexist with specialist dissent. State both facts to
+the human reader; do not describe the review as unanimous or concerns as resolved.
 
 ## Step 7a: Post Review Summary to Jira
 
@@ -239,6 +238,10 @@ Compose the comment in markdown using this format:
 | Architecture | {A}/2 | {✓ if 2, ⚠ if 1, ✗ if 0} |
 
 {For each dimension scored < 2, one sentence summarizing the issue from the prose review.}
+
+**Specialist dissent:** {list roles whose recommendation differs from the numeric
+verdict, with a brief description of their concerns; say none only if they all
+agree. The numeric verdict remains the gate. Link readers to the full attached review.}
 
 **Action:** {verdict-specific guidance}
 ```
@@ -308,7 +311,7 @@ In dry-run mode, skip and print `[DRY RUN] Skipping labels for RHAISTRAT-NNNN`.
 ## Step 8: Advise the User
 
 Based on the result:
-- **Approved** (`needs_attention=false`): Tell the user the strategy is ready for sign-off.
+- **Approved** (`needs_attention=false`): Tell the user the numeric gate passed and the strategy is ready for sign-off. Also identify any specialist dissent or skipped architecture assessment, which remains for the human reader.
 - **Needs revision** (`needs_attention=true`, verdict=REVISE): List specific issues by dimension. Tell the user to edit the strategy, remove `needs-attention`, and re-run `/strategy-review`.
 - **Fundamental problems** (`needs_attention=true`, verdict=REJECT): Recommend revisiting the RFE or re-running `/strategy-refine` with different constraints.
 

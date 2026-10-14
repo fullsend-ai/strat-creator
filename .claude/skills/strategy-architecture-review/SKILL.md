@@ -47,7 +47,7 @@ If the Read on `LATEST_VERSION` returns an error (file not found) or the PLATFOR
 ```
 ### $ARGUMENTS: Architecture review skipped
 **Architecture assessment**: no architecture context available
-**Recommendation**: context unavailable; no architecture verdict
+**Recommendation**: skipped
 ```
 
 ## Architecture Context Overlays
@@ -90,6 +90,11 @@ If this is a re-review:
 
 ## Output
 
+End with exactly one line `**Recommendation**: approve`, `revise` or `reject`.
+Use revise for requested changes or escalation; include the reason in the assessment.
+Architecture alone may return `**Recommendation**: skipped` when context is unavailable.
+
+
 For the assigned strategy only:
 
 ```
@@ -98,7 +103,7 @@ For the assigned strategy only:
 **Missing dependencies**: <list or "none">
 **Incorrect assumptions**: <list or "none">
 **Cross-component risks**: <list or "none">
-**Recommendation**: <approve / revise approach / escalate to architecture review>
+**Recommendation**: <approve / revise / reject>
 ```
 
 Ground every finding in the architecture docs. Don't flag hypothetical concerns — cite specific components, APIs, or patterns from the docs that support your assessment.

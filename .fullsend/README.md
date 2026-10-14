@@ -130,6 +130,25 @@ evidence verifies completion; a plausible receipt alone cannot advance a
 strategy. The initial read also verifies saved refinement readiness. Completed
 work is not repeated just to repair its receipt.
 
+### Review composition
+
+Numeric scores remain the sole approval gate. The four specialist verdicts
+remain separate, including any disagreement with that gate. Prepared reviews
+mark those verdicts pending rather than borrowing the scorer's recommendation.
+
+The review Skill opens one session per target. PostToolUse hooks bind its
+begin receipt to the actual caller and capture the four delivered forked Skill
+results with role, agent/tool identity and content hashes. The Python composer
+copies all report text unchanged, lists dissent and labels the scorer output
+separately. It exports the role reports and a provenance manifest beside the
+review. Missing reports prevent composition; recording review and host
+validation check the final file, sources, hashes and numeric decision. Handoff
+includes those provenance/source files. This does not judge report quality;
+the delivery-content gate and independent accuracy evaluation remain separate.
+
+This adapter is tested on Claude Code 2.1.296 and depends on the actual Bash
+and forked Skill PostToolUse payload fields. Requalify it when upgrading Claude.
+
 A workflow has no shell of its own, so every command runs in a step agent.
 Each step records its outcome in `tmp/strat-progress.json` through
 `scripts/strat_pipeline_state.py`. For steps other than refinement, when

@@ -27,11 +27,10 @@ def _task(repo, strat, rfe):
 
 
 def _review(repo, strat, recommendation):
-    path = repo / "artifacts" / "strat-reviews" / f"{strat}-review.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    attention = "false" if recommendation == "approve" else "true"
-    path.write_text(f"---\nstrat_id: {strat}\nrecommendation: {recommendation}\n"
-                    f"needs_attention: {attention}\n---\nReview.\n")
+    from review_composition_support import prepare
+    rfe = strat.replace("STRAT", "RFE")
+    scores = (2, 2, 2, 2) if recommendation == "approve" else (1, 1, 1, 1)
+    prepare(repo, strat, rfe, scores)
 
 
 @pytest.fixture

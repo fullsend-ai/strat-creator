@@ -118,6 +118,11 @@ async function refinementCheckpoint(run, keys) {
 const VERDICT = {
   type: 'object',
   required: ['key', 'recommendation', 'needs_attention'],
+  additionalProperties: false,
+  oneOf: [
+    { properties: { recommendation: { const: 'approve' }, needs_attention: { const: false } } },
+    { properties: { recommendation: { enum: ['revise', 'reject'] }, needs_attention: { const: true } } },
+  ],
   properties: {
     key: { type: 'string', pattern: STRAT },
     recommendation: { type: 'string', enum: ['approve', 'revise', 'reject'] },

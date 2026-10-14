@@ -340,8 +340,15 @@ def _mark(args, progress, data):
 
 
 def cmd_record_review(args):
+    from review_composition import verify_review
     data = load_input()
     key = check_strat(args.key)
+    try:
+        manifest = verify_review(Path.cwd().resolve(), key)
+        if manifest.get("workflow_run_id") != data["run_id"]:
+            die("review composition belongs to another workflow run")
+    except Exception as error:
+        die(f"cannot record review {key}: {error}")
     path = REVIEWS / f"{key}-review.md"
     if path.is_symlink() or not path.is_file():
         die(f"{path} not found")
@@ -351,6 +358,7 @@ def cmd_record_review(args):
         die(f"{path} has no recommendation")
     verdict = {"recommendation": recommendation,
                "needs_attention": bool(fm.get("needs_attention")),
+               "composition_session": manifest["session_id"],
                "done_at": now()}
     with progress_lock():
         progress = load_progress(data["run_id"])
@@ -419,10 +427,14 @@ def assemble(data, progress, failed):
     for pair in strategies:
         artifacts += existing([TASKS / f"{pair['strat']}.md",
                                REVIEWS / f"{pair['strat']}-review.md",
+                               REVIEWS / f"{pair['strat']}-review-provenance.json",
+                               REVIEWS / f"{pair['strat']}-review-scorer.md",
                                REVIEWS / f"{pair['strat']}-review-comment.md",
                                ORIGINALS / f"{pair['rfe']}.md",
                                ORIGINALS / f"{pair['rfe']}-comments.md",
                                ORIGINALS / f"{pair['strat']}.md"])
+        artifacts += existing([REVIEWS / f"{pair['strat']}-review-{role}.md"
+                               for role in ("feasibility", "testability", "scope", "architecture")])
     artifacts += existing([SKIPPED_MD, TICKETS_MD])
 
     action = "failed" if errors else "completed"

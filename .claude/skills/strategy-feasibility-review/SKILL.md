@@ -63,6 +63,11 @@ If this is a re-review:
 
 ## Output
 
+End with exactly one line `**Recommendation**: approve`, `revise` or `reject`.
+Use revise for requested changes or escalation; include the reason in the assessment.
+Architecture alone may return `**Recommendation**: skipped` when context is unavailable.
+
+
 For the assigned strategy only:
 
 ```

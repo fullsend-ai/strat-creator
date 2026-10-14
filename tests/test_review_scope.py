@@ -158,7 +158,8 @@ def test_assigned_assessment_or_explicit_error_can_return(batch):
 
 
 def test_fullsend_bundles_the_same_scope_implementation_and_hooks():
-    for relative in ("scripts/review_scope.py", "scripts/refine_checkpoint_guard.py", "hooks/hooks.json"):
+    for relative in ("scripts/review_scope.py", "scripts/refine_checkpoint_guard.py",
+                     "scripts/review_composition.py", "hooks/hooks.json"):
         assert (ROOT / relative).read_bytes() == (ROOT / ".fullsend/plugins/strat-pipeline" / relative).read_bytes()
 
 

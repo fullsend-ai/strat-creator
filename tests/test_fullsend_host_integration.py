@@ -331,6 +331,8 @@ def _downloaded_repo(tmp_path, run, verdicts):
                      f"scores.architecture={a}", f"scores.total={f + t + s + a}",
                      *(f"reviewers.{d}={verdict}" for d in ("feasibility", "testability", "scope",
                                                             "architecture")))
+        from review_composition_support import prepare
+        prepare(repo, strat, rfe, (f, t, s, a))
     _state(repo, "record-create")
     for strat, _ in verdicts.values():
         _state(repo, "mark", "refine", strat)

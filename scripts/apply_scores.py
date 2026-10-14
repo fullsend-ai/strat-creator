@@ -75,12 +75,10 @@ def extract_feedback(result_text):
 def set_frontmatter(review_path, strat_id, verdict, needs_attention, scores):
     """Set frontmatter on a review file using frontmatter.py.
 
-    Sets scores and verdict from the scorer. Reviewer verdicts default to
-    the score-derived verdict but are overwritten later by prose reviewers.
+    Sets scores and verdict from the scorer. Specialist verdicts remain pending
+    until actual delivered assessments are captured and composed.
     """
-    # Default reviewer verdicts based on score verdict.
-    # Prose reviewers overwrite these in a later step.
-    reviewer_default = verdict.lower()
+    reviewer_default = "pending"
 
     args = [
         sys.executable, FRONTMATTER_SCRIPT, "set", review_path,
