@@ -122,8 +122,11 @@ def test_workflow_runs_headless_under_fullsend_launch_shape(tmp_path):
 
     tool_uses = [c for e in events if e.get("type") == "assistant"
                  for c in e["message"]["content"] if c.get("type") == "tool_use"]
-    assert tool_uses and tool_uses[0]["name"] == "Workflow"
-    assert tool_uses[0]["input"].get("name") == "strat-pipeline:strat-pipeline"
+    assert tool_uses and tool_uses[0]["name"] == "Bash"
+    assert "strat_pipeline_state.py completion-status" in tool_uses[0]["input"].get("command", "")
+    workflows = [tool for tool in tool_uses if tool["name"] == "Workflow"]
+    assert len(workflows) == 1
+    assert workflows[0]["input"].get("name") == "strat-pipeline:strat-pipeline"
     notices = [i for i, e in enumerate(events) if e.get("subtype") == "task_notification"]
     results = [i for i, e in enumerate(events) if e.get("type") == "result"]
     assert notices and results and results[-1] > notices[-1], "turn ended before the workflow"
