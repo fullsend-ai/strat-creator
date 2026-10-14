@@ -15,6 +15,7 @@ RESULT_FILE="output/agent-result.json"
 if [[ ! -f "${RESULT_FILE}" ]]; then
   # fullsend appends this text to the next attempt's prompt.
   echo "FAIL: ${RESULT_FILE} not found: the previous attempt stopped before its last step."
+  echo "FAIL: Check python3 scripts/strat_pipeline_state.py completion-status first. If work_complete is true, restore output with the result command and retry reporting without repeating the Workflow."
   echo "FAIL: Resume: call the Workflow tool with name \"strat-pipeline:strat-pipeline\" again; it reads tmp/strat-progress.json and runs only the steps that are not recorded."
   exit 1
 fi

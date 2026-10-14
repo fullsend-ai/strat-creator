@@ -239,3 +239,6 @@ tmp/
 tests/fixtures/refine-receipts/plugin/workflows/refine-receipts.js
 tests/fixtures/review-composition/plugin/workflows/review-composition.js
 tests/fixtures/review-composition/context/
+
+# Generated focused outcome Workflow
+tests/fixtures/outcome/plugin/workflows/

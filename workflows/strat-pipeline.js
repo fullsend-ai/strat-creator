@@ -131,10 +131,19 @@ const VERDICT = {
 }
 const RESULT = {
   type: 'object',
-  required: ['action', 'check_exit'],
+  additionalProperties: false,
+  required: ['kind', 'run_id', 'action', 'check_exit', 'receipt_id', 'receipt_sha256'],
+  oneOf: [
+    { properties: { action: { const: 'completed' }, check_exit: { const: 0 } } },
+    { properties: { action: { const: 'failed' }, check_exit: { const: 1 } } },
+  ],
   properties: {
-    action: { type: 'string', enum: ['completed', 'failed', 'skipped'] },
-    check_exit: { type: 'integer' },
+    kind: { type: 'string', const: 'strat-completion' },
+    run_id: { type: 'string', minLength: 1 },
+    action: { type: 'string', enum: ['completed', 'failed'] },
+    check_exit: { type: 'integer', enum: [0, 1] },
+    receipt_id: { type: 'string', pattern: '^[a-f0-9]{32}$' },
+    receipt_sha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
   },
 }
 
@@ -285,11 +294,19 @@ phase('Result')
 const failedArgs = failed.map((f) => ` --failed ${f}`).join('')
 const result = await agent(
   HEADLESS +
-    `Run \`python3 scripts/strat_pipeline_state.py result${failedArgs}\` once. Then, if the command ` +
-    '`fullsend-check-output` exists (check with `command -v fullsend-check-output`), run ' +
-    '`fullsend-check-output "$FULLSEND_OUTPUT_DIR/agent-result.json"` and use its exit status as ' +
-    'check_exit; if it does not exist, check_exit is 0. Return the action the first command printed.',
-  { label: 'write result', phase: 'Result', schema: RESULT, effort: 'low' },
+    `Run \`python3 scripts/strat_pipeline_state.py result${failedArgs}\` once. ` +
+    'It validates actual input coverage, progress, artifacts and numeric review provenance, ' +
+    'writes agent-result.json and tmp/strat-completion.json, and prints a completion receipt. ' +
+    'Return that JSON exactly; never invent a successful check. The plugin verifies it against disk. ' +
+    'Do not rerun skills, scoring or publication to repair a missing handoff.',
+  { label: 'write result', phase: 'Result', schema: {
+    ...RESULT, properties: { ...RESULT.properties, run_id: { type: 'string', const: run.run_id } },
+  }, effort: 'low' },
 )
 if (!result) throw new Error('result: strat_pipeline_state.py result returned no result')
-return { action: result.action, check_exit: result.check_exit, failed }
+if (result.kind !== 'strat-completion' || result.run_id !== run.run_id ||
+    result.action !== 'completed' || result.check_exit !== 0 ||
+    !/^[a-f0-9]{32}$/.test(result.receipt_id || '') || !/^[a-f0-9]{64}$/.test(result.receipt_sha256 || '')) {
+  throw new Error(`result: business completion not verified (${result.action || 'missing'}, check ${result.check_exit})`)
+}
+return result

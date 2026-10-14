@@ -77,6 +77,41 @@ evaluated with `fullsend dispatch` on the event fixtures in
 
 ## The Workflow
 
+The final step validates expected RFE coverage, saved progress, required artifacts
+and complete numeric review provenance before writing `agent-result.json` and
+`tmp/strat-completion.json`. Its schema-bearing result must match that receipt;
+the loaded plugin checks the match against current files. A failed/null final
+result fails the Workflow. The trusted host validator independently checks the
+same receipt and still performs Jira readback. Numeric scores remain the sole
+approval gate; a valid revise outcome is completed work.
+
+`python3 scripts/strat_pipeline_state.py completion-status` checks saved work
+without running skills. On a reporting retry, `result` restores the same output
+and receipt when input/progress/artifact hashes still match. The primary agents
+and validation feedback use this recovery path before considering a Workflow
+retry. Completion receipts remain in the downloaded repository; they are also
+preserved inline in the validated result's completion identity.
+
+When native state/journal exports are available, a read-only observer distinguishes
+business completion, native Workflow completion and the CLI/reporting exit:
+
+```bash
+python3 scripts/strat_pipeline_outcome.py inspect --repo <repository> \
+  --state <workflows/wf_ID.json> \
+  --journal <subagents/workflows/wf_ID/journal.jsonl> --cli-exit <code> \
+  --result <agent-result.json>
+```
+
+It requires this receipt in both the completed native state and a matched
+journaled agent result. Completed work plus a nonzero reporting exit is recorded
+as `completed_with_reporting_error`, with `retry_work: false`. A killed/failed/
+missing runtime or null result remains unverified even if the CLI exits zero.
+Fullsend's existing entrypoint is unchanged. Its host validation checks business
+completion; native verification additionally needs exported native evidence and
+is exercised by the focused diagnostic job. No native export contract is assumed
+for Fullsend, and this check does not grade content accuracy or provide general
+side-effect idempotency or stale-journal invalidation.
+
 `plugins/strat-pipeline/workflows/strat-pipeline.js` has named steps:
 
 1. **read**: one agent returns `tmp/strat-input.json` and `tmp/strat-progress.json` as JSON.

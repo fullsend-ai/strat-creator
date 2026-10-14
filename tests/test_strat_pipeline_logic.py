@@ -41,7 +41,10 @@ def _run(tmp_path, responses, args=None):
                           timeout=60)
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)
-    assert out["error"] is None, out
+    if (responses.get("write result") or {}).get("action") == "failed":
+        assert out["error"] and "business completion not verified" in out["error"], out
+    else:
+        assert out["error"] is None, out
     return out
 
 
@@ -56,10 +59,15 @@ def _full(responses=None):
         "push": {"recorded": "push", "strategies": ["RHAISTRAT-1", "RHAISTRAT-2"]},
         "score RHAISTRAT-1": "scored", "score RHAISTRAT-2": "scored",
         "review RHAISTRAT-1": _verdict("RHAISTRAT-1"), "review RHAISTRAT-2": _verdict("RHAISTRAT-2"),
-        "write result": {"action": "completed", "check_exit": 0},
+        "write result": _completion(),
     }
     base.update(responses or {})
     return base
+
+
+def _completion(**changes):
+    return {"kind": "strat-completion", "run_id": "r1", "action": "completed", "check_exit": 0,
+            "receipt_id": "a" * 32, "receipt_sha256": "b" * 64, **changes}
 
 
 def test_fresh_run_runs_every_step_in_order(tmp_path):
@@ -70,13 +78,13 @@ def test_fresh_run_runs_every_step_in_order(tmp_path):
     assert calls[4:6] == ["verify refinement progress", "push"]
     assert calls.index("score RHAISTRAT-1") < calls.index("review RHAISTRAT-1")
     assert calls[-1] == "write result"
-    assert out["result"] == {"action": "completed", "check_exit": 0, "failed": []}
+    assert out["result"] == _completion()
 
 
 def test_a_failed_push_holds_back_every_refined_review(tmp_path):
     out = _run(tmp_path, _full({"push": None, "write result": {"action": "failed", "check_exit": 0}}))
     assert not [c for c in out["calls"] if c.startswith(("score", "review"))]
-    assert out["result"]["failed"] == ["push"]
+    assert out["result"] is None  # failed business action must fail the Workflow
 
 
 def test_retry_after_a_partial_create_pushes_the_new_strategy_before_its_review(tmp_path):
@@ -99,7 +107,7 @@ def test_review_only_rfes_skip_refine_and_push(tmp_path):
 def test_a_dead_scorer_skips_only_its_own_review(tmp_path):
     out = _run(tmp_path, _full({"score RHAISTRAT-2": None, "write result": {"action": "failed", "check_exit": 0}}))
     assert "review RHAISTRAT-1" in out["calls"] and "review RHAISTRAT-2" not in out["calls"]
-    assert out["result"]["failed"] == ["score:RHAISTRAT-2"]
+    assert out["result"] is None
 
 
 def test_a_malformed_namespace_is_refused(tmp_path):
@@ -123,7 +131,7 @@ def test_bad_handoff_recovers_verified_completion_without_repeating_refine(tmp_p
     out = _run(tmp_path, _full({"refine RHAISTRAT-2": receipt}))
     assert out["calls"].count("refine RHAISTRAT-2") == 1
     assert "review RHAISTRAT-2" in out["calls"]
-    assert out["result"]["failed"] == []
+    assert out["result"]["action"] == "completed"
     assert any("completion verified from saved progress" in line for line in out["logs"])
 
 
@@ -135,7 +143,7 @@ def test_a_valid_receipt_cannot_promote_unrecorded_work(tmp_path):
         "write result": {"action": "failed", "check_exit": 0}}))
     assert "review RHAISTRAT-1" in out["calls"]
     assert "score RHAISTRAT-2" not in out["calls"]
-    assert out["result"]["failed"] == ["refine:RHAISTRAT-2"]
+    assert out["result"] is None
 
 
 @pytest.mark.parametrize("snapshot", [None,
@@ -146,4 +154,15 @@ def test_unverified_or_wrong_run_checkpoint_holds_back_push_and_review(tmp_path,
     out = _run(tmp_path, _full({"verify refinement progress": snapshot,
                               "write result": {"action": "failed", "check_exit": 0}}))
     assert not [c for c in out["calls"] if c.startswith(("score", "review")) or c == "push"]
-    assert set(out["result"]["failed"]) == {"refine:RHAISTRAT-1", "refine:RHAISTRAT-2"}
+    assert out["result"] is None
+
+
+@pytest.mark.parametrize("result", [None, {"action": "completed", "check_exit": 0},
+    _completion(run_id="another-run"), _completion(check_exit=1),
+    _completion(action="skipped"), _completion(receipt_id=""), _completion(receipt_sha256="")])
+def test_invalid_final_receipt_cannot_complete_workflow(tmp_path, result):
+    scenario = tmp_path / "final-fault.json"
+    scenario.write_text(json.dumps({"responses": _full({"write result": result})}))
+    proc = subprocess.run(["node", str(RUNNER), str(SCRIPT), str(scenario)], capture_output=True, text=True)
+    value = json.loads(proc.stdout)
+    assert value["error"] and value["result"] is None

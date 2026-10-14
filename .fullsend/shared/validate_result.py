@@ -43,8 +43,11 @@ from artifact_utils import compute_strat_labels, read_frontmatter  # noqa: E402
 from handoff import allowed as handoff_allows  # noqa: E402
 from parse_results import CRITERIA, compute_verdict  # noqa: E402
 from review_composition import verify_review  # noqa: E402
+from strat_pipeline_outcome import verify_completion  # noqa: E402
 
-RESUME = ("Resume: call the Workflow tool with name \"strat-pipeline:strat-pipeline\" again; it reads "
+RESUME = ("First run python3 scripts/strat_pipeline_state.py completion-status. If work_complete is true, "
+          "restore output with the result command and retry only reporting; do not repeat finished work. Otherwise "
+          "Resume: call the Workflow tool with name \"strat-pipeline:strat-pipeline\" again; it reads "
           "tmp/strat-progress.json and runs only the steps that are not recorded.")
 
 
@@ -271,6 +274,10 @@ def validate(result_path, repo, schema_path, run_path, env):
     check_create_skips(c, result, run)
     check_progress(c, result, repo, run)
     check_artifacts(c, result, repo)
+    try:
+        verify_completion(repo.resolve(), result_path)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        c.fail("final business completion: " + str(error)[:500])
     if result["dry_run"]:
         print("INFO: dry run, Jira readback skipped")
     elif all(env.get(k) for k in ("JIRA_SERVER", "JIRA_USER", "JIRA_TOKEN")):

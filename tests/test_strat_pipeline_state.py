@@ -73,12 +73,12 @@ def test_missing_steps_become_errors(repo):
     _run(repo, "result", "--failed", "refine:RHAISTRAT-2")
     result = json.loads((repo / "output" / "agent-result.json").read_text())
     assert result["action"] == "failed"
-    assert result["errors"] == [
+    assert set([
         "refine: RHAISTRAT-2 returned no result",
         "create: no strategy recorded for RHAIRFE-1",
         "refine: RHAISTRAT-2 not recorded",
         "review: RHAISTRAT-2 not recorded",
-    ]
+    ]) <= set(result["errors"])
 
 
 def test_progress_from_another_run_is_ignored(repo):

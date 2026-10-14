@@ -15,7 +15,8 @@ Commands (run from the repository root):
   mark refine KEY | mark push [--skipped]   (push covers every refined strategy)
   record-review KEY         verdict from the review file
   result [--failed STEP[:KEY]]...
-                            write $FULLSEND_OUTPUT_DIR/agent-result.json
+                            validate and write result plus saved completion receipt
+  completion-status         check whether saved completion can be recovered
 
 The host pre-script writes tmp/strat-input.json; this helper never locks,
 unlocks or calls Jira.
@@ -461,17 +462,33 @@ def assemble(data, progress, failed):
 
 
 def cmd_result(args):
+    from strat_pipeline_outcome import finalize
     data = load_input()
-    progress = load_progress(data["run_id"])
-    result = assemble(data, progress, parse_failed(args.failed))
     out_dir = os.environ.get("FULLSEND_OUTPUT_DIR")
     if not out_dir:
         die("FULLSEND_OUTPUT_DIR is not set")
     path = Path(out_dir) / "agent-result.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result, indent=2) + "\n")
-    print(json.dumps({"path": str(path), "action": result["action"],
-                      "errors": result["errors"]}, indent=2))
+    with progress_lock():
+        progress = load_progress(data["run_id"])
+        if not PROGRESS.is_file():
+            save_progress(progress)
+        # A failed handoff is reconciled with actual saved work. Missing work
+        # remains failed; complete verified work is not repeated to fix a receipt.
+        result = assemble(data, progress, [])
+        completion = finalize(Path.cwd().resolve(), data, progress, result, parse_failed(args.failed), path)
+    print(json.dumps(completion))
+
+
+def cmd_completion_status(_args):
+    from strat_pipeline_outcome import summary, verify_completion
+    root = Path.cwd().resolve()
+    try:
+        with progress_lock():
+            receipt = verify_completion(root)
+        status = {"kind": "strat-completion-status", "work_complete": True, "completion": summary(root, receipt)}
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        status = {"kind": "strat-completion-status", "work_complete": False, "reason": str(error)}
+    print(json.dumps(status))
 
 
 def main(argv=None):
@@ -480,6 +497,7 @@ def main(argv=None):
     sub.add_parser("read").set_defaults(func=cmd_read)
     sub.add_parser("record-create").set_defaults(func=cmd_record_create)
     sub.add_parser("refine-status").set_defaults(func=cmd_refine_status)
+    sub.add_parser("completion-status").set_defaults(func=cmd_completion_status)
     mark = sub.add_parser("mark")
     mark.add_argument("step", choices=["refine", "push"])
     mark.add_argument("key", nargs="?")
@@ -494,7 +512,10 @@ def main(argv=None):
                         help="STEP[:KEY] the Workflow saw return no result")
     result.set_defaults(func=cmd_result)
     args = parser.parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        die(str(error))
 
 
 if __name__ == "__main__":

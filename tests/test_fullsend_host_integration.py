@@ -473,6 +473,14 @@ def test_claimed_create_skips_must_match_the_host_gate_check(validated_run, expe
     _with_expected(run_path, expected, acquire="RHAIRFE-7104")
     _also_acquired(repo, "RHAIRFE-7104")
     _claim_skip(repo, "RHAIRFE-7104", reason)
+    if message is None:
+        # Valid completion now needs the skip in the actual run/progress and a
+        # fresh deterministic receipt, not only an edited result claim.
+        (repo / "tmp/strat-input.json").write_text(run_path.read_text())
+        progress = json.loads((repo / "tmp/strat-progress.json").read_text())
+        progress["create"]["skipped"].append({"key": "RHAIRFE-7104", "reason": reason})
+        (repo / "tmp/strat-progress.json").write_text(json.dumps(progress))
+        _state(repo, "result")
     check = _validate(repo, run_path, env)
     print(check.stdout)
     if message is None:
@@ -521,10 +529,32 @@ def test_validator_reports_a_wrongly_typed_progress_field(validated_run):
 
 def test_a_failed_run_is_reported_to_the_next_attempt(validated_run):
     repo, run_path, env = validated_run
+    progress = json.loads((repo / "tmp/strat-progress.json").read_text())
+    del progress["review"]["RHAISTRAT-8102"]
+    (repo / "tmp/strat-progress.json").write_text(json.dumps(progress))
     _state(repo, "result", "--failed", "review:RHAISTRAT-8102")
     check = _validate(repo, run_path, env)
     assert check.returncode == 1
     assert "the run reports failure: review: RHAISTRAT-8102 returned no result" in check.stdout
+
+
+def test_host_requires_completion_receipt_even_when_output_and_jira_agree(validated_run):
+    repo, run_path, env = validated_run
+    (repo / "tmp/strat-completion.json").unlink()
+    check = _validate(repo, run_path, env)
+    assert check.returncode == 1
+    assert "final business completion" in check.stdout
+
+
+def test_reporting_recovery_keeps_completed_work_and_host_validation(validated_run):
+    repo, run_path, env = validated_run
+    receipt = (repo / "tmp/strat-completion.json").read_bytes()
+    progress = (repo / "tmp/strat-progress.json").read_bytes()
+    (repo / "output/agent-result.json").unlink()
+    _state(repo, "result", "--failed", "workflow")
+    assert (repo / "tmp/strat-completion.json").read_bytes() == receipt
+    assert (repo / "tmp/strat-progress.json").read_bytes() == progress
+    assert _validate(repo, run_path, env).returncode == 0
 
 
 # ── post-script ─────────────────────────────────────────────────────────────────

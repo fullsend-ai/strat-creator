@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "required": ["action", "mode", "run_id", "summary", "input_keys", "acquired_keys", "skipped",
                "strategies", "completed_phases", "artifacts", "architecture_context", "dry_run",
-               "errors"],
+               "errors", "completion"],
   "properties": {
     "action": {"type": "string", "enum": ["completed", "failed", "skipped"]},
     "mode": {"type": "string", "enum": ["single", "batch", "resume"]},
@@ -52,7 +52,16 @@
     },
     "architecture_context": {"type": "string", "enum": ["available", "missing"]},
     "dry_run": {"type": "boolean"},
-    "errors": {"type": "array", "items": {"type": "string", "maxLength": 1000}}
+    "errors": {"type": "array", "items": {"type": "string", "maxLength": 1000}},
+    "completion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contract", "receipt_id", "check_exit"],
+      "properties": {
+        "contract": {"const": "strat-business-validation-v1"},
+        "receipt_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+        "check_exit": {"type": "integer", "enum": [0, 1]}
+      }
+    }
   },
   "$defs": {
     "rfe_key": {"type": "string", "pattern": "^RHAIRFE-[0-9]+$"},
