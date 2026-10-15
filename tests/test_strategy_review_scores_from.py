@@ -59,4 +59,3 @@ def test_the_two_workflow_copies_are_identical():
     # fullsend loads the harness plugin copy; the strat-creator plugin ships the
     # other for interactive use. Plugin trees may not contain symlinks.
     assert _read(WORKFLOW) == _read(INTERACTIVE_WORKFLOW)
-
