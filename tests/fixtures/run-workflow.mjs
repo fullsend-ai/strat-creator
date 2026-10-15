@@ -12,9 +12,11 @@ const source = readFileSync(scriptPath, 'utf8').replace(/^export const meta/m, '
 
 const calls = []
 const logs = []
+const schemas = {}
 async function agent(prompt, opts = {}) {
   const label = opts.label || prompt.slice(0, 40)
   calls.push(label)
+  if (opts.schema) schemas[label] = structuredClone(opts.schema)
   if (!(label in scenario.responses)) throw new Error(`no mocked response for agent "${label}"`)
   return structuredClone(scenario.responses[label])
 }
@@ -46,4 +48,4 @@ try {
 } catch (e) {
   error = String(e && e.message ? e.message : e)
 }
-process.stdout.write(JSON.stringify({ calls, result, logs, error }) + '\n')
+process.stdout.write(JSON.stringify({ calls, result, logs, error, schemas }) + '\n')

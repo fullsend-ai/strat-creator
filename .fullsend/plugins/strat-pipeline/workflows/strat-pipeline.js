@@ -115,14 +115,12 @@ async function refinementCheckpoint(run, keys) {
       covered.some((value) => !keys.includes(value))) return null
   return snapshot
 }
+// Anthropic tool input schemas reject top-level oneOf/allOf/anyOf. Keep these
+// object schemas simple and check cross-field consistency after each handoff.
 const VERDICT = {
   type: 'object',
   required: ['key', 'recommendation', 'needs_attention'],
   additionalProperties: false,
-  oneOf: [
-    { properties: { recommendation: { const: 'approve' }, needs_attention: { const: false } } },
-    { properties: { recommendation: { enum: ['revise', 'reject'] }, needs_attention: { const: true } } },
-  ],
   properties: {
     key: { type: 'string', pattern: STRAT },
     recommendation: { type: 'string', enum: ['approve', 'revise', 'reject'] },
@@ -133,10 +131,6 @@ const RESULT = {
   type: 'object',
   additionalProperties: false,
   required: ['kind', 'run_id', 'action', 'check_exit', 'receipt_id', 'receipt_sha256'],
-  oneOf: [
-    { properties: { action: { const: 'completed' }, check_exit: { const: 0 } } },
-    { properties: { action: { const: 'failed' }, check_exit: { const: 1 } } },
-  ],
   properties: {
     kind: { type: 'string', const: 'strat-completion' },
     run_id: { type: 'string', minLength: 1 },
@@ -283,7 +277,9 @@ if (toReview.length) {
           `\`python3 scripts/strat_pipeline_state.py record-review ${p.strat}\` and return what it prints.`,
         { label: `review ${p.strat}`, phase: 'Review', schema: VERDICT },
       )
-      if (!verdict || verdict.key !== p.strat) {
+      if (!verdict || verdict.key !== p.strat ||
+          !['approve', 'revise', 'reject'].includes(verdict.recommendation) ||
+          verdict.needs_attention !== (verdict.recommendation !== 'approve')) {
         fail('review', p.strat)
         return null
       }
@@ -307,7 +303,7 @@ const result = await agent(
   }, effort: 'low' },
 )
 if (!result) throw new Error('result: strat_pipeline_state.py result returned no result')
-if (result.kind !== 'strat-completion' || result.run_id !== run.run_id ||
+if (failed.length || result.kind !== 'strat-completion' || result.run_id !== run.run_id ||
     result.action !== 'completed' || result.check_exit !== 0 ||
     !/^[a-f0-9]{32}$/.test(result.receipt_id || '') || !/^[a-f0-9]{64}$/.test(result.receipt_sha256 || '')) {
   throw new Error(`result: business completion not verified (${result.action || 'missing'}, check ${result.check_exit})`)

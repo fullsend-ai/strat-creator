@@ -81,6 +81,45 @@ def test_fresh_run_runs_every_step_in_order(tmp_path):
     assert out["result"] == _completion()
 
 
+def test_every_emitted_tool_schema_avoids_anthropic_top_level_unions(tmp_path):
+    out = _run(tmp_path, _full())
+    assert {"review RHAISTRAT-1", "review RHAISTRAT-2", "write result"} <= out["schemas"].keys()
+    for label, schema in out["schemas"].items():
+        assert schema["type"] == "object", label
+        assert not {"oneOf", "allOf", "anyOf"} & schema.keys(), label
+    assert out["schemas"]["write result"]["properties"]["run_id"] == {"type": "string", "const": "r1"}
+
+
+@pytest.mark.parametrize(("recommendation", "needs_attention"), [
+    ("approve", False), ("revise", True), ("reject", True),
+])
+def test_consistent_review_verdicts_can_complete(tmp_path, recommendation, needs_attention):
+    out = _run(tmp_path, _full({"review RHAISTRAT-2": {
+        "key": "RHAISTRAT-2", "recommendation": recommendation, "needs_attention": needs_attention,
+    }}))
+    assert out["result"] == _completion()
+    assert not any("review RHAISTRAT-2: no result" in line for line in out["logs"])
+
+
+@pytest.mark.parametrize(("recommendation", "needs_attention"), [
+    ("approve", True), ("revise", False), ("reject", False), ("unknown", True),
+    ("approve", None), ("approve", 0), ("revise", 1),
+])
+def test_invalid_review_verdict_blocks_even_a_claimed_success(tmp_path, recommendation, needs_attention):
+    scenario = tmp_path / "bad-verdict.json"
+    scenario.write_text(json.dumps({"responses": _full({"review RHAISTRAT-2": {
+        "key": "RHAISTRAT-2", "recommendation": recommendation, "needs_attention": needs_attention,
+    }})}))
+    proc = subprocess.run(["node", str(RUNNER), str(SCRIPT), str(scenario)],
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert "review RHAISTRAT-1" in out["calls"]
+    assert "review RHAISTRAT-2: no result" in out["logs"]
+    assert out["error"] and "business completion not verified" in out["error"]
+    assert out["result"] is None
+
+
 def test_a_failed_push_holds_back_every_refined_review(tmp_path):
     out = _run(tmp_path, _full({"push": None, "write result": {"action": "failed", "check_exit": 0}}))
     assert not [c for c in out["calls"] if c.startswith(("score", "review"))]
@@ -159,6 +198,8 @@ def test_unverified_or_wrong_run_checkpoint_holds_back_push_and_review(tmp_path,
 
 @pytest.mark.parametrize("result", [None, {"action": "completed", "check_exit": 0},
     _completion(run_id="another-run"), _completion(check_exit=1),
+    _completion(action="failed", check_exit=0), _completion(action="failed", check_exit=1),
+    _completion(check_exit=False), _completion(check_exit="0"),
     _completion(action="skipped"), _completion(receipt_id=""), _completion(receipt_sha256="")])
 def test_invalid_final_receipt_cannot_complete_workflow(tmp_path, result):
     scenario = tmp_path / "final-fault.json"
