@@ -62,11 +62,15 @@ def report_verdict(scope, role, report):
     check_report(scope, report)
     if report.startswith("REVIEW_SCOPE_ERROR:"):
         raise ValueError("A scope error is not a delivered assessment")
-    values = re.findall(r"^\*\*Recommendation\*\*:\s*(approve|revise|reject|skipped)\s*$", report, re.M)
-    if len(values) != 1 or (values[0] == "skipped" and role != "architecture"):
-        raise ValueError("Report must contain one exact Recommendation: approve, revise, reject "
+    # Keep every source byte; repeated agreeing fields express one decision.
+    # Read every field so an invalid value cannot hide beside a valid one.
+    values = re.findall(r"^\*\*Recommendation\*\*:[ \t]*([^\r\n]*)", report, re.M)
+    verdicts = {value.strip() for value in values}
+    if (len(verdicts) != 1 or not verdicts <= {"approve", "revise", "reject", "skipped"}
+            or (verdicts == {"skipped"} and role != "architecture")):
+        raise ValueError("Report must contain one consistent Recommendation: approve, revise, reject "
                          "(architecture may be skipped)")
-    return values[0]
+    return next(iter(verdicts))
 
 
 def snapshot(root, key):

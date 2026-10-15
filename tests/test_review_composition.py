@@ -47,6 +47,59 @@ def test_architecture_skip_is_explicit_and_not_invented_approval(target):
     assert manifest["decision"]["needs_attention"] is False
 
 
+@pytest.mark.parametrize("role,verdict", [
+    *itertools.product(composition.ROLES, ("approve", "revise", "reject")),
+    ("architecture", "skipped"),
+])
+def test_agreeing_recommendations_survive_capture_composition_and_host_verification(target, role, verdict):
+    root, key, rfe = target
+    _, reports = prepare(root, key, rfe, (2, 2, 2, 2), finish=False)
+    report = reports[role]["tool_response"]["result"].replace(
+        "**Recommendation**: approve", f"**Recommendation**: {verdict}")
+    report += f"\n\nRequested changes and supporting findings remain verbatim.\n\n**Recommendation**: {verdict}\n"
+    reports[role]["tool_response"]["result"] = report
+    for event in reports.values():
+        composition.capture(event)
+    composition.compose(root, key)
+    manifest = composition.verify_review(root, key)
+    source = manifest["reports"][role]
+    assert source["recommendation"] == verdict
+    assert source["sha256"] == composition.digest(report)
+    assert (root / source["path"]).read_bytes() == report.encode()
+    assert report in (root / manifest["review"]["path"]).read_text()
+    assert manifest["decision"] == {"recommendation": "approve", "needs_attention": False}
+
+
+@pytest.mark.parametrize("verdicts", [
+    *itertools.permutations(("approve", "revise", "reject"), 2),
+    ("approve", "approve", "reject"),
+    (), ("pending",), ("<approve / revise / reject>",),
+    ("revise", ""), ("revise", "pending"), ("revise", "REVISE"),
+    ("skipped", "skipped"),
+])
+def test_missing_invalid_or_conflicting_recommendations_are_not_captured(target, verdicts):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (2, 2, 2, 2), finish=False)
+    reports["feasibility"]["tool_response"]["result"] = (
+        f"### {key}: Authored strategy\nFeasibility findings for {rfe}.\n" +
+        "\n".join(f"**Recommendation**: {value}" for value in verdicts))
+    for role in composition.ROLES[1:]:
+        composition.capture(reports[role])
+    with pytest.raises(ValueError, match="consistent Recommendation"):
+        composition.capture(reports["feasibility"])
+    session = root / "tmp/review-composition" / key / started["session_id"]
+    assert not (session / "feasibility.json").exists()
+    with pytest.raises(ValueError, match="Missing regular input"):
+        composition.compose(root, key)
+
+
+def test_agreeing_recommendation_values_allow_crlf_and_trailing_whitespace(target):
+    _, key, rfe = target
+    report = (f"### {key}: Authored strategy\r\nFindings for {rfe}.\r\n"
+              "**Recommendation**:\trevise  \r\nMore findings.\r\n**Recommendation**: revise\r\n")
+    assert composition.report_verdict({"key": key, "source_rfe": rfe}, "feasibility", report) == "revise"
+
+
 def test_missing_report_cannot_be_replaced_by_scorer_feedback(target):
     root, key, rfe = target
     _, reports = prepare(root, key, rfe, (2, 2, 2, 2), finish=False)
