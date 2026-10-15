@@ -1,10 +1,10 @@
-.PHONY: install lint test test-unit test-integration test-e2e test-mermaid clean
+.PHONY: install lint test test-unit test-integration test-e2e test-mermaid test-workflow-smoke clean
 
 install:            ## Install all dependencies via uv
 	uv sync
 
 lint:               ## Lint Python files with ruff; validate types/ against its schema (gate 1)
-	uv run ruff check scripts/ tests/
+	uv run ruff check scripts/ tests/ .fullsend/
 	uv run python scripts/validate_types.py
 
 test:               ## Run all tests
@@ -17,7 +17,8 @@ test-unit:          ## Run unit tests only
 	       tests/test_dashboard_metrics.py \
 	       tests/test_render_html.py \
 	       tests/test_eval_checks.py \
-	       tests/test_skill_integrity.py \
+	       tests/test_skill_integrity.py tests/test_strategy_review_scores_from.py \
+	       tests/test_strat_pipeline_state.py tests/test_strat_pipeline_logic.py tests/test_fullsend_harness.py \
 	       tests/assess_strat -v --tb=short
 
 test-integration:   ## Run integration tests (jira-emulator)
@@ -25,10 +26,13 @@ test-integration:   ## Run integration tests (jira-emulator)
 	       tests/test_push_refined_strategies.py \
 	       tests/test_fetch_issue.py tests/test_find_strat_for_rfe.py \
 	       tests/test_search_and_filter.py tests/test_pull_strategy.py \
-	       tests/test_skill_paths.py -v --tb=short
+	       tests/test_skill_paths.py tests/test_fullsend_host_integration.py -v --tb=short
 
 test-e2e:           ## Run E2E pipeline replay tests
 	uv run pytest tests/test_pipeline_e2e.py -v --tb=short
+
+test-workflow-smoke: ## Run the strat-pipeline Workflow headless against stub skills (calls the model)
+	STRAT_WORKFLOW_SMOKE=1 uv run pytest tests/test_strat_pipeline_workflow.py -v -s --tb=short
 
 test-mermaid:       ## Run mermaid workflow validation
 	uv run pytest tests/test_mermaid_workflow.py -v --tb=short

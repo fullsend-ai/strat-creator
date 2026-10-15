@@ -1,0 +1,10 @@
+# fullsend per-repo configuration for strat-creator.
+# https://github.com/fullsend-ai/fullsend
+# See README.md for how to run each agent and how the pieces fit.
+version: "1"
+agents:
+- source: strat-single/strat-single.yaml
+- source: strat-batch/strat-batch.yaml
+- source: strat-resume/strat-resume.yaml
+allowed_remote_resources:
+    - https://raw.githubusercontent.com/fullsend-ai/agents/

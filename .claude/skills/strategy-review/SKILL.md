@@ -74,6 +74,24 @@ runtime clone is required.
 
 ## Step 4: Score Strategy
 
+### Scores from a caller (`--scores-from <dir>`)
+
+If `--scores-from <dir>` is in `$ARGUMENTS`, the caller has already run the
+strat-scorer for this strategy and wrote `<dir>/<KEY>.result.md`. A Workflow
+script does this: its agents have no Agent tool, so it launches the scorer as a
+workflow agent of its own and passes the result directory here.
+
+In this mode:
+- Do NOT launch a scorer agent and do NOT delete or recreate `<dir>`.
+- Check that `<dir>/<KEY>.result.md` exists. If it does not, **stop with an
+  error**: "No scorer result at <dir>/<KEY>.result.md".
+- Use `<dir>` as the run directory everywhere Step 5 says
+  `/tmp/strat-assess/review`.
+
+Then continue with Step 5. Without the flag, follow the rest of this step.
+
+### Launch the scorer
+
 Launch a strat-scorer agent to produce numeric scores for the strategy. The
 in-repository assess-strat implementation provides the rubric and agent
 definition.
@@ -107,7 +125,7 @@ Wait for the scorer agent to complete.
 
 ## Step 5: Parse Scores and Apply Verdicts (AUTOMATED — no LLM judgment)
 
-After the scorer agent has completed, run the scoring scripts to deterministically compute the verdict and apply it to the review file:
+After the scorer agent has completed, run the scoring scripts to deterministically compute the verdict and apply it to the review file. With `--scores-from <dir>`, replace `/tmp/strat-assess/review` with `<dir>` in all three commands:
 
 ```bash
 # Parse .result.md files → scores.csv with deterministic verdicts

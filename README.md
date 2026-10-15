@@ -166,6 +166,7 @@ strat-creator/
 ## Documentation
 
 - [Human Review Guide](docs/human-review-guide.md) — How staff engineers and architects handle strategies flagged by the pipeline
+- [strat-creator on fullsend](.fullsend/README.md) — The `strat-single`, `strat-batch` and `strat-resume` agents, the `strat-pipeline` Workflow, and how to run or install them
 - [Dashboard](https://strat-dashboard-0f1209.gitlab.io/) — Live dashboard with aggregate stats, per-run trends, and pipeline diagram
 - [JSON API](https://strat-dashboard-0f1209.gitlab.io/summary.json) — Aggregated pipeline data for external consumers
   - Per-run data: `https://strat-dashboard-0f1209.gitlab.io/runs/<timestamp>.json` (e.g. `runs/20260419-093253.json`)

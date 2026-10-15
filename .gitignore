@@ -231,3 +231,6 @@ eval/dataset/cases/
 
 # Local scratch: skill state files (scripts/state.py) and eval preflight state
 tmp/
+
+# fullsend lock/run resource cache
+.fullsend/.fullsend-cache/

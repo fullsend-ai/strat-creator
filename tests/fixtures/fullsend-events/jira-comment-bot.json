@@ -1,0 +1,33 @@
+{
+    "repo": "opendatahub-io/strat-creator",
+    "entity": {
+        "kind": "work_item",
+        "id": 10042,
+        "key": "RHAISTRAT-1500",
+        "url": "https://redhat.atlassian.net/browse/RHAISTRAT-1500"
+    },
+    "transition": {
+        "kind": "comment_added",
+        "comment": {
+            "command": "/fs-strat",
+            "body": "/fs-strat resume",
+            "instruction": "resume"
+        }
+    },
+    "actor": {
+        "id": "557058:abc",
+        "kind": "bot",
+        "role": "write",
+        "is_entity_author": false
+    },
+    "state": {
+        "labels": [
+            "strat-creator-auto-created"
+        ]
+    },
+    "source": {
+        "system": "jira",
+        "raw_type": "comment",
+        "raw_action": "created"
+    }
+}

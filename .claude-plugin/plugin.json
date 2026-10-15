@@ -1,0 +1,13 @@
+{
+  "name": "strat-creator",
+  "version": "0.1.0",
+  "description": "Skills, the strat-scorer agent and the strat-pipeline Workflow for creating, refining and reviewing strategies from approved RFEs.",
+  "author": {
+    "name": "strat-creator maintainers",
+    "url": "https://github.com/opendatahub-io/strat-creator"
+  },
+  "license": "Apache-2.0",
+  "skills": "./.claude/skills/",
+  "agents": ["./.claude/agents/strat-scorer.md"],
+  "workflows": "./workflows/"
+}
