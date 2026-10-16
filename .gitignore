@@ -242,3 +242,6 @@ tests/fixtures/review-composition/context/
 
 # Generated focused outcome Workflow
 tests/fixtures/outcome/plugin/workflows/
+
+# Installer-managed repository agent selection
+.fullsend/config.yaml

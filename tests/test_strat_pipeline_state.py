@@ -262,3 +262,25 @@ def test_refuses_a_symlinked_score_dir(repo, tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         sps.prepare_score_dir("RHAISTRAT-1", clean=True)
     assert elsewhere.is_dir()
+
+
+@pytest.mark.parametrize("finished", [False, True])
+def test_preparation_recovers_captured_review_even_if_original_score_file_is_gone(repo, finished):
+    from review_composition_support import composition, prepare
+    _task(repo, "RHAISTRAT-1", "RHAIRFE-1")
+    _run(repo, "record-create")
+    _, events = prepare(repo, "RHAISTRAT-1", "RHAIRFE-1", (2, 2, 2, 2), finish=finished)
+    if not finished:
+        for event in events.values():
+            composition.capture(event)
+    (repo / "tmp/composition-scorer/RHAISTRAT-1.result.md").unlink()
+    # Disable writes while exercising the actual helper and recorder together.
+    data_path = repo / "tmp/strat-input.json"
+    data = json.loads(data_path.read_text())
+    data["dry_run"] = True
+    data_path.write_text(json.dumps(data))
+    result = _run(repo, "prepare-reviews")
+    assert json.loads(result.stdout) == {"reviewed": ["RHAISTRAT-1"]}
+    before = (repo / "artifacts/strat-reviews/RHAISTRAT-1-review.md").read_bytes()
+    assert json.loads(_run(repo, "prepare-reviews").stdout) == {"reviewed": ["RHAISTRAT-1"]}
+    assert (repo / "artifacts/strat-reviews/RHAISTRAT-1-review.md").read_bytes() == before

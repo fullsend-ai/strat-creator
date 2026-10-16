@@ -199,8 +199,14 @@ def main():
             pass
         # Exit 2 blocks the action. Parser/path failures must not grant access.
         if event.get("hook_event_name") == "SubagentStop":
-            print(json.dumps({"decision": "block", "reason": f"Reviewer scope: {error}"}))
-            return 0
+            if event.get("stop_hook_active"):
+                # Permit termination after one correction. Capture still rejects
+                # a malformed/error report, so it cannot become a valid review.
+                print(json.dumps({"systemMessage": f"Reviewer scope failed: {error}"}))
+                return 0
+            if isinstance(error, ScopeError):
+                print(json.dumps({"decision": "block", "reason": f"Reviewer scope: {error}"}))
+                return 0
         print(f"Reviewer scope: {error}", file=sys.stderr)
         return 2
     return 0

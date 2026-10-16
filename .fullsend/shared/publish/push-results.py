@@ -130,10 +130,14 @@ def organize_identified_run(results_dir, run_id):
     existing = json.loads(manifest_path.read_text()) if manifest_path.exists() else None
     if saved and saved["run_id"] != run_id:
         raise ValueError("publication workspace belongs to another run")
-    if saved and files and files != saved["files"]:
-        raise ValueError("publication input changed during recovery")
-    if not files:
-        desired = saved or existing
+    if saved:
+        if any(saved["files"].get(name) != identity for name, identity in files.items()):
+            raise ValueError("publication input changed during recovery")
+        # After sealing, cleanup can die with a strict subset of sources left.
+        # Missing sources are accepted only from the hash-verified destination.
+        desired = saved
+    elif not files:
+        desired = existing
         if not desired:
             return None
     if existing and desired != existing:

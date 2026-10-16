@@ -33,17 +33,17 @@ def test_scores_from_skips_scorer_and_keeps_run_dir():
     assert "No scorer result at <dir>/<KEY>.result.md" in step4
 
 
-def test_default_path_unchanged():
+def test_default_path_is_inside_the_repository():
     step4 = _section(_read(SKILL), "## Step 4: Score Strategy")
     # Without the flag the skill still owns a clean run directory and the scorer.
-    assert "rm -rf /tmp/strat-assess/review" in step4
+    assert "rm -rf tmp/strat-assess/review" in step4
     assert "subagent_type: strat-scorer" in step4
 
 
 def test_step5_uses_the_given_run_dir():
     step5 = _section(_read(SKILL), "## Step 5: Parse Scores")
-    assert "replace `/tmp/strat-assess/review` with `<dir>`" in step5
-    assert step5.count("/tmp/strat-assess/review") >= 4
+    assert "replace `tmp/strat-assess/review` with `<dir>`" in step5
+    assert step5.count("tmp/strat-assess/review") >= 4
 
 
 
@@ -51,7 +51,7 @@ def test_workflow_passes_a_per_strategy_run_dir():
     script = _read(WORKFLOW)
     assert "--scores-from ${runDir}" in script
     # One run directory per strategy, so parallel reviews never share one.
-    assert re.search(r"const runDir = `/tmp/strat-assess/\$\{p\.strat\}`", script)
+    assert re.search(r"const runDir = `\$\{run\.cwd\}/tmp/strat-assess/\$\{p\.strat\}`", script)
     assert "agentType: `${NS}strat-scorer`" in script
 
 

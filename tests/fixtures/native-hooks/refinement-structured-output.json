@@ -1,0 +1,26 @@
+{
+  "session_id": "1ad5af14-786a-4459-9246-0baa4fa23fd5",
+  "transcript_path": "/native-control/config/projects/-home-jtanner-workspace-github-jctanner-redhat-breadboard-var-tmp-pr85-native-controls-refine-receipt-fixed-fixture/1ad5af14-786a-4459-9246-0baa4fa23fd5.jsonl",
+  "cwd": "/native-control/fixture",
+  "prompt_id": "bfe4ff83-b8a2-4af2-9174-dcf1126edd2e",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "a69e53e70070a0b8b",
+  "agent_type": "workflow-subagent",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "StructuredOutput",
+  "tool_input": {
+    "kind": "strat-refine-readiness",
+    "run_id": "refine-receipts-fixture",
+    "refined": [
+      "STRAT-9401",
+      "STRAT-9402",
+      "STRAT-9403",
+      "STRAT-9404"
+    ],
+    "rejected": []
+  },
+  "tool_use_id": "snapshot_output_0"
+}

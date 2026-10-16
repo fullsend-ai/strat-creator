@@ -14,7 +14,7 @@ and no real review work is involved. The strat-scorer agent, parse_results.py,
 apply_scores.py, strat_pipeline_state.py and strategy-review itself (with --scores-from
 and --dry-run) are the repository's own.
 
-This needs an authenticated `claude` CLI (2.1.154 or later) and calls the
+This needs an authenticated `claude` CLI (qualified version 2.1.296) and calls the
 model, so it is opt-in:
 
     STRAT_WORKFLOW_SMOKE=1 uv run pytest tests/test_strat_pipeline_workflow.py -v -s
@@ -97,8 +97,6 @@ def test_workflow_runs_headless_under_fullsend_launch_shape(tmp_path):
     repo, output = base / "repo", base / "output"
     shutil.rmtree(repo, ignore_errors=True)
     shutil.rmtree(output, ignore_errors=True)
-    for path in Path("/tmp/strat-assess").glob("STRAT-900*"):
-        shutil.rmtree(path)
     output.mkdir()
     _copy_repo(repo)
     _install_stubs(repo, "batch")
@@ -106,13 +104,17 @@ def test_workflow_runs_headless_under_fullsend_launch_shape(tmp_path):
     hooks.write_text("{}\n")
 
     env = {k: v for k, v in os.environ.items() if not k.startswith("JIRA_")}
-    env.update({"FULLSEND_OUTPUT_DIR": str(output), "RFE_SKIP_BOOTSTRAP": "1",
+    env.update({"CLAUDE_CONFIG_DIR": str(base / "claude-config"), "FULLSEND_OUTPUT_DIR": str(output),
+                "RFE_SKIP_BOOTSTRAP": "1",
                 "DISABLE_AUTOUPDATER": "1"})
     cmd = [os.environ.get("CLAUDE_BIN", "claude"), "--print", "--verbose",
            "--output-format", "stream-json", "--settings", str(hooks),
            "--model", os.environ.get("STRAT_SMOKE_MODEL", "claude-opus-4-6"),
            "--plugin-dir", str(repo / ".fullsend" / "plugins" / "strat-pipeline"),
            "--agent", "strat-batch", "--dangerously-skip-permissions", DEFAULT_PROMPT]
+    version = subprocess.check_output([cmd[0], "--version"], text=True).strip()
+    (base / "claude-version.txt").write_text(version + "\n")
+    assert version.split()[0] == "2.1.296", "Use the qualified runtime for this integration"
     started = time.monotonic()
     proc = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, text=True,
                           stdin=subprocess.DEVNULL, timeout=3600)
@@ -146,7 +148,7 @@ def test_workflow_runs_headless_under_fullsend_launch_shape(tmp_path):
     for strat in ("STRAT-9001", "STRAT-9002"):
         review = repo / "artifacts" / "strat-reviews" / f"{strat}-review.md"
         assert review.is_file()
-        assert (Path("/tmp/strat-assess") / strat / "scores.csv").is_file()
+        assert (repo / "tmp/strat-assess" / strat / "scores.csv").is_file()
         # --dry-run: the Jira comment is saved locally instead of posted.
         assert (repo / "artifacts" / "strat-reviews" / f"{strat}-review-comment.md").is_file()
     progress = json.loads((repo / "tmp" / "strat-progress.json").read_text())

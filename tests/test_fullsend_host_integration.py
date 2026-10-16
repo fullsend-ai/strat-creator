@@ -811,3 +811,20 @@ def test_validator_refuses_a_symlinked_directory_inside_the_repo(validated_run):
     check = _validate(repo, run_path, env)
     assert check.returncode == 1
     assert "artifacts/strat-tasks/RHAISTRAT-8101.md is not a regular file in the repository" in check.stdout
+
+
+def test_failed_validation_preserves_recovery_data_without_post_script(host, jira):
+    jira.create("RHAIRFE-7001", "Recovery visibility", "Retain failed strategy progress.")
+    assert _pre(host, "single", RFE_KEY="RHAIRFE-7001").returncode == 0
+    progress = host["target"] / "tmp/strat-progress.json"
+    progress.write_text('{"run_id":"run-1","refine":{"RHAISTRAT-7001":"saved"}}')
+    iteration = host["tmp"] / "iteration"
+    iteration.mkdir()
+    result = subprocess.run(["bash", str(SHARED / "validate-output.sh")], cwd=iteration,
+                            env={**host["env"], "FULLSEND_OUTPUT_SCHEMA": str(SCHEMA)},
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 1 and "not found" in result.stdout
+    snapshots = list((host["state"] / "recovery").glob("failed-*"))
+    assert len(snapshots) == 1
+    assert (snapshots[0] / "tmp/strat-progress.json").read_bytes() == progress.read_bytes()
+    assert "tmp/strat-progress.json" in json.loads((snapshots[0] / "manifest.json").read_text())["files"]

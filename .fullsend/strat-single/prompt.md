@@ -32,6 +32,9 @@ never run `scripts/lock_issues.py`.
    `fullsend-check-output "$FULLSEND_OUTPUT_DIR/agent-result.json"`.
 4. Reply with one line: the result's `action` and `summary`.
 
-If this prompt carries validation feedback from a previous attempt, do the
-same: the workflow reads `tmp/strat-progress.json` and skips every step that
-attempt already finished.
+A failed business-completion receipt ends this prepared run. Preserve its
+artifacts/progress, report the failure, and never relaunch Workflow or Skill in
+this invocation. A later strat-resume run must be prepared by the host with
+verified prior progress. Validation feedback is diagnostic, not permission to
+repair files or repeat work. Verified successful work may restore reporting
+with the result command without another Workflow.

@@ -21,7 +21,7 @@ def _harness(name):
 
 
 def test_config_registers_every_harness():
-    config = yaml.safe_load((FULLSEND / "config.yaml").read_text())
+    config = yaml.safe_load((FULLSEND / "fleet-entry.example.yaml").read_text())
     assert [a["source"] for a in config["agents"]] == [f"{a}/{a}.yaml" for a in AGENTS]
 
 
@@ -33,7 +33,7 @@ def test_harness_shape(name):
     for field in (h["agent"], h["policy"], h["pre_script"], h["post_script"],
                   h["validation_loop"]["script"], h["validation_loop"]["schema"]):
         assert (FULLSEND / field).is_file(), field
-    assert h["validation_loop"]["max_iterations"] == 2
+    assert h["validation_loop"]["max_iterations"] == 1
     assert h["validation_loop"]["feedback_mode"] == "append"
     assert all(PINNED.match(u) for u in h["openshell"]["profiles"] + h["providers"])
     runner = h["env"]["runner"]
@@ -70,6 +70,7 @@ def test_only_resume_has_a_trigger():
 def test_resume_trigger(event, expected, tmp_path):
     config = tmp_path / ".fullsend"
     shutil.copytree(FULLSEND, config, ignore=shutil.ignore_patterns(".fullsend-cache"))
+    (config / "config.yaml").write_text("version: \"1\"\n" + (FULLSEND / "fleet-entry.example.yaml").read_text())
     proc = subprocess.run(
         ["fullsend", "dispatch", "--config-dir", str(config), "--input-driver", "json",
          "--input-file", str(EVENTS / event), "--output-driver", "json",

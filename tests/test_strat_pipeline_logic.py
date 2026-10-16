@@ -51,6 +51,7 @@ def _run(tmp_path, responses, args=None):
 def _full(responses=None):
     base = {
         "read input": _read(),
+        "prepare reviews": {"reviewed": []},
         "strategy-create": {"strategies": PAIRS},
         "refine RHAISTRAT-1": {"recorded": "RHAISTRAT-1"},
         "refine RHAISTRAT-2": {"recorded": "RHAISTRAT-2"},
@@ -207,3 +208,20 @@ def test_invalid_final_receipt_cannot_complete_workflow(tmp_path, result):
     proc = subprocess.run(["node", str(RUNNER), str(SCRIPT), str(scenario)], capture_output=True, text=True)
     value = json.loads(proc.stdout)
     assert value["error"] and value["result"] is None
+
+
+def test_prepared_completed_reviews_skip_scorers_and_reviewers(tmp_path):
+    out = _run(tmp_path, _full({"prepare reviews": {"reviewed": [p["strat"] for p in PAIRS]}}))
+    assert not any(call.startswith(("score ", "review ")) for call in out["calls"])
+    assert out["result"] == _completion()
+
+
+def test_failed_preparation_cannot_advance_to_scorers_or_claim_success(tmp_path):
+    scenario = tmp_path / "failed-prepare.json"
+    scenario.write_text(json.dumps({"responses": _full({"prepare reviews": None})}))
+    process = subprocess.run(["node", str(RUNNER), str(SCRIPT), str(scenario)], capture_output=True,
+                             text=True, check=True, timeout=60)
+    out = json.loads(process.stdout)
+    assert out["error"] == "review preparation failed"
+    assert not any(call.startswith(("score ", "review ")) for call in out["calls"])
+    assert "write result" not in out["calls"]

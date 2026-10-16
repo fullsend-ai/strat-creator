@@ -10,13 +10,27 @@ set -euo pipefail
 : "${FULLSEND_OUTPUT_SCHEMA:?FULLSEND_OUTPUT_SCHEMA must be set}"
 : "${STRAT_STATE_DIR:?STRAT_STATE_DIR must be set}"
 CLONE="${STRAT_STATE_DIR}/strat-creator"
+# Validation failures do not invoke post_script. Preserve data for an explicit
+# later host-prepared resume without running anything from the downloaded repo.
+retain_failed_run() {
+  code=$?
+  trap - EXIT
+  if [[ "$code" != 0 && -n "${TARGET_REPO_DIR:-}" && -d "$TARGET_REPO_DIR" &&
+        -n "${STRAT_CREATOR_REF:-}" &&
+        "$(git -C "$CLONE" rev-parse HEAD 2>/dev/null || true)" == "$STRAT_CREATOR_REF" ]]; then
+    python3 "$CLONE/.fullsend/shared/capture_failure.py" "$TARGET_REPO_DIR" \
+      "$STRAT_STATE_DIR" "output/agent-result.json" || echo "FAIL: recovery capture failed" >&2
+  fi
+  exit "$code"
+}
+trap retain_failed_run EXIT
 RESULT_FILE="output/agent-result.json"
 
 if [[ ! -f "${RESULT_FILE}" ]]; then
   # fullsend appends this text to the next attempt's prompt.
   echo "FAIL: ${RESULT_FILE} not found: the previous attempt stopped before its last step."
   echo "FAIL: Check python3 scripts/strat_pipeline_state.py completion-status first. If work_complete is true, restore output with the result command and retry reporting without repeating the Workflow."
-  echo "FAIL: Resume: call the Workflow tool with name \"strat-pipeline:strat-pipeline\" again; it reads tmp/strat-progress.json and runs only the steps that are not recorded."
+  echo "FAIL: Preserve this failed run. Start a new host-prepared strat-resume run with verified prior progress; do not relaunch the Workflow in this prepared run."
   exit 1
 fi
 if [[ -z "${TARGET_REPO_DIR:-}" || ! -d "${TARGET_REPO_DIR}" ]]; then
@@ -29,7 +43,7 @@ if [[ -z "${STRAT_CREATOR_REF:-}" || "$(git -C "${CLONE}" rev-parse HEAD 2>/dev/
   exit 1
 fi
 
-exec python3 "${CLONE}/.fullsend/shared/validate_result.py" \
+python3 "${CLONE}/.fullsend/shared/validate_result.py" \
   --result "${RESULT_FILE}" \
   --repo "${TARGET_REPO_DIR}" \
   --schema "${FULLSEND_OUTPUT_SCHEMA}" \

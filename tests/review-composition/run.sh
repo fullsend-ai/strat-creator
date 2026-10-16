@@ -6,6 +6,9 @@ cd "$root"
 model=rits/zai-org/glm-5-3
 [[ "${PIPELINE_MODEL:-}" == "$model" ]] || { echo "Exact hosted GLM required" >&2; exit 2; }
 out=${JOB_ARTIFACT_DIR:?dashboard artifacts required}
+# Fresh per-test native state; never copy the developer's global sessions.
+export CLAUDE_CONFIG_DIR
+CLAUDE_CONFIG_DIR=$(mktemp -d "$out/claude-config.XXXXXX")
 git archive --format=tar.gz HEAD > "$out/candidate-source.tar.gz"
 export ANTHROPIC_MODEL="$model" CLAUDE_CODE_SUBAGENT_MODEL="$model"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="$model" ANTHROPIC_DEFAULT_SONNET_MODEL="$model"

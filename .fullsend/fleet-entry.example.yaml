@@ -1,0 +1,6 @@
+# Register these agent sources in the external fleet manifest.
+# fullsend repos install generates .fullsend/config.yaml; do not commit it here.
+agents:
+  - source: strat-single/strat-single.yaml
+  - source: strat-batch/strat-batch.yaml
+  - source: strat-resume/strat-resume.yaml

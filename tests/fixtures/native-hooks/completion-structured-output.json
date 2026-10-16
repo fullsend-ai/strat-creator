@@ -1,0 +1,23 @@
+{
+  "session_id": "3d75d356-b3cf-4d09-b265-a2d80348e543",
+  "transcript_path": "/native-control/config/projects/-home-jtanner-workspace-github-jctanner-redhat-breadboard-var-tmp-pr85-native-controls-outcome-fixture/3d75d356-b3cf-4d09-b265-a2d80348e543.jsonl",
+  "cwd": "/native-control/fixture",
+  "prompt_id": "5694d248-46a1-4bfc-bba0-40bdbfeb5963",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "ad201d79a6c52ee27",
+  "agent_type": "workflow-subagent",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "StructuredOutput",
+  "tool_input": {
+    "kind": "strat-completion",
+    "run_id": "outcome-fixture",
+    "action": "completed",
+    "check_exit": 0,
+    "receipt_id": "3624bc098b3947fda5132a81a07f344b",
+    "receipt_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "tool_use_id": "completion_output_0"
+}

@@ -83,7 +83,7 @@ def extract_review_comment(comments):
     return matches[-1] if matches else None
 
 
-def pull_strategy(server, user, token, strat_key, local_dir="local"):
+def pull_strategy(server, user, token, strat_key, local_dir="local", *, pipeline_rfe=None):
     """Pull a RHAISTRAT issue and its context into the local workspace.
 
     Returns a dict summarizing what was pulled, or raises SystemExit on error.
@@ -96,7 +96,7 @@ def pull_strategy(server, user, token, strat_key, local_dir="local"):
 
     # Validate post-CI labels
     labels = set(fields.get("labels", []))
-    if not labels & POST_CI_LABELS:
+    if pipeline_rfe is None and not labels & POST_CI_LABELS:
         print(f"Error: {strat_key} does not have a post-CI label "
               f"({', '.join(sorted(POST_CI_LABELS))}). "
               f"Current labels: {', '.join(sorted(labels)) or '(none)'}",
@@ -157,6 +157,20 @@ def pull_strategy(server, user, token, strat_key, local_dir="local"):
         if rfe_key:
             break
 
+    if pipeline_rfe is not None:
+        sources = {link.get(side, {}).get("key") for link in strat_links
+                   if link.get("type", {}).get("name") == "Cloners"
+                   for side in ("inwardIssue", "outwardIssue")
+                   if link.get(side, {}).get("key", "").startswith("RHAIRFE-")}
+        if sources != {pipeline_rfe}:
+            raise ValueError("import source does not match the prepared RFE")
+        snapshot_dir = os.path.join(local_dir, "strat-originals")
+        os.makedirs(snapshot_dir, exist_ok=True)
+        snapshot_path = os.path.join(snapshot_dir, f"{strat_key}.md")
+        if not os.path.exists(snapshot_path):
+            with open(snapshot_path, "w", encoding="utf-8") as stream:
+                stream.write(adf_to_markdown(description_adf).strip() + "\n")
+
     result = {"strat_key": strat_key, "files": []}
 
     # Fetch RFE original (needed before writing strategy file for reconstruction)
@@ -189,6 +203,15 @@ def pull_strategy(server, user, token, strat_key, local_dir="local"):
               file=sys.stderr)
     description_md = reconstruct_business_need(description_md, rfe_md)
 
+    if pipeline_rfe is not None:
+        from push_strategy import STAFF_INPUT_TEMPLATE
+        if "## Business Need (from RFE)" not in description_md:
+            description_md = "## Business Need (from RFE)\n\n" + description_md
+        if STRATEGY_HEADING not in description_md:
+            description_md += "\n\n" + STRATEGY_HEADING + "\n<!-- To be filled by /strategy-refine -->\n"
+        if "## Staff Engineer / SME Input" not in description_md:
+            description_md += "\n\n" + STAFF_INPUT_TEMPLATE
+
     # Write strategy file
     tasks_dir = os.path.join(local_dir, "strat-tasks")
     os.makedirs(tasks_dir, exist_ok=True)
@@ -201,8 +224,8 @@ def pull_strategy(server, user, token, strat_key, local_dir="local"):
         "source_rfe": rfe_key or "RHAIRFE-0",
         "jira_key": strat_key,
         "priority": priority,
-        "status": "Refined",
-        "workflow": "local",
+        "status": "Draft" if pipeline_rfe is not None else "Refined",
+        "workflow": None if pipeline_rfe is not None else "local",
     }
     write_frontmatter(strat_path, frontmatter, "strat-task")
 

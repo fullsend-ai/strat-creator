@@ -103,7 +103,7 @@ def jira_human(key):
 
 
 def jira_published(key):
-    from jira_utils import attachment_sort_key, download_attachment, get_issue, require_env
+    from jira_utils import attachment_sort_key, canonical_adf, download_attachment, get_issue, require_env
     env = require_env()
     fields = get_issue(*env, key, fields=["description", "attachment"])["fields"]
     candidates = [a for a in fields.get("attachment", []) if a.get("filename") == f"{key}-strategy.md"]
@@ -114,7 +114,7 @@ def jira_published(key):
             path = Path(temporary) / "strategy.md"
             download_attachment(*env, latest["content"], str(path))
             attachment = hashed(path)
-    return {"description": digest(fields.get("description")), "attachment": attachment}
+    return {"description": digest(canonical_adf(fields.get("description"))), "attachment": attachment}
 
 
 def initialize(root, data, *, live=False, trusted_source=None):
@@ -174,6 +174,8 @@ def verify(root, data=None, *, live=True, trusted_source=None):
             if jira_rfe(key) != expected:
                 raise ValueError(f"freshness: live RFE inputs changed: {key}")
     for rfe, reuse in data.get("reused_push", {}).items():
+        if base["live"] and live and reuse["proof"].get("published") != jira_published(reuse["key"]):
+            raise ValueError("freshness: reused published strategy changed")
         old = reuse.get("context", {})
         if old != {"source": digest(base["source"]), "architecture": digest(base["architecture"]),
                    "rfe": base["rfes"].get(rfe), "server": base["server"],
@@ -190,8 +192,14 @@ def strategy(root, key):
     fm, body = read_frontmatter(path)
     # Our status/counter/diff metadata changes as work progresses. The strategy
     # text and its identity/priority/staff inputs must remain unchanged.
+    from jira_utils import canonical_adf, markdown_to_adf, strip_metadata
+    # Match the publisher: invisible comments and artifact metadata never reach Jira.
+    published = strip_metadata(extract_strategy_section(body) or body.strip())
+    # Parse content rather than hashing irrelevant Markdown blank-line changes.
+    # ADF preserves lists, links, marks and code while Jira round trips spacing.
     return digest({"identity": {k: fm.get(k) for k in ("strat_id", "source_rfe", "jira_key", "title", "priority")},
-                   "strategy": extract_strategy_section(body) or body.strip(), "staff": staff(body)})
+                   "strategy": canonical_adf(markdown_to_adf(published)),
+                   "staff": canonical_adf(markdown_to_adf(staff(body)))})
 
 
 def originals(root, rfe):

@@ -213,10 +213,10 @@ def extract_strategy(strat_id, task, review, review_comment):
     }
 
 
-def extract_run(run_dir):
+def extract_run(run_dir, *, allow_empty=False):
     """Extract all data from a single run directory."""
     tasks, reviews, review_comments, skipped = load_run_artifacts(run_dir)
-    if not tasks:
+    if not tasks and not allow_empty:
         return None
 
     strategies = []
@@ -227,7 +227,7 @@ def extract_run(run_dir):
         strategies.append(extract_strategy(strat_id, task, review, comment))
 
     reviewed = [s for s in strategies if s["recommendation"] not in ("", None)]
-    if not reviewed:
+    if not reviewed and not allow_empty:
         return None
 
     total = len(strategies)
@@ -482,6 +482,7 @@ def main():
     parser.add_argument("--output", help="Single file output")
     parser.add_argument("--generated-at", help="Use a saved generation timestamp for repeatable publication")
     parser.add_argument("--max-runs", type=int, default=None, help="Maximum runs to include (default: all)")
+    parser.add_argument("--allow-empty", action="store_true", help="Write a valid zero-strategy run")
     parser.add_argument("--no-body", action="store_true",
                         help="Exclude strategy/review body text (metadata only)")
     parser.add_argument("--dry-run", action="store_true",
@@ -500,7 +501,7 @@ def main():
 
     if args.run_dir:
         print(f"Extracting single run from {args.run_dir}...", file=sys.stderr)
-        run_data = extract_run(args.run_dir)
+        run_data = extract_run(args.run_dir, allow_empty=args.allow_empty)
         if run_data is None:
             print("No artifacts found (all RFEs may have been skipped).", file=sys.stderr)
             sys.exit(0)

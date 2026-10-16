@@ -66,7 +66,7 @@ def timestamp(value):
         return False
 
 
-def business_errors(root, data, progress, result):
+def business_errors(root, data, progress, result, *, live=True):
     """Check coverage, saved marks and actual inputs/review provenance.
 
     This verifies completion/consistency, not strategy-content accuracy or that
@@ -75,7 +75,7 @@ def business_errors(root, data, progress, result):
     errors = []
     from strat_freshness import verify_progress
     try:
-        verify_progress(root, data, progress)
+        verify_progress(root, data, progress, live=live)
     except (OSError, ValueError, KeyError, TypeError) as error:
         errors.append(str(error))
 
@@ -144,7 +144,7 @@ def business_errors(root, data, progress, result):
                 check(bool(data.get("dry_run")) or not push.get("skipped"), f"{key}: push skipped outside dry run")
             review = reviews.get(key)
             check(isinstance(review, dict) and timestamp(review.get("done_at")), f"{key}: review completion missing")
-            manifest = verify_review(root, key)
+            manifest = verify_review(root, key, live=live)
             check(manifest.get("workflow_run_id") == data["run_id"], f"{key}: review belongs to another run")
             check(
                 isinstance(review, dict) and review.get("composition_session") == manifest["session_id"],
@@ -240,7 +240,7 @@ def finalize(root, data, progress, result, reported_failures, output):
     return summary(root, receipt)
 
 
-def verify_completion(root, result_path=None, *, allow_failed=False):
+def verify_completion(root, result_path=None, *, allow_failed=False, live=True):
     root = root.resolve()
     receipt = read_json(regular(root, RECEIPT))
     if receipt.get("contract") != CONTRACT:
@@ -248,7 +248,7 @@ def verify_completion(root, result_path=None, *, allow_failed=False):
     data = read_json(regular(root, "tmp/strat-input.json"))
     progress = read_json(regular(root, "tmp/strat-progress.json"))
     from strat_freshness import verify_progress
-    verify_progress(root, data, progress)
+    verify_progress(root, data, progress, live=live)
     if receipt.get("run_id") != data.get("run_id"):
         raise ValueError("completion belongs to another run")
     for relative, identity in receipt["inputs"].items():
@@ -273,7 +273,7 @@ def verify_completion(root, result_path=None, *, allow_failed=False):
     required = {"tmp/strat-input.json", "tmp/strat-progress.json", *result["artifacts"]}
     if set(receipt["inputs"]) != required:
         raise ValueError("completion input inventory is incomplete")
-    errors = business_errors(root, data, progress, result)
+    errors = business_errors(root, data, progress, result, live=live)
     if errors or result["errors"]:
         raise ValueError("business completion inconsistent: " + "; ".join([*errors, *result["errors"]])[:500])
     return receipt
@@ -337,7 +337,7 @@ def guard(event):
     if value.get("kind") != "strat-completion":
         return None
     root = Path(event["cwd"]).resolve()
-    receipt = verify_completion(root, allow_failed=True)
+    receipt = verify_completion(root, allow_failed=True, live=False)
     expected = summary(root, receipt)
     if value != expected:
         raise ValueError("final completion disagrees with saved validation; return helper JSON exactly")

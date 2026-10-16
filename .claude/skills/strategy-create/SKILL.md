@@ -185,6 +185,21 @@ From the script output, filter out any with status **Closed**, **Resolved**, **I
 
 If all STRAT candidates for this RFE are skipped by the label gate, move to the next RFE (do NOT fall through to Path B).
 
+For a host-prepared run (`tmp/strat-input.json` exists), use the deterministic
+import helper instead of manually executing steps 1–3a below:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/import_strategy.py RHAISTRAT-NNNN --rfe RHAIRFE-NNNN
+```
+
+It verifies the source link, reads the actual Jira description and full strategy
+attachment when overflow is indicated, reconstructs the Business Need, preserves
+staff input and writes a Draft task. Never substitute only the TL;DR stub for
+an attached strategy. Continue at step 4 after it succeeds. Do not overwrite an
+already imported task or bypass an import error with manual content edits.
+
+For standalone use without a prepared host run:
+
 1. Fetch the RHAISTRAT issue from Jira:
 
 ```bash

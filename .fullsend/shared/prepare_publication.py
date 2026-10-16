@@ -39,10 +39,22 @@ def prepare(handoff, bundle, result_file, label):
         shutil.copytree(handoff, bundle, dirs_exist_ok=True)
         for name in ("agent-result.json", "strat-progress.json"):
             (bundle / name).unlink(missing_ok=True)
-        subprocess.run([sys.executable, str(ROOT / "scripts/generate-report.py"), "--artifacts", str(bundle),
-                        "--output", str(bundle / "reports/report.html")], check=True)
-        subprocess.run([sys.executable, str(ROOT / "scripts/extract-pipeline-data.py"), "--run-dir", str(bundle),
-                        "--output", str(bundle / "pipeline-data.json"), "--config", label], check=True)
+        if any((bundle / "strat-tasks").glob("*.md")):
+            subprocess.run([sys.executable, str(ROOT / "scripts/generate-report.py"), "--artifacts", str(bundle),
+                            "--output", str(bundle / "reports/report.html")], check=True)
+        else:
+            import html
+            (bundle / "reports").mkdir(exist_ok=True)
+            summary = json.loads(result_file.read_text()).get("summary", "All acquired work was skipped.")
+            (bundle / "reports/report.html").write_text(
+                "<!doctype html><meta charset='utf-8'><h1>No strategies required processing</h1><p>"
+                + html.escape(summary) + "</p>\n")
+        result = json.loads(result_file.read_text())
+        command = [sys.executable, str(ROOT / "scripts/extract-pipeline-data.py"), "--run-dir", str(bundle),
+                   "--output", str(bundle / "pipeline-data.json"), "--config", label, "--allow-empty"]
+        if result.get("dry_run") is True:
+            command.append("--dry-run")
+        subprocess.run(command, check=True)
         atomic(state, {"source": source, "ready": True, "files": inventory(bundle)})
 
 

@@ -10,16 +10,8 @@ lint:               ## Lint Python files with ruff; validate types/ against its 
 test:               ## Run all tests
 	uv run pytest tests/ -v --tb=short
 
-test-unit:          ## Run unit tests only
-	uv run pytest tests/test_artifact_utils.py tests/test_state.py tests/test_frontmatter_cli.py \
-	       tests/test_apply_scores.py tests/test_markdown_adf.py tests/test_push_strategy.py \
-	       tests/test_jql_builder.py tests/test_list_rfe_ids.py \
-	       tests/test_dashboard_metrics.py \
-	       tests/test_render_html.py \
-	       tests/test_eval_checks.py \
-	       tests/test_skill_integrity.py tests/test_strategy_review_scores_from.py \
-	       tests/test_strat_pipeline_state.py tests/test_strat_pipeline_logic.py tests/test_fullsend_harness.py \
-	       tests/assess_strat -v --tb=short
+test-unit:          ## All repository checks, including hardening regressions (no model calls)
+	uv run pytest tests/ -v --tb=short --ignore=tests/test_strat_pipeline_workflow.py
 
 test-integration:   ## Run integration tests (jira-emulator)
 	uv run pytest tests/test_clone_issue.py tests/test_push_strategy_integration.py \

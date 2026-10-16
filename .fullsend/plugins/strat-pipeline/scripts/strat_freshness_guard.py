@@ -17,6 +17,8 @@ def guard(event):
     data = json.loads(path.read_text())
     if not pipeline(root, data):
         return
+    from check_claude_runtime import runtime_version
+    runtime_version()
     values = event.get("tool_input") or {}
     if event.get("tool_name") == "Workflow" and values.get("resumeFromRunId") is not None:
         raise ValueError("S1 requires a fresh Workflow launch; native journal replay is unsupported")
@@ -27,7 +29,7 @@ def guard(event):
             raise ValueError("S1 business validation failed; preserve the result and end this invocation. "
                              "Do not repair artifacts or relaunch work inside this prepared run")
     progress = root / "tmp/strat-progress.json"
-    verify_progress(root, data, json.loads(progress.read_text()) if progress.exists() else {})
+    verify_progress(root, data, json.loads(progress.read_text()) if progress.exists() else {}, live=False)
 
 
 if __name__ == "__main__":

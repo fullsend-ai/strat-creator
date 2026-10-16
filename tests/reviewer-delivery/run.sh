@@ -9,6 +9,9 @@ if [[ "${PIPELINE_MODEL:-}" != "$model" ]]; then
   exit 2
 fi
 out=${JOB_ARTIFACT_DIR:?dashboard job artifacts are required}
+# Fresh per-test native state; never copy the developer's global sessions.
+export CLAUDE_CONFIG_DIR
+CLAUDE_CONFIG_DIR=$(mktemp -d "$out/claude-config.XXXXXX")
 scenario=${1:-reviewer-delivery}
 case "$scenario" in
   reviewer-delivery|reviewer-scope) ;;

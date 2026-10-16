@@ -76,8 +76,9 @@ def report_verdict(scope, role, report):
 def snapshot(root, key):
     scope = inputs(root, key)
     return scope, {"strategy": {"path": str(scope["strategy"].relative_to(root)),
-                                "sha256": digest(scope["strategy"].read_text())},
-                   "rfe": {"path": str(scope["rfe"].relative_to(root)), "sha256": digest(scope["rfe"].read_text())}}
+                                "sha256": digest(scope["strategy"].read_bytes().decode())},
+                   "rfe": {"path": str(scope["rfe"].relative_to(root)),
+                           "sha256": digest(scope["rfe"].read_bytes().decode())}}
 
 
 def begin(root, key, scorer):
@@ -90,7 +91,7 @@ def begin(root, key, scorer):
     if fm.get("strat_id") != key or any(fm.get(field) != value for field, value in decision.items()):
         raise ValueError("Prepared review does not match the numeric decision")
     scorer = regular(root, scorer)
-    scorer_text = scorer.read_text()
+    scorer_text = scorer.read_bytes().decode()
     # Import trusted implementation beside the helpers, never code from a downloaded repository.
     from parse_results import extract_scores
     parsed = extract_scores(scorer_text)
@@ -251,6 +252,10 @@ def compose(root, key):
         write_frontmatter(review, {"strat_id": key, **decision, "scores": session["scores"],
                                   "reviewers": {role: reports[role]["recommendation"] for role in ROLES}},
                           "strat-review")
+        # Frontmatter helpers use universal newline reads. Restore the exact
+        # rendered body after writing metadata so CRLF report bytes survive.
+        front = review.read_bytes().decode().split("---", 2)[1]
+        review.write_bytes(("---" + front + "---\n\n" + body).encode())
         for role in ROLES:
             exported = safe_path(root, str(review.with_name(f"{key}-review-{role}.md")))
             exported.write_text(reports[role]["text"])
@@ -263,18 +268,33 @@ def compose(root, key):
                     "session_id": session["session_id"], "inputs": source, "scores": session["scores"],
                     "decision": decision, "reports": reports,
                     "scorer": {"path": str(exported_scorer.relative_to(root)), "sha256": session["scorer"]["sha256"]},
-                    "review": {"path": str(review.relative_to(root)), "sha256": digest(review.read_text())}}
+                    "review": {"path": str(review.relative_to(root)), "sha256": digest(review.read_bytes().decode())}}
         save(review.with_name(f"{key}-review-provenance.json"), manifest)
         session["complete"] = True
         save(path, session)
     return {"key": key, **decision}
 
 
-def verify_review(root, key):
+def recover(root, key):
+    """Complete an interrupted composition only from verified captured reports."""
+    pointer = root / "tmp/review-composition" / key / "active.json"
+    if not pointer.exists():
+        return None
+    with locked(root, key) as directory:
+        path, session = active(root, directory)
+        ready = all((path.parent / f"{role}.json").is_file() for role in ROLES)
+    if ready:
+        return compose(root, key)
+    if session.get("complete"):
+        raise ValueError("completed composition is missing role reports")
+    return None
+
+
+def verify_review(root, key, *, live=True):
     """Read the repository only as data; safe for use by the trusted host validator."""
     from artifact_utils import read_frontmatter_validated
     from strat_freshness import verify
-    verify(root)
+    verify(root, live=live)
     scope, source = snapshot(root, key)
     review = scope["prior"]
     provenance = regular(root, review.with_name(f"{key}-review-provenance.json"))
@@ -282,11 +302,13 @@ def verify_review(root, key):
     if (manifest.get("schema_version") != 1 or manifest.get("policy") != POLICY or manifest.get("key") != key
             or manifest.get("source_rfe") != scope["source_rfe"] or manifest.get("inputs") != source):
         raise ValueError("Review provenance/input identity disagrees")
-    fm, body = read_frontmatter_validated(regular(root, review), "strat-review")
+    fm, _ = read_frontmatter_validated(regular(root, review), "strat-review")
+    body = review.read_bytes().decode().split("---", 2)[2].lstrip("\r\n")
     decision = numeric_decision(fm["scores"])
     if (fm.get("strat_id") != key or any(fm.get(field) != value for field, value in decision.items())
             or manifest.get("decision") != decision or manifest.get("scores") != fm["scores"]
-            or manifest.get("review") != {"path": str(review.relative_to(root)), "sha256": digest(review.read_text())}):
+            or manifest.get("review") != {"path": str(review.relative_to(root)),
+                                         "sha256": digest(review.read_bytes().decode())}):
         raise ValueError("Composed review disagrees with numeric policy or its recorded content")
     if set(manifest.get("reports", {})) != set(ROLES):
         raise ValueError("Review provenance lacks a required role")
@@ -296,7 +318,7 @@ def verify_review(root, key):
         expected = review.with_name(f"{key}-review-{role}.md")
         if item.get("path") != str(expected.relative_to(root)):
             raise ValueError("Report source path does not match role/target")
-        content = regular(root, expected).read_text()
+        content = regular(root, expected).read_bytes().decode()
         if (item.get("sha256") != digest(content) or item.get("key") != key or item.get("role") != role
                 or item.get("session_id") != manifest.get("session_id") or not item.get("agent_id")
                 or item.get("caller") != manifest.get("caller")
@@ -305,9 +327,10 @@ def verify_review(root, key):
             raise ValueError("Exported report attribution/content disagrees")
         reports[role] = {**item, "text": content}
     scorer = regular(root, review.with_name(f"{key}-review-scorer.md"))
-    if manifest.get("scorer") != {"path": str(scorer.relative_to(root)), "sha256": digest(scorer.read_text())}:
+    if manifest.get("scorer") != {"path": str(scorer.relative_to(root)),
+                                  "sha256": digest(scorer.read_bytes().decode())}:
         raise ValueError("Scorer provenance disagrees")
-    if body != rendered(key, fm["scores"], decision, reports, scorer.read_text()):
+    if body != rendered(key, fm["scores"], decision, reports, scorer.read_bytes().decode()):
         raise ValueError("Final review omitted, rewrote or substituted a source report")
     return manifest
 

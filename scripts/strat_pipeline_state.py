@@ -4,8 +4,8 @@
 The Workflow script (workflows/strat-pipeline.js) has no shell of its
 own: each step agent calls this helper to read the run's input, record what
 finished, and assemble the agent result. Progress lives in
-tmp/strat-progress.json in the repository, because a fullsend validation retry
-runs in the same sandbox but starts with an empty $FULLSEND_OUTPUT_DIR. The
+tmp/strat-progress.json in the repository, so an explicitly prepared recovery can verify saved work and reporting can
+restore an empty $FULLSEND_OUTPUT_DIR without repeating business steps. The
 host validator reads the same file from the downloaded repository.
 
 Commands (run from the repository root):
@@ -18,13 +18,15 @@ Commands (run from the repository root):
                             validate and write result plus saved completion receipt
   completion-status         check whether saved completion can be recovered
 
-The host pre-script writes tmp/strat-input.json; this helper never locks,
-unlocks or calls Jira.
+The host pre-script writes tmp/strat-input.json; this helper never locks or
+unlocks Jira ownership. Its long-running commands
+perform live freshness checks; short hooks explicitly use local verification.
 """
 
 import argparse
 import contextlib
 import fcntl
+import io
 import json
 import os
 import re
@@ -46,7 +48,7 @@ REVIEWS = Path("artifacts/strat-reviews")
 ORIGINALS = Path("artifacts/strat-originals")
 SKIPPED_MD = Path("artifacts/strat-skipped.md")
 TICKETS_MD = Path("artifacts/strat-tickets.md")
-SCORE_ROOT = Path("/tmp/strat-assess")
+SCORE_ROOT = Path("tmp/strat-assess")
 
 RFE_RE = re.compile(r"^RHAIRFE-\d+$")
 STRAT_RE = re.compile(r"^(RHAISTRAT|STRAT)-\d+$")
@@ -63,24 +65,24 @@ def die(message):
     sys.exit(1)
 
 
-def load_input():
+def load_input(*, live=True):
     if not INPUT.is_file():
         die(f"{INPUT} not found; the host pre-script writes it")
     data = json.loads(INPUT.read_text())
     from strat_freshness import verify
-    verify(Path.cwd(), data)
+    verify(Path.cwd(), data, live=live)
     for key in data.get("acquired_keys", []):
         if not RFE_RE.match(key):
             die(f"invalid key in {INPUT}: {key!r}")
     return data
 
 
-def load_progress(run_id):
+def load_progress(run_id, *, live=True):
     if PROGRESS.is_file():
         progress = json.loads(PROGRESS.read_text())
         if progress.get("run_id") == run_id:
             from strat_freshness import verify_progress
-            verify_progress(Path.cwd(), json.loads(INPUT.read_text()), progress)
+            verify_progress(Path.cwd(), json.loads(INPUT.read_text()), progress, live=live)
             return progress
     return {"run_id": run_id, "create": None, "refine": {}, "push": None,
             "review": {}}
@@ -144,17 +146,15 @@ def score_dir(key):
 
 
 def prepare_score_dir(key, clean):
-    """Create /tmp/strat-assess/<KEY> for the scorer, refusing symlinks.
+    """Create repository tmp/strat-assess/<KEY>, refusing symlinks.
 
-    /tmp can be shared outside the sandbox, so a planted link in place of the
-    run directory (or its parent) must not redirect the scorer's writes or the
-    clean-up below.
+    Check each parent so an indirect path cannot redirect scorer writes.
     """
     path = score_dir(key)
-    for part in (SCORE_ROOT, path):
+    for part in (SCORE_ROOT.parent, SCORE_ROOT, path):
         if part.is_symlink():
             die(f"{part} is a symlink; refusing to use it")
-    SCORE_ROOT.mkdir(mode=0o700, exist_ok=True)
+    SCORE_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     if clean and path.exists():
         shutil.rmtree(path)
     path.mkdir(mode=0o700, exist_ok=True)
@@ -415,6 +415,29 @@ def cmd_record_review(args):
                       "needs_attention": verdict["needs_attention"]}))
 
 
+def cmd_prepare_reviews(_args):
+    """Recover verified compositions/publication before scheduling any scorers."""
+    from publish_review import publish
+    from review_composition import recover
+    data = load_input()
+    progress = load_progress(data["run_id"])
+    reviewed = set(progress.get("review", {}))
+    pairs = (progress.get("create") or {}).get("strategies", [])
+    covered = set(pushed(progress))
+    for pair in pairs:
+        key = pair["strat"]
+        if key in reviewed or (pair["rfe"] not in review_only(data) and key not in covered):
+            continue
+        recover(Path.cwd().resolve(), key)
+        if publish(Path.cwd().resolve(), key, check_only=True) is not None:
+            publish(Path.cwd().resolve(), key, dry_run=data.get("dry_run", False))
+            # Reuse the exact normal recorder, including provenance and freshness.
+            with contextlib.redirect_stdout(io.StringIO()):
+                cmd_record_review(argparse.Namespace(key=key))
+            reviewed.add(key)
+    print(json.dumps({"reviewed": sorted(reviewed)}))
+
+
 def parse_failed(values):
     failed = []
     for value in values or []:
@@ -543,6 +566,7 @@ def main(argv=None):
     sub.add_parser("read").set_defaults(func=cmd_read)
     sub.add_parser("record-create").set_defaults(func=cmd_record_create)
     sub.add_parser("refine-status").set_defaults(func=cmd_refine_status)
+    sub.add_parser("prepare-reviews").set_defaults(func=cmd_prepare_reviews)
     sub.add_parser("completion-status").set_defaults(func=cmd_completion_status)
     mark = sub.add_parser("mark")
     mark.add_argument("step", choices=["refine", "push"])

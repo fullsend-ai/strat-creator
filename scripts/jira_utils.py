@@ -383,11 +383,55 @@ def get_comments(server, user, token, issue_key):
     return comments
 
 
+def canonical_adf(value):
+    """Ignore server-generated IDs/defaults, retaining content and meaningful attrs.
+
+    Links, heading levels, code languages, marks and nondefault table spans are
+    part of identity. Plain-text equality would silently lose those distinctions.
+    """
+    if isinstance(value, list):
+        items = [canonical_adf(item) for item in value]
+        merged = []
+        for item in items:
+            if (merged and isinstance(item, dict) and item.get("type") == "text"
+                    and isinstance(merged[-1], dict) and merged[-1].get("type") == "text"
+                    and {k: v for k, v in item.items() if k != "text"}
+                    == {k: v for k, v in merged[-1].items() if k != "text"}):
+                merged[-1] = {**merged[-1], "text": merged[-1].get("text", "") + item.get("text", "")}
+            else:
+                merged.append(item)
+        return merged
+    if not isinstance(value, dict):
+        return value
+    result = {k: canonical_adf(v) for k, v in value.items() if k != "localId"}
+    defaults = {"table": {"layout": "default", "isNumberColumnEnabled": False},
+                "tableCell": {"colspan": 1, "rowspan": 1, "colwidth": None},
+                "tableHeader": {"colspan": 1, "rowspan": 1, "colwidth": None}}
+    if "attrs" in result:
+        result["attrs"] = {k: v for k, v in result["attrs"].items()
+                           if k not in defaults.get(value.get("type"), {})
+                           or v != defaults[value["type"]][k]}
+    for field in ("attrs", "marks", "content"):
+        if result.get(field) in ({}, []):
+            result.pop(field, None)
+    if result.get("type") == "doc" and result.get("version", 1) == 1:
+        result.pop("version", None)
+    if "marks" in result:
+        result["marks"] = sorted(result["marks"], key=lambda mark: json.dumps(mark, sort_keys=True))
+    return result
+
+
+def same_jira_value(current, expected):
+    if isinstance(expected, dict) and expected.get("type") == "doc":
+        return canonical_adf(current) == canonical_adf(expected)
+    return current == expected
+
+
 def add_comment(server, user, token, issue_key, body_adf):
     """Post once per exact body, reconciling visible comments before retry."""
     path = f"/issue/{issue_key}/comment"
     def read():
-        matches = [c for c in get_comments(server, user, token, issue_key) if c.get("body") == body_adf]
+        matches = [c for c in get_comments(server, user, token, issue_key) if same_jira_value(c.get("body"), body_adf)]
         if len(matches) > 1:
             raise RuntimeError("duplicate matching review comments require reconciliation")
         return matches[0] if matches else None
@@ -501,7 +545,7 @@ def set_fields_verified(server, user, token, key, fields):
     """Reconcile field replacement, halting if a pending write was overwritten."""
     def read():
         current = get_issue(server, user, token, key, fields=list(fields))["fields"]
-        return True if all(current.get(k) == v for k, v in fields.items()) else None
+        return True if all(same_jira_value(current.get(k), v) for k, v in fields.items()) else None
     return perform(server, "fields", key, fields, read,
                    lambda: api_call(server, f"/issue/{key}", user, token, body={"fields": fields}, method="PUT"),
                    lambda data: check_owner(server, user, token, key, data))

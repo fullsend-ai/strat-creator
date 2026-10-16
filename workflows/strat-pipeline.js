@@ -16,8 +16,8 @@ export const meta = {
 // The order lives here; the work lives in the skills and helpers. A workflow
 // has no shell, so every command runs in a step agent, and each step records
 // its outcome in tmp/strat-progress.json through scripts/strat_pipeline_state.py.
-// A second fullsend iteration reruns this script from the top and skips what
-// that file already records. Workflow agents have no Agent tool, so the
+// A later host-prepared run can reuse verified saved work. A failed receipt
+// is terminal within the current invocation; automatic fullsend retries are disabled. Workflow agents have no Agent tool, so the
 // strat-scorer that /strategy-review would launch runs here as its own agent
 // and the review consumes its result with --scores-from.
 //
@@ -115,8 +115,10 @@ async function refinementCheckpoint(run, keys) {
       covered.some((value) => !keys.includes(value))) return null
   return snapshot
 }
-// Anthropic tool input schemas reject top-level oneOf/allOf/anyOf. Keep these
-// object schemas simple and check cross-field consistency after each handoff.
+// Observed on the tested Opus endpoint, Claude Code 2.1.296, run markov-run-687db37c:
+// API Error: 400 tools.9.custom.input_schema: input_schema does not support
+// oneOf, allOf, or anyOf at the top level. This is the tool-input boundary.
+// Keep object roots; check cross-field consistency after each handoff.
 const VERDICT = {
   type: 'object',
   required: ['key', 'recommendation', 'needs_attention'],
@@ -238,7 +240,18 @@ if (strategies.some((p) => refined.has(p.strat) && !pushed.has(p.strat))) {
   else fail('push')
 }
 
-const reviewed = new Set(run.reviewed)
+// One shell-capable step recovers verified saved work before restricted scorers.
+const recovered = await agent(
+  HEADLESS + 'Run `python3 scripts/strat_pipeline_state.py prepare-reviews` once and return its JSON. ' +
+    'This recovers completed compositions/publication and records reviews without rescoring. ' +
+    'If it fails, stop; do not repair or delete saved review evidence.',
+  { label: 'prepare reviews', phase: 'Score', effort: 'low', schema: {
+    type: 'object', required: ['reviewed'], additionalProperties: false,
+    properties: { reviewed: { type: 'array', items: { type: 'string', pattern: STRAT } } },
+  } },
+)
+if (!recovered || !Array.isArray(recovered.reviewed)) throw new Error('review preparation failed')
+const reviewed = new Set([...run.reviewed, ...recovered.reviewed])
 const toReview = ready.filter((p) => !reviewed.has(p.strat) && (reviewOnly.has(p.rfe) || pushed.has(p.strat)))
 const unpushed = ready.filter((p) => !reviewed.has(p.strat) && !toReview.includes(p))
 if (unpushed.length) log(`not reviewed, no recorded push: ${unpushed.map((p) => p.strat).join(' ')}`)
@@ -247,12 +260,10 @@ if (toReview.length) {
   await pipeline(
     toReview,
     async (p) => {
-      const runDir = `/tmp/strat-assess/${p.strat}`
+      const runDir = `${run.cwd}/tmp/strat-assess/${p.strat}`
       const scored = await agent(
-        'You are a strategy quality assessor. Before scoring, run ' +
-          `\`python3 scripts/publish_review.py ${p.strat} --check-only\`. ` +
-          'Exit 0 means a verified current-run review already exists: return without scoring. ' +
-          'Exit 3 means no review; follow the rubric below. Any other error stops this step.\n' +
+        'You are a strategy quality assessor. The shell-capable preparation step already checked ' +
+          'for recoverable completed reviews. Use only your Read, Write, Glob and Grep tools.\n' +
           `1. Read \`${run.cwd}/scripts/assess-strat/agent_prompt.md\` for the full scoring rubric.\n` +
           '2. Follow its instructions exactly, substituting {KEY} for the strategy key and {RUN_DIR} for ' +
           "the run directory. Read the strategy from the data file below (not the path in the rubric's step 1).\n" +

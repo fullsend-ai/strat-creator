@@ -7,8 +7,8 @@ agent: strat-batch/prompt.md
 description: Create, refine, push and review strategies for the RHAIRFEs the default JQL discovers.
 model: claude-opus-4-6
 effort: high
-# fullsend v0.45.0 sandbox image (multi-arch index digest); ships Claude Code 2.1.286.
-image: ghcr.io/fullsend-ai/fullsend-sandbox@sha256:dec698251c58eabcb0c0d6d08ab9ca4415929991cc1deec5d3f3a94de5db6cca
+# fullsend v0.47.1 sandbox image (multi-arch index digest); pins Claude Code 2.1.296.
+image: ghcr.io/fullsend-ai/fullsend-sandbox@sha256:2fc886b02c280ccf11f317662d182a56cefa6f9299ca9cbd54e780fced743ca7
 policy: shared/policy.yaml
 # A role the hosted mint serves (not the agent name). triage is the narrowest:
 # the agent writes only to Jira, never to the repository.
@@ -27,14 +27,13 @@ host_files:
 pre_script: shared/pre-strategy.sh
 post_script: shared/post-strategy.sh
 
-# A second iteration runs in the same sandbox: the Workflow reads
-# tmp/strat-progress.json and runs only what is not recorded, and the
-# validator's findings are appended to the prompt.
+# Failed business completion ends this prepared run. A later host-prepared
+# run may recover verified progress; no same-run model retry is automatic.
 validation_loop:
-  preflight_check: 'python3 -c "import jsonschema, yaml"'
+  preflight_check: 'python3 scripts/check_claude_runtime.py && python3 -c "import jsonschema, yaml"'
   script: shared/validate-output.sh
   schema: shared/result.schema.json
-  max_iterations: 2
+  max_iterations: 1
   feedback_mode: append
 
 timeout_minutes: 295

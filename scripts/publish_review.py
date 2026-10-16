@@ -3,14 +3,17 @@
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from artifact_utils import read_frontmatter_validated
 from jira_utils import add_attachment, add_comment, add_labels, markdown_to_adf, remove_labels, require_env
-from review_composition import verify_review
+from review_composition import regular, verify_review
 
 
 def publish(root, key, check_only=False, dry_run=False):
+    if not re.fullmatch(r"(?:RHAISTRAT|STRAT)-[0-9]+", key):
+        raise ValueError("invalid strategy key")
     from strat_freshness import verify_progress
     input_path, progress_path = root / "tmp/strat-input.json", root / "tmp/strat-progress.json"
     if input_path.exists():
@@ -19,6 +22,23 @@ def publish(root, key, check_only=False, dry_run=False):
         verify_progress(root, data, progress)
     path = root / "artifacts/strat-reviews" / f"{key}-review.md"
     if not path.exists():
+        return None
+    provenance = path.with_name(f"{key}-review-provenance.json")
+    if not provenance.exists():
+        # apply_scores writes a provisional review before any role reports.
+        # Absence is recoverable only before a completed/recorded composition.
+        if progress_path.exists():
+            progress = json.loads(progress_path.read_text())
+            if key in progress.get("review", {}):
+                raise ValueError("recorded review has no provenance")
+        active = root / "tmp/review-composition" / key / "active.json"
+        if active.exists():
+            identity = json.loads(regular(root, active).read_text())["session_id"]
+            if not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{32}", identity):
+                raise ValueError("invalid composition session")
+            session = json.loads(regular(root, active.parent / identity / "session.json").read_text())
+            if session.get("complete"):
+                raise ValueError("completed review has no provenance")
         return None
     manifest = verify_review(root, key)
     run_path = root / "tmp/strat-input.json"

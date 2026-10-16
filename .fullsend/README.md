@@ -11,17 +11,27 @@ repository do the work.
 | `strat-batch` | `fullsend run strat-batch` | the RHAIRFEs `scripts/list-rfe-ids.py --jql-default` finds, 295 min |
 | `strat-resume` | a `/fs-strat resume` comment on a RHAISTRAT issue (CEL trigger), or `fullsend run strat-resume` with `FULLSEND_WORK_ITEM_KEY` | one STRAT, from the step the host computes, 90 min |
 
-Requirements: fullsend v0.45.0, and Claude Code 2.1.154 or later in the
-sandbox (the Workflow tool shipped in 2.1.154). The harnesses pin fullsend
-v0.45.0's sandbox image, which ships Claude Code 2.1.286. Behaviour was checked
-on these local Claude Code builds:
+Requirements: the harnesses pin the Fullsend **0.47.1** sandbox by its
+multi-architecture image digest. Its published Containerfile and OCI build history
+pin Claude Code **2.1.296**, the runtime qualified for these hooks. Preflight and
+the launch guard refuse other versions. Upgrade only after repeating the native
+hook controls; newer versions are not assumed compatible. See the pinned [Containerfile](https://github.com/fullsend-ai/fullsend/blob/v0.47.1/images/sandbox/Containerfile)
+and the runtime's [hook failure policy](https://code.claude.com/docs/en/hooks).
 
-- 2.1.286: the trigger and the smoke test.
-- 2.1.260, 2.1.292 and 2.1.295: `-p` waits for the workflow; a workflow agent
-  has no Agent tool; a `context: fork` skill runs inside a workflow agent.
-- 2.1.295: the trigger.
+The benchmark jobs and native loopback controls used Claude Code 2.1.296 outside
+Fullsend/OpenShell. They do not establish that the complete deployment works in
+that sandbox. Image metadata verification and a runtime version check close the
+known version mismatch, but a deployment smoke test remains necessary.
 
-None of these checks ran inside a fullsend sandbox.
+## Agent registration
+
+This repository provides harnesses, prompts, the plugin and shared helpers.
+`.fullsend/config.yaml` is installer-managed and is deliberately absent and
+ignored here. Register the three sources shown in `fleet-entry.example.yaml`
+through the deployment's external fleet configuration. The example is an agent
+selection fragment, not a complete fleet manifest. Run the normal installer to
+generate repository configuration, then lock the dependencies. Tests create an
+isolated generated configuration to exercise dispatch.
 
 ## How a run works
 
@@ -45,7 +55,7 @@ sequenceDiagram
     WF-->>SB: agent-result.json written
     SB-->>Val: output + downloaded repository
     Val->>Val: schema, run record, create skips vs host gates, progress, artifacts, scores, Jira
-    Val-->>SB: FAIL lines become the next attempt's prompt (max 2)
+    Val->>Val: on failure, retain artifacts and progress; end this invocation
     Val->>Post: passed
     Post->>Post: handoff of listed files, report, optional publication
     CI->>CI: release-locks.sh from the host clone, whatever the exit status
@@ -88,8 +98,9 @@ approval gate; a valid revise outcome is completed work.
 `python3 scripts/strat_pipeline_state.py completion-status` checks saved work
 without running skills. On a reporting retry, `result` restores the same output
 and receipt when input/progress/artifact hashes still match. The primary agents
-and validation feedback use this recovery path before considering a Workflow
-retry. Completion receipts remain in the downloaded repository; they are also
+use this recovery path for completed work. A failed business receipt is terminal
+within this prepared run; it never authorizes an automatic Workflow relaunch.
+Completion receipts remain in the downloaded repository; they are also
 preserved inline in the validated result's completion identity.
 
 When native state/journal exports are available, a read-only observer distinguishes
@@ -118,9 +129,10 @@ side-effect idempotency or stale-journal invalidation.
 2. **create**: `/strategy-create` over the locked keys. It returns the RFE to STRAT map.
 3. **refine**: `parallel()` runs one `/strategy-refine` per strategy, then a fresh persisted-state check determines readiness.
 4. **push**: one agent runs `scripts/push_refined_strategies.py`.
-5. **score**: one `strat-scorer` agent per strategy, with a separate run directory for each, `/tmp/strat-assess/<KEY>`.
-6. **review**: `/strategy-review <KEY> --scores-from /tmp/strat-assess/<KEY>`.
-7. **result**: `scripts/strat_pipeline_state.py result` writes `agent-result.json`, then `fullsend-check-output` checks it.
+5. **prepare reviews**: one shell-capable agent runs the mechanical recovery helper. It finishes fully captured compositions, verifies and publishes completed reviews, then records them without rescoring.
+6. **score**: one restricted `strat-scorer` per remaining strategy, using repository-local `tmp/strat-assess/<KEY>`. It needs no Bash tool.
+7. **review**: `/strategy-review <KEY> --scores-from tmp/strat-assess/<KEY>`.
+8. **result**: `scripts/strat_pipeline_state.py result` writes `agent-result.json`, then `fullsend-check-output` checks it.
 
 ### Reviewer ticket scope
 
@@ -194,8 +206,7 @@ a failure.
 
 Parallel steps take a file lock around each progress update, so no step's
 entry is lost. A create that leaves some RFEs with neither a strategy nor a
-skip stays open, and the next attempt runs `strategy-create` for those RFEs
-only. A push covers the refined strategies that
+skip stays incomplete. A later verified run can select those RFEs again. A push covers the refined strategies that
 `push_refined_strategies.py` pushes: status `Refined`, with a matching
 `jira_key`. A strategy
 refined later, by a retried create, gets a push of its own before its review,
@@ -207,7 +218,7 @@ excluded status, release scope, quality label, and STRAT state, from
 `config/pipeline-settings.yaml`. It records the outcome as `expected_skips` in
 the host run record. If the host cannot evaluate the gates, nothing is locked
 and the run fails. A claimed skip the host did not expect stays pending, so
-the next attempt runs `strategy-create` for that RFE again. The validator rejects a claimed skip the host did not
+a later verified run processes `strategy-create` for that RFE again. The validator rejects a claimed skip the host did not
 expect, and a strategy created for an RFE the host expected to be skipped.
 `strategy-create`'s "reconstruction failed" skip cannot be predicted from Jira
 fields, so it always fails validation, with a line telling a human to restore
@@ -234,14 +245,16 @@ Search may lag a committed create, so absence alone cannot authorize recreation.
 `python3 scripts/publish_review.py KEY --check-only` verifies an existing
 current-run composed review. Without the flag it finishes publication using a
 stable summary, the original full review and the numeric verdict labels. A
-Workflow retry can reuse this review without rerunning scoring or specialists.
+later verified recovery can reuse this review without rerunning scoring or specialists.
 The numeric approval policy and dissent in the attached report are unchanged.
 MCP is for reads on this path; write helpers must not be bypassed after errors.
 
 The host records lock intent before acquisition, adds a run owner label, and
 checks that owner at each pipeline write. Cleanup needs the matching owner;
 foreign, mixed or orphaned claims are never cleared automatically. A repeated
-pre-script preserves the same prepared run and recovery data. Jira label
+pre-script preserves the same prepared run and recovery data. Each new run
+requires a fresh `STRAT_STATE_DIR`; an existing owner sidecar may be reused
+only by its original prepared run, never a different run ID. Jira label
 operations are not compare-and-swap and do not prove distributed exclusivity;
 concurrent-job qualification needs an atomic lease/fencing backend.
 
@@ -284,129 +297,59 @@ A run that ends at a human gate is a success: the strategy is reported with
 edits the STRAT, removes `strat-creator-needs-attention`, and comments
 `/fs-strat resume` on the RHAISTRAT issue.
 
-A second fullsend attempt (`validation_loop`, same sandbox) reruns the
-workflow from the top. The workflow skips what `tmp/strat-progress.json`
-records. Steps that run again are safe because of the skills' own idempotency:
-the Path A import, and the label gates in create, refine and review.
+`max_iterations: 1` ends the invocation after failed business validation. The
+host retains regular `artifacts/` and `tmp/` files plus a hash manifest under
+`STRAT_STATE_DIR/recovery/failed-*/`, even when validation prevents the normal
+post-script. Preserve that directory and the lock-owner record. A later
+host-prepared run may use `STRAT_PREVIOUS_PROGRESS` after checking current inputs.
+It launches a fresh Workflow, never a native journal replay. Jira mutations
+reconcile durable intent; missing or changed evidence requires reconciliation.
+
+Review-only Path A uses `scripts/import_strategy.py`, including full overflow
+attachments. Proofs compare the publisher's semantic ADF content rather than
+Markdown whitespace or HTML comments that publication removes. Links, marks,
+heading levels and table spans still matter. Live published-strategy readback
+runs in command helpers and host validation before reuse or writes.
+
+Short completion/refinement hooks check local immutable evidence without Jira
+network calls. Pre/PostToolUse hooks explicitly set `onFailure: block`, supported
+by the qualified runtime, so a timeout cannot silently permit the tool call.
+SubagentStop allows at most one correction; if parsing still fails during active
+stop handling, it permits termination and report capture rejects the malformed
+assessment. This does not claim that Stop hooks can enforce timeout blocking.
 
 ## Verify the harnesses locally
 
-These commands need no sandbox. All output below is real.
-
-The harness plugin and the repository plugin validate:
-
-```console
-$ claude plugin validate .fullsend/plugins/strat-pipeline
-Validating plugin manifest: .../.fullsend/plugins/strat-pipeline/.claude-plugin/plugin.json
-
-✔ Validation passed
-$ claude plugin validate .        # output trimmed to the verdict
-⚠ Found 1 warning:
-  ❯ root: CLAUDE.md at the plugin root is not loaded as project context. ...
-✔ Validation passed with warnings
+```bash
+make lint
+make test-unit
+env -u STRAT_WORKFLOW_SMOKE make test
+claude plugin validate .fullsend/plugins/strat-pipeline
+claude plugin validate .
 ```
 
-Every harness resolves its pinned remote dependencies:
+The default suite makes no model calls. It covers real local Jira imports and
+mutations, full attachment import, readback normalization, lost-response and
+publication recovery, CRLF preservation, scoped reviewer access, terminal failure,
+and the JavaScript control flow under Node. All bundled script/hook/workflow
+counterparts are checked for byte equality.
 
-```console
-$ fullsend lock --all --fullsend-dir .fullsend
-⚡ fullsend 0.45.0
-→ Locking dependencies: strat-batch
-  ✓ Agent strat-batch resolved from config (local path)
-  ! strat-batch: warning: env.sandbox: env.sandbox coexists with host_files entry shared/gcp-vertex.env ...
-  ✓ Resolved 2 dependencies
-      openshell.profiles[0]: https://raw.githubusercontent.com/fullsend-ai/agents/11dd3ad15ab5033fd04661d7faf6f7af45548d2f/profiles/fullsend-vertex-ai.yaml (fetched)
-      providers[0]: https://raw.githubusercontent.com/fullsend-ai/agents/11dd3ad15ab5033fd04661d7faf6f7af45548d2f/providers/vertex-ai.yaml (fetched)
-...
-  ✓ locked 3: strat-batch, strat-resume, strat-single
+Native controls run the real 2.1.296 binary against an authored loopback API with
+fresh Claude state and no inherited credentials. Sanitized observed payloads
+under `tests/fixtures/native-hooks/` document the runtime-specific fields. These
+controls verify orchestration and enforcement, not model reasoning or content
+quality. Diagnostic run scripts also create a fresh `CLAUDE_CONFIG_DIR`; they
+never copy the developer's global Claude history.
+
+The optional full Workflow smoke uses stub skills and the real scorer,
+composition and checkpoint helpers. Its stubs follow the enforced target and
+Recommendation format. It calls the configured model and needs separate
+paid-run authorization; it was not rerun for these review fixes:
+
+```bash
+STRAT_WORKFLOW_SMOKE=1 CLAUDE_BIN=<qualified-2.1.296-binary> \
+  STRAT_SMOKE_MODEL=rits/zai-org/glm-5-3 make test-workflow-smoke
 ```
-
-The resume trigger selects `strat-resume` for a human `/fs-strat resume` Jira
-comment, and nothing else. The events are in `tests/fixtures/fullsend-events/`:
-
-```console
-$ fullsend dispatch --config-dir .fullsend --input-driver json --input-file tests/fixtures/fullsend-events/jira-comment-match.json --output-driver json | jq -c '[.[]? | {agent, role, event_type}]'
-[{"agent":"strat-resume","role":"triage","event_type":"comment"}]
-$ fullsend dispatch --config-dir .fullsend --input-driver json --input-file tests/fixtures/fullsend-events/jira-comment-other-command.json --output-driver json | jq -c '[.[]? | {agent, role, event_type}]'
-[]
-$ fullsend dispatch --config-dir .fullsend --input-driver json --input-file tests/fixtures/fullsend-events/jira-comment-bot.json --output-driver json | jq -c '[.[]? | {agent, role, event_type}]'
-[]
-```
-
-The host side runs against the jira-emulator. Here is a `strat-single`
-pre-script, then the validator and the post-script for a two-strategy run:
-
-```console
-$ uv run pytest tests/test_fullsend_host_integration.py -q -s -k "vendors_locks or consistent or post_script"
-strat-single pre-script: preparing <tmp>/consumer with strat-creator 724317ec1a19
-vendor: copied 322 file(s) from strat-creator 724317ec1a19 into <tmp>/consumer
-strat-single pre-script: architecture context rhoai-9.9
-prepare-run: locked RHAIRFE-7001:create
-strat-single pre-script: complete
-PASS: result matches the run record, progress, artifacts and scores
-Result: action=completed mode=batch run=run-2 dry_run=False
-handoff: copied 4 artifact file(s) to <tmp>/run/publish/handoff
-Report generated: <tmp>/run/publish/results/reports/report.html
-INFO: RESULTS_REPO_URL not set; results assembled at <tmp>/run/publish/results, nothing pushed
-3 passed, 13 deselected in 4.84s
-```
-
-The Workflow runs headless under fullsend's exact launch shape (`--agent`, the
-default prompt `Run the agent task`). The run uses stub create, refine and
-reviewer skills and a stub rubric, but the real `strat-scorer`,
-`strategy-review --scores-from --dry-run`, `parse_results.py` and
-`apply_scores.py`. It needs an authenticated `claude` CLI and calls the model:
-
-```console
-$ STRAT_WORKFLOW_SMOKE=1 CLAUDE_BIN=<claude 2.1.286> uv run pytest tests/test_strat_pipeline_workflow.py -v -s
-tests/test_strat_pipeline_workflow.py::test_workflow_runs_headless_under_fullsend_launch_shape
-{
-  "action": "completed",
-  "mode": "batch",
-  "summary": "2 of 2 strategies reviewed for 3 locked RFE(s); 1 skipped by strategy-create.",
-  "skipped": [
-    {
-      "key": "RHAIRFE-9004",
-      "reason": "blocked by label(s): strat-creator-needs-attention"
-    },
-    {
-      "key": "RHAIRFE-9003",
-      "reason": "missing release scope label"
-    }
-  ],
-  "strategies": [
-    {
-      "rfe": "RHAIRFE-9001",
-      "strat": "STRAT-9001",
-      "recommendation": "revise",
-      "needs_attention": true
-    },
-    {
-      "rfe": "RHAIRFE-9002",
-      "strat": "STRAT-9002",
-      "recommendation": "approve",
-      "needs_attention": false
-    }
-  ],
-  "completed_phases": [
-    "create",
-    "refine",
-    "push",
-    "review"
-  ],
-  "dry_run": true,
-  "errors": []
-}
-wall 438s, result events at [223, 224], workflow notice at [53, 54, 150, 158, 160, 162, 164, 166, 168, 173, 217]
-PASSED
-======================== 1 passed in 437.76s (0:07:17) =========================
-```
-
-`make test-workflow-smoke` runs the same test. The first tool call in that run was `Workflow {"name":"strat-pipeline:strat-pipeline"}`.
-Both `result` events come after the workflow's last completion notice, so the
-`--print` turn waited for the run. It used 10 workflow agents and about 203k
-tokens ($3.39 on Opus list prices, main loop included). Per-step cost is about
-18k tokens for a step agent and 10k for the restricted-tools scorer.
 
 ## Run it in CI
 
@@ -416,7 +359,7 @@ sandboxes. These are the steps a CI job takes. Every variable referenced in
 
 ```bash
 export STRAT_CREATOR_REF=<the strat-creator commit this harness is pinned to>
-export STRAT_CREATOR_REPO=                       # empty: https://github.com/opendatahub-io/strat-creator.git
+export STRAT_CREATOR_REPO=                       # empty: https://github.com/fullsend-ai/strat-creator.git
 export STRAT_RUN_ID="${CI_JOB_ID}" STRAT_STATE_DIR="$(mktemp -d)"   # host only
 export STRAT_DRY_RUN= STRAT_PREVIOUS_PROGRESS= STRAT_ARCHITECTURE_CONTEXT_PATH= STRAT_PUBLISH_DIR=
 export RESULTS_REPO_URL= RESULTS_PUSH_TOKEN= RESULTS_GIT_USER= ORG_PULSE_URL= ORG_PULSE_API_TOKEN=
@@ -454,7 +397,7 @@ every relative reference, scripts included, from the same pinned tree.
 
 ```yaml
 # .fullsend/strat-single.yaml in the consumer repository
-base: https://raw.githubusercontent.com/opendatahub-io/strat-creator/<sha>/.fullsend/strat-single/strat-single.yaml#sha256=<sha256>
+base: https://raw.githubusercontent.com/fullsend-ai/strat-creator/<sha>/.fullsend/strat-single/strat-single.yaml#sha256=<sha256>
 ```
 
 Set `STRAT_CREATOR_REF=<sha>`, the same commit. The pre-script clones
@@ -496,9 +439,6 @@ collapses into one `plugins:` entry.
 The three publication helpers in `shared/publish/` (`push-results.py`,
 `push-to-org-pulse.py`, `clone-data-repo.sh`) are carried from
 github.com/jctanner-opendatahub-io/strat-creator at `78ab3f1e`
-(`.fullsend/scripts/ci/`, Apache-2.0). They have no other public source. Their
-logic is unchanged; the only edits are the provenance comments, two
-documentation examples, two lint fixes (an f-string without placeholders,
-one long line), and the commit trailer `push-results.py` writes, which is now
-`Assisted-by: Claude` instead of `Co-Authored-By`. Everything else under
-`.fullsend/` is new.
+(`.fullsend/scripts/ci/`, Apache-2.0). They have no other public source. Subsequent changes add sealed run identity and recovery for interrupted
+publication, including partial source cleanup. Everything else under
+`.fullsend/` was introduced by this integration.

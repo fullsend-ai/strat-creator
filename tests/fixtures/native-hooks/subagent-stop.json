@@ -1,0 +1,26 @@
+{
+  "session_id": "780ce7e3-fef5-4b8e-aa78-b3d210fcccd5",
+  "transcript_path": "/native-control/config/projects/-home-jtanner-workspace-github-jctanner-redhat-breadboard-var-tmp-pr85-native-controls-composition-qualified-fixture/780ce7e3-fef5-4b8e-aa78-b3d210fcccd5.jsonl",
+  "cwd": "/native-control/fixture",
+  "prompt_id": "753389bd-c22d-4b63-9baf-8a72728a9505",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "a3a75131ac3ebd172",
+  "agent_type": "strat-reviewer",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "/native-control/config/projects/-home-jtanner-workspace-github-jctanner-redhat-breadboard-var-tmp-pr85-native-controls-composition-qualified-fixture/780ce7e3-fef5-4b8e-aa78-b3d210fcccd5/subagents/agent-a3a75131ac3ebd172.jsonl",
+  "last_assistant_message": "### STRAT-9501: Serving timeout ownership\n**Feasibility assessment**: authored fixture\nFEASIBILITY_9501: The router can enforce the timeout without a storage change.\n**Recommendation**: approve",
+  "background_tasks": [
+    {
+      "id": "wot895148",
+      "type": "workflow",
+      "status": "running",
+      "description": "Preserve authored reports through the actual review Skill",
+      "name": "review-composition"
+    }
+  ],
+  "session_crons": []
+}

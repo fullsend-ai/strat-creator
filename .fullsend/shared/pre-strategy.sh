@@ -24,7 +24,7 @@ set -euo pipefail
 : "${STRAT_STATE_DIR:?STRAT_STATE_DIR must name a host-only directory}"
 MODE="${STRAT_MODE:?STRAT_MODE must be single, batch or resume}"
 REF="${STRAT_CREATOR_REF:?STRAT_CREATOR_REF must be the strat-creator commit this harness is pinned to}"
-REPO_URL="${STRAT_CREATOR_REPO:-https://github.com/opendatahub-io/strat-creator.git}"
+REPO_URL="${STRAT_CREATOR_REPO:-https://github.com/fullsend-ai/strat-creator.git}"
 CLONE="${STRAT_STATE_DIR}/strat-creator"
 case "${MODE}" in single|batch|resume) ;; *) echo "STRAT_MODE must be single, batch or resume" >&2; exit 1 ;; esac
 if [[ ! "${REF}" =~ ^[0-9a-f]{40}$ ]]; then

@@ -102,7 +102,7 @@ In this mode:
 - Check that `<dir>/<KEY>.result.md` exists. If it does not, **stop with an
   error**: "No scorer result at <dir>/<KEY>.result.md".
 - Use `<dir>` as the run directory everywhere Step 5 says
-  `/tmp/strat-assess/review`.
+  `tmp/strat-assess/review`.
 
 Then continue with Step 5. Without the flag, follow the rest of this step.
 
@@ -115,8 +115,8 @@ definition.
 Create a clean run directory (removes stale result files from prior reviews in the same CI job):
 
 ```bash
-rm -rf /tmp/strat-assess/review
-mkdir -p /tmp/strat-assess/review
+rm -rf tmp/strat-assess/review
+mkdir -p tmp/strat-assess/review
 ```
 
 Spawn one agent (model: opus, run_in_background: true, subagent_type: strat-scorer) with this prompt:
@@ -135,25 +135,25 @@ Substitute all placeholders:
 - `{PROMPT_PATH}` → absolute path of `scripts/assess-strat/agent_prompt.md`
 - `{DATA_FILE}` → the strategy file path (e.g., `artifacts/strat-tasks/RHAISTRAT-1469.md`)
 - `{KEY}` → the strategy key (e.g., `RHAISTRAT-1469`)
-- `{RUN_DIR}` → `/tmp/strat-assess/review`
+- `{RUN_DIR}` → `tmp/strat-assess/review`
 
 Wait for the scorer agent to complete.
 
 ## Step 5: Parse Scores and Apply Verdicts (AUTOMATED — no LLM judgment)
 
-After the scorer agent has completed, run the scoring scripts to deterministically compute the verdict and apply it to the review file. With `--scores-from <dir>`, replace `/tmp/strat-assess/review` with `<dir>` in all three commands:
+After the scorer agent has completed, run the scoring scripts to deterministically compute the verdict and apply it to the review file. With `--scores-from <dir>`, replace `tmp/strat-assess/review` with `<dir>` in all three commands:
 
 ```bash
 # Parse .result.md files → scores.csv with deterministic verdicts
-python3 scripts/assess-strat/parse_results.py /tmp/strat-assess/review/
+python3 scripts/assess-strat/parse_results.py tmp/strat-assess/review/
 
 # Apply scores and verdicts to review file frontmatter
-python3 ${CLAUDE_SKILL_DIR}/scripts/apply_scores.py /tmp/strat-assess/review/scores.csv \
+python3 ${CLAUDE_SKILL_DIR}/scripts/apply_scores.py tmp/strat-assess/review/scores.csv \
     --review-dir artifacts/strat-reviews \
-    --result-dir /tmp/strat-assess/review
+    --result-dir tmp/strat-assess/review
 
 # Print summary statistics
-python3 scripts/assess-strat/summarize_run.py /tmp/strat-assess/review/
+python3 scripts/assess-strat/summarize_run.py tmp/strat-assess/review/
 ```
 
 **Do NOT manually extract scores, compute verdicts, or set frontmatter.** The scripts handle this deterministically. The verdict rules are:
@@ -169,7 +169,7 @@ Before invoking any reviewer, begin a fresh, target-specific capture session:
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/review_composition.py begin {KEY} \
-    --scorer-result /tmp/strat-assess/review/{KEY}.result.md
+    --scorer-result tmp/strat-assess/review/{KEY}.result.md
 ```
 
 With --scores-from, substitute the supplied directory here too. This command

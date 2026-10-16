@@ -158,9 +158,15 @@ def test_assigned_assessment_or_explicit_error_can_return(batch):
 
 
 def test_fullsend_bundles_the_same_scope_implementation_and_hooks():
-    for relative in ("scripts/review_scope.py", "scripts/refine_checkpoint_guard.py",
-                     "scripts/review_composition.py", "hooks/hooks.json"):
-        assert (ROOT / relative).read_bytes() == (ROOT / ".fullsend/plugins/strat-pipeline" / relative).read_bytes()
+    plugin = ROOT / ".fullsend/plugins/strat-pipeline"
+    for path in plugin.rglob("*"):
+        if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        relative = path.relative_to(plugin)
+        counterpart = ROOT / relative
+        if relative.parts[0] in {"scripts", "hooks", "workflows"} and counterpart.is_file():
+            assert counterpart.read_bytes() == path.read_bytes(), str(relative)
+
 
 
 def test_parent_is_not_restricted():
