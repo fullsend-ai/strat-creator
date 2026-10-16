@@ -188,6 +188,63 @@ def test_verified_push_reuses_unchanged_inputs_in_later_job(live):
     verify(repo, next_data, trusted_source=ROOT)
 
 
+def test_review_only_draft_import_is_restored_before_review_and_final_validation(live, monkeypatch):
+    from artifact_utils import read_frontmatter_validated, update_frontmatter
+    from review_composition import verify_review
+    from review_composition_support import prepare
+    from strat_pipeline_outcome import verify_completion
+
+    repo, data, previous = push(live)
+    reuse = reusable(repo, "RHAIRFE-8801", "RHAISTRAT-8801", previous, trusted_source=ROOT)
+    next_data = {k: v for k, v in data.items() if k != "freshness"}
+    next_data.update(run_id="review-only-next", resume_points={"RHAIRFE-8801": "review"},
+                     reused_push={"RHAIRFE-8801": reuse})
+    initialize(repo, next_data, live=True, trusted_source=ROOT)
+    (repo / "tmp/strat-input.json").write_text(json.dumps(next_data))
+    (repo / "tmp/strat-progress.json").unlink()
+    # Match the real Path A import, which sets Draft even for a verified push.
+    task = repo / "artifacts/strat-tasks/RHAISTRAT-8801.md"
+    update_frontmatter(task, {"status": "Draft"}, "strat-task")
+    original = repo / "artifacts/strat-originals/RHAIRFE-8801.md"
+    original.write_text("Authored source RFE for composition tests.\n")
+    assert command(repo, "record-create").returncode == 0
+    assert read_frontmatter_validated(task, "strat-task")[0]["status"] == "Refined"
+    normalized = task.read_bytes()
+    jira = live[2]
+    published = jira.get("RHAISTRAT-8801")["fields"]["description"]
+    pushed = subprocess.run([sys.executable, str(ROOT / "scripts/push_refined_strategies.py")],
+                            cwd=repo, capture_output=True, text=True, check=False)
+    assert pushed.returncode == 0, pushed.stderr
+    assert "verified review-only import; prior push reused" in pushed.stdout
+    assert "Pushed 0/1" in pushed.stdout
+    assert jira.get("RHAISTRAT-8801")["fields"]["description"] == published
+    monkeypatch.chdir(repo)
+    prepare(repo, "RHAISTRAT-8801", "RHAIRFE-8801", (1, 1, 1, 1))
+    assert command(repo, "record-review", "RHAISTRAT-8801").returncode == 0
+    assert command(repo, "result").returncode == 0
+    receipt = verify_completion(repo, repo / "output/agent-result.json")
+    assert receipt["check_exit"] == 0 and receipt["result"]["action"] == "completed"
+    assert verify_review(repo, "RHAISTRAT-8801")["decision"]["needs_attention"] is True
+    assert task.read_bytes() == normalized  # Nothing repairs metadata after review.
+    progress = json.loads((repo / "tmp/strat-progress.json").read_text())
+    assert progress["refine"] == {} and progress["push"] is None
+    assert command(repo, "record-create").returncode == 0
+    assert task.read_bytes() == normalized
+
+
+@pytest.mark.parametrize("tool", ["Workflow", "Skill"])
+def test_failed_business_completion_refuses_automatic_relaunch(ready, tool):
+    repo, data = ready
+    completion = repo / "tmp/strat-completion.json"
+    completion.write_text(json.dumps({"run_id": data["run_id"], "check_exit": 1}))
+    event = {"cwd": str(repo), "tool_name": tool, "tool_input": {"name": "strat-pipeline:strat-pipeline"}}
+    with pytest.raises(ValueError, match="end this invocation"):
+        guard(event)
+    # Reporting recovery for a successful saved result remains permitted.
+    completion.write_text(json.dumps({"run_id": data["run_id"], "check_exit": 0}))
+    guard(event)
+
+
 @pytest.mark.parametrize("change", ["source", "overlay", "rfe", "published", "legacy"])
 def test_later_job_does_not_reuse_stale_push(live, change):
     repo, _, progress = push(live)

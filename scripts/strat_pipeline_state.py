@@ -36,7 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from artifact_utils import read_frontmatter, read_frontmatter_validated  # noqa: E402
+from artifact_utils import read_frontmatter, read_frontmatter_validated, update_frontmatter  # noqa: E402
 
 INPUT = Path("tmp/strat-input.json")
 PROGRESS = Path("tmp/strat-progress.json")
@@ -274,6 +274,33 @@ def cmd_read(_args):
     }, indent=2))
 
 
+def restore_review_import(data, pair, progress):
+    """Restore verified prior refinement before any current-run review snapshot.
+
+    Path A imports start as Draft. Only a matching host-verified pushed artifact
+    may regain Refined without refinement; a Jira label alone is insufficient.
+    Never repair metadata after a current-run review has bound its input bytes.
+    """
+    rfe, key = pair["rfe"], pair["strat"]
+    if data.get("resume_points", {}).get(rfe) != "review":
+        return
+    path = TASKS / f"{key}.md"
+    if any(p.is_symlink() for p in (path, TASKS, TASKS.parent)):
+        die(f"cannot restore review-only import {key}: unsafe artifact path")
+    fm, _ = read_frontmatter_validated(path, "strat-task")
+    if fm["status"] in ("Refined", "Reviewed"):
+        return
+    from strat_freshness import strategy
+    reused = data.get("reused_push", {}).get(rfe, {})
+    if (not data.get("freshness", {}).get("live") or reused.get("key") != key
+            or reused.get("proof", {}).get("strategy") != strategy(Path.cwd(), key)):
+        die(f"cannot restore review-only import {key}: matching verified push required")
+    if (key in progress.get("review", {}) or (REVIEWS / f"{key}-review-provenance.json").exists()
+            or (Path("tmp/review-composition") / key / "active.json").exists()):
+        die(f"cannot restore review-only import {key}: review already binds the task bytes")
+    update_frontmatter(path, {"status": "Refined"}, "strat-task")
+
+
 def cmd_record_create(_args):
     """Record what strategy-create produced; done only when every RFE is resolved.
 
@@ -293,6 +320,7 @@ def cmd_record_create(_args):
         expected = {s["key"] for s in data.get("expected_skips") or []}
         pending = [k for k in acquired if k not in with_strategy and not (k in reasons and k in expected)]
         for pair in strategies:
+            restore_review_import(data, pair, progress)
             if pair["strat"] not in known:
                 prepare_score_dir(pair["strat"], clean=True)
         progress["create"] = {"done_at": None if pending else now(), "strategies": strategies,
@@ -336,7 +364,8 @@ def _mark(args, progress, data):
         # push_refined_strategies.py pushes every artifacts/strat-tasks/RHAISTRAT-*.md
         # whose frontmatter says status Refined with that jira_key, skips the rest,
         # and exits nonzero if any push fails; so after a successful run those
-        # are exactly the strategies it pushed. A strategy refined later (a
+        # are exactly the strategies it pushed, excluding verified review-only
+        # imports. A strategy refined later (a
         # retried create) needs a push of its own. A dry run pushes nothing.
         refined_now = set(progress.get("refine", {}))
         if not args.skipped:

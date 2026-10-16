@@ -20,6 +20,12 @@ def guard(event):
     values = event.get("tool_input") or {}
     if event.get("tool_name") == "Workflow" and values.get("resumeFromRunId") is not None:
         raise ValueError("S1 requires a fresh Workflow launch; native journal replay is unsupported")
+    completion = root / "tmp/strat-completion.json"
+    if completion.exists():
+        receipt = json.loads(completion.read_text())
+        if receipt.get("run_id") == data["run_id"] and receipt.get("check_exit") == 1:
+            raise ValueError("S1 business validation failed; preserve the result and end this invocation. "
+                             "Do not repair artifacts or relaunch work inside this prepared run")
     progress = root / "tmp/strat-progress.json"
     verify_progress(root, data, json.loads(progress.read_text()) if progress.exists() else {})
 

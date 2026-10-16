@@ -50,6 +50,33 @@ def test_read_reports_review_only_rfes(repo):
     assert data["create_done"] is False and data["strategies"] == []
 
 
+@pytest.mark.parametrize("fault", ["missing_proof", "different_strategy", "wrong_key", "review_started"])
+def test_draft_review_import_cannot_be_promoted_without_matching_unused_proof(repo, monkeypatch, fault):
+    sys.path.insert(0, str(SCRIPT.parent))
+    import strat_pipeline_state as state
+    from strat_freshness import strategy
+    _task(repo, "RHAISTRAT-1", "RHAIRFE-1")
+    task = repo / "artifacts/strat-tasks/RHAISTRAT-1.md"
+    task.write_text(task.read_text().replace("status: Refined", "status: Draft"))
+    before = task.read_bytes()
+    data = {"resume_points": {"RHAIRFE-1": "review"}, "freshness": {"live": True},
+            "reused_push": {"RHAIRFE-1": {"key": "RHAISTRAT-1", "proof": {"strategy": strategy(repo, "RHAISTRAT-1")}}}}
+    if fault == "missing_proof":
+        data["reused_push"] = {}
+    elif fault == "different_strategy":
+        data["reused_push"]["RHAIRFE-1"]["proof"]["strategy"] = "changed"
+    elif fault == "wrong_key":
+        data["reused_push"]["RHAIRFE-1"]["key"] = "RHAISTRAT-2"
+    else:
+        active = repo / "tmp/review-composition/RHAISTRAT-1/active.json"
+        active.parent.mkdir(parents=True)
+        active.write_text("{}")
+    monkeypatch.chdir(repo)
+    with pytest.raises(SystemExit):
+        state.restore_review_import(data, {"rfe": "RHAIRFE-1", "strat": "RHAISTRAT-1"}, {"review": {}})
+    assert task.read_bytes() == before
+
+
 def test_review_only_strategy_needs_no_refine_or_push(repo):
     _task(repo, "RHAISTRAT-1", "RHAIRFE-1")
     _task(repo, "RHAISTRAT-2", "RHAIRFE-2")

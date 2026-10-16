@@ -240,6 +240,12 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-tasks/RHA
 
 5. Print `[IMPORT] RHAISTRAT-NNNN imported (cloned from RHAIRFE-NNNN)` for each imported STRAT.
 
+For a Workflow import, `strat_pipeline_state.py record-create` restores Refined
+only when the host selected review-only recovery and the imported strategy
+matches its verified earlier push. It does this before scoring or review binds
+the artifact bytes. Do not infer prior refinement from a Jira label alone or
+change task status after a review has been composed.
+
 ### Path B: No Cloners link (no existing STRAT — create new)
 
 No existing STRAT found. Clone the RFE into RHAISTRAT (Step 3), then create the local stub.
