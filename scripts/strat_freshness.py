@@ -32,28 +32,49 @@ def hashed(path):
 
 
 def tree(root, relative):
-    """Logical file contents; internal Skill symlinks and vendored copies agree."""
+    """Hash every logical file, resolving directory aliases once per traversal.
+
+    DirEntry identifies ordinary files without resolving all their parents for
+    every file. Resolve symlinks explicitly; only aliases inside the repository
+    are allowed, and ancestry is per branch so sibling aliases remain distinct.
+    No hashes or filesystem metadata are cached between checks.
+    """
     root = root.resolve()
     result = {}
     top = root / relative
     if not top.exists():
         return result
-    for parent, directories, files in os.walk(top, followlinks=True):
-        here = Path(parent)
-        resolved = here.resolve()
-        if not resolved.is_relative_to(root):
+
+    def visit(logical, directory, ancestors):
+        if not directory.is_relative_to(root):
             raise ValueError("freshness tree resolves outside the repository")
-        # Internal directory aliases are allowed; recursive aliases are not.
-        if resolved in {p.resolve() for p in here.parents if p != root and p.is_relative_to(root)}:
+        if directory in ancestors:
             raise ValueError("recursive freshness tree alias")
-        directories[:] = sorted(x for x in directories if x not in (".git", "__pycache__", ".pytest_cache"))
-        for name in sorted(files):
-            path = here / name
-            if path.suffix == ".pyc":
+        ancestors = ancestors | {directory}
+        with os.scandir(directory) as entries:
+            children = sorted(entries, key=lambda entry: entry.name)
+        for entry in children:
+            is_directory = entry.is_dir()
+            if is_directory and entry.name in (".git", "__pycache__", ".pytest_cache"):
                 continue
-            if not path.resolve().is_relative_to(root) or not path.is_file():
+            child = logical / entry.name
+            if not is_directory and child.suffix == ".pyc":
+                continue
+            path = Path(entry.path)
+            if entry.is_symlink():
+                path = path.resolve()
+                if not path.is_relative_to(root):
+                    raise ValueError("unsafe freshness input")
+            if is_directory:
+                visit(child, path, ancestors)
+            elif entry.is_file():
+                result[str(child)] = hashed(path)
+            else:
                 raise ValueError("unsafe freshness input")
-            result[str(path.relative_to(root))] = hashed(path)
+
+    # os.walk previously ignored a regular file supplied as a tree root.
+    if top.is_dir():
+        visit(Path(relative), top.resolve(), frozenset())
     return result
 
 

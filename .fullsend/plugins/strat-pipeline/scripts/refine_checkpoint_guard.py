@@ -21,9 +21,9 @@ def guard(event):
     with contextlib.chdir(event["cwd"]):
         sys.path.insert(0, str(Path.cwd() / "scripts"))
         import strat_pipeline_state as state
-        data = state.load_input(live=False)
         with state.progress_lock():
-            expected = state.refinement_status(data, state.load_progress(data["run_id"], live=False))
+            data, progress = state.load_state(live=False)
+            expected = state.refinement_status(data, progress)
     if snapshot and value != expected:
         raise ValueError("refinement checkpoint disagrees with current-run progress/artifacts; "
                          "return the helper JSON exactly")

@@ -65,27 +65,52 @@ def die(message):
     sys.exit(1)
 
 
-def load_input(*, live=True):
+def _read_input():
     if not INPUT.is_file():
         die(f"{INPUT} not found; the host pre-script writes it")
     data = json.loads(INPUT.read_text())
-    from strat_freshness import verify
-    verify(Path.cwd(), data, live=live)
     for key in data.get("acquired_keys", []):
         if not RFE_RE.match(key):
             die(f"invalid key in {INPUT}: {key!r}")
     return data
 
 
-def load_progress(run_id, *, live=True):
+def load_input(*, live=True):
+    data = _read_input()
+    from strat_freshness import verify
+    verify(Path.cwd(), data, live=live)
+    return data
+
+
+def _read_progress(run_id):
     if PROGRESS.is_file():
         progress = json.loads(PROGRESS.read_text())
         if progress.get("run_id") == run_id:
-            from strat_freshness import verify_progress
-            verify_progress(Path.cwd(), json.loads(INPUT.read_text()), progress, live=live)
-            return progress
+            return progress, True
     return {"run_id": run_id, "create": None, "refine": {}, "push": None,
-            "review": {}}
+            "review": {}}, False
+
+
+def load_progress(run_id, *, live=True):
+    progress, recorded = _read_progress(run_id)
+    if recorded:
+        from strat_freshness import verify_progress
+        verify_progress(Path.cwd(), json.loads(INPUT.read_text()), progress, live=live)
+    return progress
+
+
+def load_state(*, live=True):
+    """Verify prepared inputs and saved progress together, with one full scan.
+
+    Callers that need a consistent checkpoint hold progress_lock. Even absent
+    progress still validates the prepared baseline; no trusted/cached shortcut
+    can bypass content, provenance or live-input verification.
+    """
+    data = _read_input()
+    progress, _ = _read_progress(data["run_id"])
+    from strat_freshness import verify_progress
+    verify_progress(Path.cwd(), data, progress, live=live)
+    return data, progress
 
 
 def save_progress(progress):
@@ -238,9 +263,9 @@ def refinement_status(data, progress):
 
 
 def cmd_refine_status(_args):
-    data = load_input()
     with progress_lock():
-        status = refinement_status(data, load_progress(data["run_id"]))
+        data, progress = load_state()
+        status = refinement_status(data, progress)
     print(json.dumps(status))
 
 

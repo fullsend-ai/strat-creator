@@ -16,6 +16,55 @@ from strat_freshness import initialize, reusable, verify, verify_progress  # noq
 from strat_freshness_guard import guard  # noqa: E402
 
 
+def test_tree_preserves_logical_aliases_and_rechecks_content(tmp_path):
+    import hashlib
+
+    from strat_freshness import tree
+    scripts = tmp_path / "scripts"
+    real = scripts / "real"
+    real.mkdir(parents=True)
+    content = real / "rules.md"
+    content.write_bytes(b"Rule one.\r\n")
+    (scripts / "alias").symlink_to("real", target_is_directory=True)
+    (scripts / "file.md").symlink_to("real/rules.md")
+    expected = hashlib.sha256(content.read_bytes()).hexdigest()
+    assert tree(tmp_path, "scripts") == {
+        "scripts/real/rules.md": expected,
+        "scripts/alias/rules.md": expected,
+        "scripts/file.md": expected,
+    }
+    stamp = content.stat()
+    content.write_bytes(b"Rule two.\r\n")
+    os.utime(content, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    changed = hashlib.sha256(content.read_bytes()).hexdigest()
+    assert changed != expected
+    assert set(tree(tmp_path, "scripts").values()) == {changed}
+
+
+@pytest.mark.parametrize("kind", ["external_file", "external_directory", "external_root", "cycle", "dangling"])
+def test_tree_refuses_unsafe_aliases(tmp_path, kind):
+    from strat_freshness import tree
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    (outside / "rules.md").write_text("Outside input.\n")
+    scripts = repo / "scripts"
+    if kind == "external_root":
+        scripts.symlink_to(outside, target_is_directory=True)
+    else:
+        scripts.mkdir()
+        if kind == "external_file":
+            (scripts / "rules.md").symlink_to(outside / "rules.md")
+        elif kind == "external_directory":
+            (scripts / "nested").symlink_to(outside, target_is_directory=True)
+        elif kind == "cycle":
+            (scripts / "loop").symlink_to(".", target_is_directory=True)
+        else:
+            (scripts / "rules.md").symlink_to("missing.md")
+    with pytest.raises(ValueError, match="outside|unsafe|recursive"):
+        tree(repo, "scripts")
+
+
 def command(repo, *args, env=None):
     values = {**os.environ, "FULLSEND_OUTPUT_DIR": str(repo / "output"), **(env or {})}
     result = subprocess.run([sys.executable, str(ROOT / "scripts/strat_pipeline_state.py"), *args],
@@ -110,6 +159,46 @@ def test_unchanged_inputs_reuse_valid_marks_and_ignore_mtime(ready):
     assert json.loads(result.stdout)["refined"] == ["RHAISTRAT-8801"]
     verify_progress(repo, data, json.loads(original))
     assert (repo / "tmp/strat-progress.json").read_bytes() == original
+
+
+@pytest.mark.parametrize("relative", [
+    "scripts/refinement.py", ".context/architecture-context/overlays/ownership.md",
+    "artifacts/strat-originals/RHAIRFE-8801.md", "artifacts/strat-tasks/RHAISTRAT-8801.md",
+])
+def test_checkpoint_hook_rejects_same_size_same_mtime_edits(ready, monkeypatch, relative):
+    from refine_checkpoint_guard import guard as checkpoint
+    repo, data = ready
+    monkeypatch.chdir(repo)
+    event = {"cwd": str(repo), "hook_event_name": "PreToolUse", "tool_name": "StructuredOutput",
+             "tool_input": {"kind": "strat-refine-readiness", "run_id": data["run_id"],
+                            "refined": ["RHAISTRAT-8801"], "rejected": []}}
+    assert checkpoint(event)["verified"] == event["tool_input"]
+    progress = (repo / "tmp/strat-progress.json").read_bytes()
+    path = repo / relative
+    content, stamp = path.read_bytes(), path.stat()
+    path.write_bytes(bytes([content[0] ^ 1]) + content[1:])
+    os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    with pytest.raises(ValueError, match="freshness"):
+        checkpoint(event)
+    assert (repo / "tmp/strat-progress.json").read_bytes() == progress
+
+
+@pytest.mark.parametrize("progress_kind", ["missing", "other_run", "empty"])
+def test_checkpoint_checks_baseline_even_without_recorded_work(tmp_path, monkeypatch, progress_kind):
+    from refine_checkpoint_guard import guard as checkpoint
+    data = seed(tmp_path)
+    progress = tmp_path / "tmp/strat-progress.json"
+    if progress_kind != "missing":
+        progress.write_text(json.dumps({"run_id": "other" if progress_kind == "other_run" else data["run_id"],
+                                      "create": None, "refine": {}, "push": None, "review": {}}))
+    monkeypatch.chdir(tmp_path)
+    event = {"cwd": str(tmp_path), "hook_event_name": "PreToolUse", "tool_name": "StructuredOutput",
+             "tool_input": {"kind": "strat-refine-readiness", "run_id": data["run_id"],
+                            "refined": [], "rejected": []}}
+    assert checkpoint(event)["verified"] == event["tool_input"]
+    (tmp_path / "scripts/refinement.py").write_text("Changed instructions.\n")
+    with pytest.raises(ValueError, match="source/instructions"):
+        checkpoint(event)
 
 
 def test_run_parameters_and_missing_legacy_baseline_are_rejected(ready):
