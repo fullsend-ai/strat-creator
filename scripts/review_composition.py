@@ -292,9 +292,20 @@ def recover(root, key):
 
 def verify_review(root, key, *, live=True):
     """Read the repository only as data; safe for use by the trusted host validator."""
-    from artifact_utils import read_frontmatter_validated
     from strat_freshness import verify
     verify(root, live=live)
+    return _verify_review(root, key)
+
+
+def _verify_review(root, key):
+    """Check every report/provenance byte after this caller verified freshness.
+
+    Completion checks own the batch's input/progress verification. Keeping the
+    data-only checks here avoids rescanning the same source/context per ticket;
+    public standalone callers always use verify_review instead.
+    """
+    from artifact_utils import read_frontmatter_validated
+
     scope, source = snapshot(root, key)
     review = scope["prior"]
     provenance = regular(root, review.with_name(f"{key}-review-provenance.json"))

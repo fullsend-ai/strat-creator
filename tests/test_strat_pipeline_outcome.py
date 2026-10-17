@@ -1,7 +1,9 @@
 """Completion is a checked saved result, independent of CLI/reporting success."""
 
 import copy
+import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -67,6 +69,117 @@ def finished(tmp_path, monkeypatch):
 def finish(fixture, failed=()):
     root, data, progress, result, output = fixture
     return outcome.finalize(root, data, progress, copy.deepcopy(result), failed, output)
+
+
+@pytest.fixture
+def finished_batch(finished):
+    """Ten fully attributed reviews with a real local freshness baseline."""
+    from strat_freshness import initialize, record
+
+    root, data, progress, _, output = finished
+    when = "2026-10-14T00:00:00Z"
+    original = (root / "artifacts/strat-tasks/STRAT-9601.md").read_text()
+    for index in range(9602, 9611):
+        key, rfe = f"STRAT-{index}", f"RHAIRFE-{index}"
+        (root / f"artifacts/strat-tasks/{key}.md").write_text(original.replace("9601", str(index)))
+        started, _ = prepare(root, key, rfe, (1, 1, 1, 1))
+        data["input_keys"].append(rfe)
+        data["acquired_keys"].append(rfe)
+        progress["create"]["strategies"].append({"rfe": rfe, "strat": key})
+        progress["refine"][key] = when
+        progress["push"]["strategies"].append(key)
+        progress["review"][key] = {
+            "recommendation": "revise", "needs_attention": True, "done_at": when,
+            "composition_session": started["session_id"],
+        }
+    for relative in ("scripts/rules.py", ".context/architecture-context/overlays/ownership.md"):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("Original checked input.\n")
+    initialize(root, data)
+    (root / state.INPUT).write_text(json.dumps(data))
+    for pair in progress["create"]["strategies"]:
+        for phase in ("create", "refine", "push", "review"):
+            record(root, data, progress, phase, pair["strat"], pair["rfe"])
+    state.save_progress(progress)
+    return root, data, progress, state.assemble(data, progress, []), output
+
+
+def test_ten_ticket_hook_checks_freshness_once_and_does_not_cache_between_calls(finished_batch, monkeypatch):
+    import strat_freshness
+
+    root = finished_batch[0]
+    value = finish(finished_batch)
+    original = strat_freshness.verify
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append(kwargs.get("live", True))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(strat_freshness, "verify", counted)
+    event = {"cwd": str(root), "hook_event_name": "PreToolUse", "tool_name": "StructuredOutput", "tool_input": value}
+    for _ in range(2):
+        calls.clear()
+        assert outcome.guard(event) == value
+        assert calls == [False]
+    source = root / "scripts/rules.py"
+    content, stamp = source.read_bytes(), source.stat()
+    source.write_bytes(b"X" + content[1:])
+    os.utime(source, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    with pytest.raises(ValueError, match="source/instructions"):
+        outcome.guard(event)
+
+
+@pytest.mark.parametrize("fault", ["source", "architecture", "role", "scorer", "review", "provenance", "progress"])
+def test_ten_ticket_completion_rejects_tampering_even_with_rehashed_receipt(finished_batch, fault):
+    root = finished_batch[0]
+    finish(finished_batch)
+    path = root / {
+        "source": "scripts/rules.py",
+        "architecture": ".context/architecture-context/overlays/ownership.md",
+        "role": "artifacts/strat-reviews/STRAT-9610-review-architecture.md",
+        "scorer": "artifacts/strat-reviews/STRAT-9610-review-scorer.md",
+        "review": "artifacts/strat-reviews/STRAT-9610-review.md",
+        "provenance": "artifacts/strat-reviews/STRAT-9610-review-provenance.json",
+        "progress": "tmp/strat-progress.json",
+    }[fault]
+    stamp = path.stat()
+    original = path.read_bytes()
+    if fault == "provenance":
+        manifest = json.loads(original)
+        manifest["reports"]["architecture"]["key"] = "STRAT-9601"
+        path.write_text(json.dumps(manifest))
+    elif fault == "progress":
+        progress = json.loads(original)
+        progress["review"].pop("STRAT-9610")
+        path.write_text(json.dumps(progress))
+    else:
+        path.write_bytes(original.replace(b"Original", b"Modified", 1) if fault in ("source", "architecture")
+                         else original + b"\nUnrecorded content.\n")
+    os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    # Rehashing the outer receipt must not bypass the underlying validation.
+    receipt_path = root / outcome.RECEIPT
+    receipt = json.loads(receipt_path.read_text())
+    relative = str(path.relative_to(root))
+    if relative in receipt["inputs"]:
+        receipt["inputs"][relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    receipt_path.write_text(json.dumps(receipt))
+    event = {"cwd": str(root), "hook_event_name": "PreToolUse", "tool_name": "StructuredOutput",
+             "tool_input": outcome.summary(root, receipt)}
+    with pytest.raises(ValueError):
+        outcome.guard(event)
+
+
+def test_public_review_verification_retains_freshness_check(finished_batch):
+    from review_composition import verify_review
+
+    root = finished_batch[0]
+    finish(finished_batch)
+    assert verify_review(root, "STRAT-9610")["key"] == "STRAT-9610"
+    (root / ".context/architecture-context/overlays/ownership.md").write_text("Changed ownership.\n")
+    with pytest.raises(ValueError, match="architecture files changed"):
+        verify_review(root, "STRAT-9610")
 
 
 def test_completed_revision_is_successful_work_under_numeric_policy(finished):

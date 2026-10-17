@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from artifact_utils import read_frontmatter_validated
-from review_composition import verify_review
+from review_composition import _verify_review
 
 RECEIPT = "tmp/strat-completion.json"
 CONTRACT = "strat-business-validation-v1"
@@ -72,12 +72,21 @@ def business_errors(root, data, progress, result, *, live=True):
     This verifies completion/consistency, not strategy-content accuracy or that
     a recorded push is visible in Jira. Trusted host validation reads Jira back.
     """
-    errors = []
     from strat_freshness import verify_progress
     try:
         verify_progress(root, data, progress, live=live)
     except (OSError, ValueError, KeyError, TypeError) as error:
-        errors.append(str(error))
+        return [str(error)]
+    return _business_errors(root, data, progress, result)
+
+
+def _business_errors(root, data, progress, result):
+    """Validate batch contents after the caller verified these inputs/progress.
+
+    No cross-call cache or caller-selectable skip flag: public entry points
+    verify freshness on each invocation, then share only this synchronous call.
+    """
+    errors = []
 
     def check(condition, message):
         if not condition:
@@ -144,7 +153,7 @@ def business_errors(root, data, progress, result, *, live=True):
                 check(bool(data.get("dry_run")) or not push.get("skipped"), f"{key}: push skipped outside dry run")
             review = reviews.get(key)
             check(isinstance(review, dict) and timestamp(review.get("done_at")), f"{key}: review completion missing")
-            manifest = verify_review(root, key, live=live)
+            manifest = _verify_review(root, key)
             check(manifest.get("workflow_run_id") == data["run_id"], f"{key}: review belongs to another run")
             check(
                 isinstance(review, dict) and review.get("composition_session") == manifest["session_id"],
@@ -273,7 +282,7 @@ def verify_completion(root, result_path=None, *, allow_failed=False, live=True):
     required = {"tmp/strat-input.json", "tmp/strat-progress.json", *result["artifacts"]}
     if set(receipt["inputs"]) != required:
         raise ValueError("completion input inventory is incomplete")
-    errors = business_errors(root, data, progress, result, live=live)
+    errors = _business_errors(root, data, progress, result)
     if errors or result["errors"]:
         raise ValueError("business completion inconsistent: " + "; ".join([*errors, *result["errors"]])[:500])
     return receipt
