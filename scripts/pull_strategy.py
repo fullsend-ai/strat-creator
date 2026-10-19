@@ -227,11 +227,21 @@ def pull_strategy(server, user, token, strat_key, local_dir="local", *, pipeline
         "status": "Draft" if pipeline_rfe is not None else "Refined",
         "workflow": None if pipeline_rfe is not None else "local",
     }
-    write_frontmatter(strat_path, frontmatter, "strat-task")
-
-    # Append body content
-    with open(strat_path, "a", encoding="utf-8") as f:
-        f.write(f"\n{description_md}\n")
+    # The frontmatter helper preserves an existing body. Build a fresh file
+    # so a refresh replaces the prior document rather than appending to it.
+    # Keep the previous document intact if validation or writing fails.
+    with tempfile.NamedTemporaryFile(
+            dir=tasks_dir, prefix=f".{strat_key}-", suffix=".md",
+            delete=False) as tmp:
+        replacement_path = tmp.name
+    try:
+        write_frontmatter(replacement_path, frontmatter, "strat-task")
+        with open(replacement_path, "a", encoding="utf-8") as f:
+            f.write(f"\n{description_md}\n")
+        os.replace(replacement_path, strat_path)
+    finally:
+        if os.path.exists(replacement_path):
+            os.unlink(replacement_path)
     result["files"].append(strat_path)
     print(f"  Strategy: {strat_path}")
 

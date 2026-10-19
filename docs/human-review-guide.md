@@ -41,21 +41,42 @@ CI scores every strategy on 4 dimensions (Feasibility, Testability, Scope, Archi
 
 ## Setup
 
-1. Install [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+1. Use the qualified **Claude Code 2.1.296** runtime. The hardened plugin checks
+   this version when a session starts. A different default CLI version is not
+   qualified by this guide.
 2. Set Jira credentials:
    ```bash
    export JIRA_SERVER="https://redhat.atlassian.net"
    export JIRA_USER="your-email@redhat.com"
    export JIRA_TOKEN="your-atlassian-api-token"  # https://id.atlassian.com/manage-profile/security/api-tokens
    ```
-3. Clone the repo: `git clone https://github.com/opendatahub-io/strat-creator.git && cd strat-creator`
+3. Clone the repo: `git clone https://github.com/fullsend-ai/strat-creator.git && cd strat-creator`
+4. Install the Python helpers and export a separate plugin snapshot from the
+   checked-out commit:
+
+   ```bash
+   uv sync
+   export STRAT_CREATOR_PLUGIN_DIR="$(mktemp -d /tmp/strat-creator-plugin.XXXXXX)"
+   git archive HEAD | tar -x -C "$STRAT_CREATOR_PLUGIN_DIR"
+   uv run claude --version
+   ```
+
+   Keep the editable checkout as your working directory. The examples below
+   load the plugin from the separate snapshot so its capture and scope hooks
+   run alongside the skills. Do not use the editable checkout itself as the
+   `--plugin-dir`: Claude protects loaded plugin files, which would include
+   your `local/` strategy artifacts. `uv run` makes the helper dependencies
+   available to commands launched by Claude.
+
+   Recreate the snapshot after changing the checked-out code version. It
+   contains committed source, not your ignored local artifacts or credentials.
 
 ## Workflow
 
 ### 1. Pull the strategy
 
 ```bash
-claude "/strategy-pull RHAISTRAT-NNNN"
+uv run claude --plugin-dir "$STRAT_CREATOR_PLUGIN_DIR" "/strategy-pull RHAISTRAT-NNNN"
 ```
 
 This fetches into `local/` (gitignored, isolated from CI):
@@ -110,15 +131,15 @@ should be M not S. Add a dependency on RHAISTRAT-1200.
 **Always specify the strategy key.** This ensures you refine and review only the strategy you're working on, not everything in `local/`:
 
 ```bash
-claude "/strategy-refine RHAISTRAT-NNNN"
-claude "/strategy-review RHAISTRAT-NNNN"
+uv run claude --plugin-dir "$STRAT_CREATOR_PLUGIN_DIR" "/strategy-refine RHAISTRAT-NNNN"
+uv run claude --plugin-dir "$STRAT_CREATOR_PLUGIN_DIR" "/strategy-review RHAISTRAT-NNNN"
 ```
 
 If you're testing a local overlay, pass `--architecture-context` to both commands:
 
 ```bash
-claude "/strategy-refine RHAISTRAT-NNNN --architecture-context /path/to/local/architecture-context"
-claude "/strategy-review RHAISTRAT-NNNN --architecture-context /path/to/local/architecture-context"
+uv run claude --plugin-dir "$STRAT_CREATOR_PLUGIN_DIR" "/strategy-refine RHAISTRAT-NNNN --architecture-context /path/to/local/architecture-context"
+uv run claude --plugin-dir "$STRAT_CREATOR_PLUGIN_DIR" "/strategy-review RHAISTRAT-NNNN --architecture-context /path/to/local/architecture-context"
 ```
 
 Check the updated strategy in `local/strat-tasks/` and scores in `local/strat-reviews/`. Repeat from step 2 if needed.
