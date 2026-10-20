@@ -268,8 +268,28 @@ use `RHAISTRAT/run-<run_id>` with an immutable hash manifest. Death during copy,
 after local commit or after accepted push reuses that identity. Different content
 under the same run ID fails. A clean local tree still pushes an unpushed commit;
 reconciling an existing remote run does not move `current` over a newer run.
+`strat-publication-v1` readers accept both legacy `YYYYMMDD-HHMMSS` directories
+and `run-<run_id>` directories. Identified runs require a matching manifest and
+the generation timestamp in `pipeline-data.json`; both summary extraction and
+dashboard generation share that discovery contract. Run IDs identify the work;
+generation time orders history. Explicit offsets are normalized to UTC, while
+legacy timestamps are interpreted as UTC. External timestamp-only readers need
+the same update before switching publication layouts.
+
 Org Pulse remains a keyed bulk upsert; its deployment behavior is separate
 qualification, not an exactly-once event-delivery claim.
+Completed exports preserve individual reviewer dissent and architecture
+`skipped` without changing the numeric verdict. Provisional `pending` reviews
+are retained in artifacts but excluded from this completed-review API with a
+warning. The Org Pulse consumer must accept architecture `skipped`; older
+consumers reject that entry. The non-blocking uploader logs per-entry errors,
+so check its warnings when qualifying a deployment.
+
+Owned lock commands are `python3 scripts/lock_issues.py lock --owner RUN_ID
+--locked-keys-file PATH RHAIRFE-NNNN` and `unlock --owner RUN_ID RHAIRFE-NNNN`.
+Preserve the record and its `.owner.json` sidecar for cleanup. A bare `unlock`
+cannot clear an owned claim, and expected CLI errors return status 2 without
+a traceback.
 
 Validate these mechanics without inference using
 `uv run pytest tests/test_side_effect_recovery.py`; the isolated Jira/Git

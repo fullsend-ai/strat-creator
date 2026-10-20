@@ -1,0 +1,19 @@
+{
+  "features": [
+    {
+      "key": "RHAISTRAT-7001",
+      "title": "Bounded request lifetime",
+      "source_rfe": "RHAIRFE-7001",
+      "priority": "Major",
+      "status": "Reviewed",
+      "size": "M",
+      "recommendation": "approve",
+      "needs_attention": false,
+      "scores": {"feasibility": 2, "testability": 2, "scope": 2, "architecture": 1, "total": 7},
+      "reviewers": {"feasibility": "approve", "testability": "revise", "scope": "approve", "architecture": "skipped"},
+      "labels": ["strat-creator-rubric-pass"],
+      "run_id": "review-contract",
+      "run_timestamp": "2026-10-20T15:00:00Z"
+    }
+  ]
+}

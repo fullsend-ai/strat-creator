@@ -69,6 +69,11 @@ def build_features(strategies):
     """
     features = []
     for strat in strategies:
+        reviewers = strat.get("reviewers") or {}
+        if "pending" in reviewers.values():
+            print(f"WARNING: {strat.get('strat_id', '?')} has a provisional review; "
+                  "not exporting pending assessments to Org Pulse", file=sys.stderr)
+            continue
         # The API requires 'key' — map strat_id to key
         feature = {
             "key": strat.get("strat_id", ""),
@@ -80,7 +85,7 @@ def build_features(strategies):
             "recommendation": strat.get("recommendation", ""),
             "needs_attention": strat.get("needs_attention", False),
             "scores": strat.get("scores", {}),
-            "reviewers": strat.get("reviewers", {}),
+            "reviewers": reviewers,
             "labels": strat.get("labels", []),
             "run_id": strat.get("run_id", ""),
             "run_timestamp": strat.get("run_timestamp", ""),

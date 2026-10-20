@@ -81,7 +81,7 @@ def qualified_guard_runtime(monkeypatch):
     monkeypatch.setattr(check_claude_runtime, "runtime_version", lambda: "2.1.296")
 
 
-def seed(repo, live=False):
+def seed(repo, live=False, dry_run=False):
     for rel, content in {
         "scripts/refinement.py": "# authored source version 1\n",
         "scripts/assess-strat/agent_prompt.md": "Authored scoring instructions.\n",
@@ -92,7 +92,7 @@ def seed(repo, live=False):
         path = repo / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
-    data = {"run_id": "freshness-run", "mode": "single", "dry_run": False,
+    data = {"run_id": "freshness-run", "mode": "single", "dry_run": dry_run,
             "input_keys": ["RHAIRFE-8801"], "acquired_keys": ["RHAIRFE-8801"], "expected_skips": [],
             "resume_points": {}, "skipped": [], "architecture_context": "available"}
     initialize(repo, data, live=live, trusted_source=ROOT)
@@ -109,6 +109,35 @@ def seed(repo, live=False):
     original.parent.mkdir()
     original.write_text("Users need bounded request latency.\n")
     return data
+
+
+def test_dry_run_still_checks_existing_jira_strategy_staff(tmp_path, jira, monkeypatch):
+    for name, value in {"JIRA_SERVER": jira.url, "JIRA_USER": "admin", "JIRA_TOKEN": "admin"}.items():
+        monkeypatch.setenv(name, value)
+    jira.create("RHAIRFE-8801", "Timeout ownership", "Users need bounded latency.")
+    jira.create("RHAISTRAT-8801", "Timeout ownership", "Original business need.", issue_type="Feature")
+    seed(tmp_path, live=True, dry_run=True)
+    result = command(tmp_path, "record-create")
+    assert result.returncode == 0, result.stderr
+    jira.request("PUT", "/rest/api/3/issue/RHAISTRAT-8801", {"fields": {
+        "description": markdown_to_adf("## Staff Engineer / SME Input\nUse the shared router.\n")}})
+    result = command(tmp_path, "read")
+    assert result.returncode != 0 and "live strategy/staff inputs changed" in result.stderr
+
+
+@pytest.mark.parametrize("key,jira_key,dry_run", [
+    ("RHAISTRAT-8801", None, True), ("STRAT-8801", "RHAISTRAT-8801", True),
+    ("STRAT-8801", None, False),
+])
+def test_local_dry_run_exception_cannot_hide_a_real_or_invalid_identity(tmp_path, key, jira_key, dry_run):
+    from strat_freshness import strategy_jira_key
+    task = tmp_path / f"artifacts/strat-tasks/{key}.md"
+    task.parent.mkdir(parents=True)
+    task.write_text("## Strategy\nRequest cancellation.\n")
+    write_frontmatter(task, {"strat_id": key, "source_rfe": "RHAIRFE-8801", "jira_key": jira_key,
+                            "title": "Timeout ownership", "priority": "Major", "status": "Draft"}, "strat-task")
+    with pytest.raises(ValueError, match="valid Jira identity"):
+        strategy_jira_key(tmp_path, {"dry_run": dry_run}, key)
 
 
 @pytest.fixture

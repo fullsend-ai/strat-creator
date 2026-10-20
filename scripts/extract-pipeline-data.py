@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract strategy pipeline data as JSON.
 
-Scans timestamped run directories in a RHAISTRAT/ data directory and produces
+Scans timestamped and identified runs in a RHAISTRAT/ data directory and produces
 JSON files that other tools can consume. Outputs two files:
 
   - runs.json:    per-run data (each run with its strategies, scores, verdicts)
@@ -24,7 +24,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
@@ -298,8 +298,38 @@ def get_run_cost(run_id, pdata, cost_backfill):
     return None
 
 
+def discover_runs(data_dir):
+    """Shared reader for legacy timestamps and strat-publication-v1 identities.
+
+    Names identify runs; recorded generation time orders them. Legacy naive
+    timestamps are UTC, as in the CI jobs that produced them. Normalize any
+    explicit offset to UTC too, so both layouts have the same ordering.
+    """
+    for entry in sorted(os.listdir(data_dir)):
+        entry_path = os.path.join(data_dir, entry)
+        if not os.path.isdir(entry_path) or os.path.islink(entry_path):
+            continue
+        try:
+            ts = datetime.strptime(entry, "%Y%m%d-%H%M%S")
+        except ValueError:
+            manifest = Path(entry_path) / ".publication.json"
+            pdata_path = Path(entry_path) / "pipeline-data.json"
+            if not entry.startswith("run-") or not manifest.is_file() or not pdata_path.is_file():
+                continue
+            if manifest.is_symlink() or pdata_path.is_symlink():
+                raise ValueError("published run metadata must be regular files")
+            identity = json.loads(manifest.read_text())
+            if (not isinstance(identity, dict) or identity.get("contract") != "strat-publication-v1"
+                    or not isinstance(identity.get("run_id"), str) or entry != "run-" + identity["run_id"]):
+                raise ValueError("published run identity mismatch")
+            ts = datetime.fromisoformat(json.loads(pdata_path.read_text())["timestamp"])
+            if ts.tzinfo is not None:
+                ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+        yield entry, entry_path, ts
+
+
 def scan_runs(data_dir, max_runs=None):
-    """Discover all timestamped run directories and extract data."""
+    """Discover published runs and extract data."""
     runs = []
     current_target = None
 
@@ -309,24 +339,7 @@ def scan_runs(data_dir, max_runs=None):
 
     cost_backfill = load_cost_backfill(data_dir)
 
-    for entry in sorted(os.listdir(data_dir)):
-        entry_path = os.path.join(data_dir, entry)
-        if not os.path.isdir(entry_path) or os.path.islink(entry_path):
-            continue
-        try:
-            ts = datetime.strptime(entry, "%Y%m%d-%H%M%S")
-        except ValueError:
-            # S1 publication uses an immutable run identity, with the sealed
-            # original generation timestamp in pipeline-data.json.
-            manifest = Path(entry_path) / ".publication.json"
-            pdata_path = Path(entry_path) / "pipeline-data.json"
-            if not entry.startswith("run-") or not manifest.is_file() or not pdata_path.is_file():
-                continue
-            identity = json.loads(manifest.read_text())
-            if identity.get("contract") != "strat-publication-v1" or entry != "run-" + identity.get("run_id", ""):
-                raise ValueError("published run identity mismatch")
-            ts = datetime.fromisoformat(json.loads(pdata_path.read_text())["timestamp"])
-
+    for entry, entry_path, ts in discover_runs(data_dir):
         print(f"  Scanning run {entry}...", file=sys.stderr)
         run_data = extract_run(entry_path)
         if run_data is None:

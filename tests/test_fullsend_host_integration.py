@@ -271,6 +271,57 @@ def test_dry_run_takes_no_lock(host, jira):
     assert _run_record(host)["dry_run"] is True
 
 
+def test_fresh_dry_run_completes_with_live_rfe_freshness(host, jira, monkeypatch):
+    """Exercise the host-to-completion boundary, with no synthetic Jira issue."""
+    from artifact_utils import write_frontmatter
+    from review_composition_support import prepare
+
+    rfe, key = "RHAIRFE-7007", "STRAT-7007"
+    need = "Authored source RFE for composition tests.\n"
+    jira.create(rfe, "Request cancellation at deadline", need,
+                labels=["strat-creator-3.8", "tech-reviewed"])
+    selected = _pre(host, "single", RFE_KEY=rfe, STRAT_DRY_RUN="1")
+    assert selected.returncode == 0, selected.stderr
+    run = _run_record(host)
+    assert run["freshness"]["live"] and run["dry_run"] and run["expected_skips"] == []
+    repo = host["target"]
+    for name in ("JIRA_SERVER", "JIRA_USER", "JIRA_TOKEN"):
+        monkeypatch.setenv(name, host["env"][name])
+    task = repo / f"artifacts/strat-tasks/{key}.md"
+    task.parent.mkdir(parents=True, exist_ok=True)
+    task.write_text("## Business Need\n" + need)
+    write_frontmatter(task, {"strat_id": key, "source_rfe": rfe, "jira_key": None,
+                            "title": "Request cancellation at deadline", "priority": "Major",
+                            "status": "Draft"}, "strat-task")
+    original = repo / f"artifacts/strat-originals/{rfe}.md"
+    original.parent.mkdir(parents=True, exist_ok=True)
+    original.write_text(need)
+    _state(repo, "record-create")
+    with task.open("a") as stream:
+        stream.write("\n## Strategy\nThe request router cancels work at its configured deadline.\n")
+    _frontmatter(repo, str(task.relative_to(repo)), "status=Refined")
+    _state(repo, "mark", "refine", key)
+    _state(repo, "mark", "push", "--skipped")
+    prepare(repo, key, rfe, (2, 2, 2, 2))
+    monkeypatch.chdir(repo)
+    from publish_review import publish
+    assert publish(repo, key)["recommendation"] == "approve"
+    _state(repo, "record-review", key)
+    _state(repo, "result")
+    result = json.loads((repo / "output/agent-result.json").read_text())
+    assert result["action"] == "completed", result["errors"]
+    assert result["dry_run"] and result["completed_phases"] == ["create", "refine", "push", "review"]
+    check = _validate(repo, host["state"] / "run.json", host["env"])
+    assert check.returncode == 0, check.stdout + check.stderr
+    assert _labels(jira, rfe) == {"strat-creator-3.8", "tech-reviewed"}
+    receipt = (repo / "tmp/strat-completion.json").read_bytes()
+    jira.request("POST", f"/rest/api/3/issue/{rfe}/comment", {"body": "New SME constraint."})
+    changed = subprocess.run([sys.executable, str(ROOT / "scripts/strat_pipeline_state.py"), "read"],
+                             cwd=repo, capture_output=True, text=True)
+    assert changed.returncode != 0 and "live RFE inputs changed" in changed.stderr
+    assert (repo / "tmp/strat-completion.json").read_bytes() == receipt
+
+
 def test_repeated_pre_script_preserves_recovery_data(host, jira):
     jira.create("RHAIRFE-7021", "Recovery RFE", "Need.")
     assert _pre(host, "single", RFE_KEY="RHAIRFE-7021").returncode == 0

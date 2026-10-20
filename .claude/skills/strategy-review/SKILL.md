@@ -36,7 +36,7 @@ If both `local/strat-tasks/` and `artifacts/strat-tasks/` have files, prefer `lo
 For a pipeline invocation with `tmp/strat-input.json`, first run:
 
 ```bash
-python3 scripts/publish_review.py RHAISTRAT-NNNN --check-only
+python3 ${CLAUDE_SKILL_DIR}/scripts/publish_review.py RHAISTRAT-NNNN --check-only
 ```
 
 Exit 0 means a current-run composed review and all its source hashes verify.
@@ -231,7 +231,7 @@ never as an invented approval.
 A passing numeric gate can coexist with specialist dissent. State both facts to
 the human reader; do not describe the review as unanimous or concerns as resolved.
 
-## Step 7: Publish the Verified Review
+## Step 8: Publish the Verified Review
 
 Use the deterministic publisher. It builds a stable numeric summary with
 specialist dissent, saves `{id}-review-comment.md`, reconciles an existing
@@ -239,7 +239,7 @@ comment and matching attachment, and applies the numeric verdict label.
 Do not post through MCP, curl, inline Python, or another write path.
 
 ```bash
-python3 scripts/publish_review.py RHAISTRAT-NNNN
+python3 ${CLAUDE_SKILL_DIR}/scripts/publish_review.py RHAISTRAT-NNNN
 ```
 
 In dry-run mode use `--dry-run`; it saves the summary and skips external writes.
@@ -249,7 +249,7 @@ A pending or conflicting write stops publication. Preserve `tmp/strat-effects/`
 and the verified review. Do not regenerate reports, change the summary, delete
 write intent or repeat an uncertain POST to make recovery appear successful.
 
-## Step 8: Advise the User
+## Step 9: Advise the User
 
 Based on the result:
 - **Approved** (`needs_attention=false`): Tell the user the numeric gate passed and the strategy is ready for sign-off. Also identify any specialist dissent or skipped architecture assessment, which remains for the human reader.

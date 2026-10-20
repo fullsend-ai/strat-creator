@@ -21,6 +21,13 @@ Commands:
     unlock-strat RHAISTRAT-1500
         Resolve STRAT→RFE via Cloners link, remove lock from RFE.
 
+Owned pipeline locks:
+    lock --owner RUN_ID --locked-keys-file PATH RHAIRFE-1234 [...]
+        Persist acquisition intent and record the matching owner label.
+    unlock --owner RUN_ID RHAIRFE-1234 [...]
+        Remove only that owner's claim. A bare unlock refuses owned claims.
+        Preserve PATH and PATH.owner.json for cleanup/recovery.
+
 Exit codes:
     0 — success (including when all keys are blocked)
     1 — blocked (lock-strat only: STRAT-level or linked-RFE contention)
@@ -261,7 +268,7 @@ def unlock_strat(server, user, token, strat_key):
     return unlock(server, user, token, [rfe_key])
 
 
-def main():
+def _main():
     if len(sys.argv) < 3:
         print("Usage: lock_issues.py <command> <key> [key ...]",
               file=sys.stderr)
@@ -276,6 +283,7 @@ def main():
     if "--owner" in args:
         idx = args.index("--owner")
         if idx + 1 >= len(args):
+            print("--owner requires a run ID", file=sys.stderr)
             return 2
         owner = args[idx + 1]
         args = args[:idx] + args[idx + 2:]
@@ -332,6 +340,14 @@ def main():
         return unlock_strat(server, user, token, keys[0])
     else:
         print(f"Unknown command: {command}", file=sys.stderr)
+        return 2
+
+
+def main():
+    try:
+        return _main()
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
 

@@ -65,6 +65,13 @@ python3 scripts/state.py clean
 
 Gate logic (label checks, skip conditions) is duplicated across all three skills: `strategy-create`, `strategy-refine`, and `strategy-review`. When changing a gate, update all three skills to keep them consistent.
 
+There is one recovery exception: in a host-prepared run, `strategy-review`
+first verifies an already composed current-run review and reconciles its
+publication. This may finish a publication that applied the verdict label
+before it was interrupted. It generates no new assessment and does not reopen
+create or refine. Those steps, and fresh review generation, retain their normal
+label gates. Do not extend the recovery exception to new work.
+
 ## Jira Integration
 
 ### Read Operations
@@ -85,6 +92,12 @@ Never substitute an MCP mutation or raw POST after a helper error. Use
 numeric verdict labels. Jira ownership labels are recovery guards, not atomic
 distributed locks; foreign or multiple owners stop work and cleanup.
 
+HTTP retries apply to reads (including POST search), not Jira mutations. A
+failed write may already have committed; the helpers reconcile its readback
+or stop on uncertainty. Standalone human use without prepared pipeline state
+requires no pipeline owner. Clones carry a `strat-creator-clone-<digest>` label
+for recovery; it is not a verdict or a discovery/approval gate.
+
 ### Freshness on recovery
 
 The S1 host records `strat-freshness-v1` before agent work. Same-run reuse and
@@ -95,6 +108,10 @@ mutation intent. Do not rewrite the baseline or clear progress to bypass this.
 A later run may skip refinement/push only with matching prior provenance and
 live published-strategy read-back. Legacy progress requires refinement again.
 Launch a fresh Workflow by name; native `resumeFromRunId` replay is unsupported.
+
+A fresh dry run uses a local `STRAT-*` task with `jira_key=null`, so it has no
+remote strategy snapshot. Live RFE freshness remains required. Dry runs using
+an existing `RHAISTRAT-*` also retain live strategy and SME input checks.
 
 ## Jira Field Mappings
 
@@ -112,7 +129,10 @@ Launch a fresh Workflow by name; native `resumeFromRunId` replay is unsupported.
 
 ### Implementation and test changes -- run repository tests
 
-Run the repository test suite when **executable implementation, test, configuration, or build files** change. These include files in `scripts/`, `tests/`, `Makefile`, and `pyproject.toml`. Use `make test-unit` for changes to scripts or library code. Use `make test` to run all tests when integration/E2E tests are also relevant. Never skip this step -- a change is not done until tests pass.
+Run the repository test suite when **executable implementation, test, configuration, or build files** change. These include files in `scripts/`, `tests/`, `Makefile`, and `pyproject.toml`. `make test-unit` runs all offline checks, including Jira emulator integration and E2E regressions. `make test` collects the entire suite; the model-calling Workflow smoke remains skipped unless explicitly enabled. Never skip the relevant checks; a change is not done until they pass.
+
+`make test-workflow-smoke` explicitly enables the model-calling smoke test and
+requires paid-run authorization. It is separate from ordinary offline checks.
 
 **Always run `make test` (full suite including integration tests) before pushing repository code to remote.** Unit tests alone are not sufficient -- the jira-emulator integration tests catch issues that unit tests miss.
 

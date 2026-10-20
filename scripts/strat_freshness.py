@@ -238,17 +238,40 @@ def bind(data, progress):
     return saved
 
 
+def strategy_jira_key(root, data, key):
+    """Resolve a real strategy identity; only a dry run may use a local task.
+
+    Dry runs still pin/recheck their live RFE and any existing Jira strategy.
+    A synthetic task has no remote strategy to snapshot, and must never make
+    a real Jira key eligible for the local-only exception.
+    """
+    if not re.fullmatch(r"(?:RHAISTRAT|STRAT)-\d+", key):
+        raise ValueError(f"freshness: strategy has no valid Jira identity: {key}")
+    path = root / f"artifacts/strat-tasks/{key}.md"
+    if any(p.is_symlink() for p in (path, path.parent, path.parent.parent)):
+        raise ValueError("freshness: strategy identity file is symlinked")
+    fm, _ = read_frontmatter(path)
+    if fm.get("strat_id") != key:
+        raise ValueError(f"freshness: strategy identity does not match its filename: {key}")
+    if re.fullmatch(r"RHAISTRAT-\d+", key) and fm.get("jira_key") == key:
+        return key
+    if data.get("dry_run") is True and re.fullmatch(r"STRAT-\d+", key) and fm.get("jira_key") is None:
+        return None
+    raise ValueError(f"freshness: strategy has no valid Jira identity: {key}")
+
+
 def record(root, data, progress, phase, key, rfe):
     saved = bind(data, progress)
     if saved is None:
         return
     value = {"strategy": strategy(root, key), "originals": originals(root, rfe)}
+    jira_key = strategy_jira_key(root, data, key) if data["freshness"]["live"] else None
     if phase == "create":
-        saved["targets"][key] = {"rfe": rfe, "human": jira_human(key) if data["freshness"]["live"] else None}
+        saved["targets"][key] = {"rfe": rfe, "human": jira_human(jira_key) if jira_key else None}
     else:
         if phase == "push":
-            value["published"] = jira_published(key) if data["freshness"]["live"] else None
-            value["human"] = jira_human(key) if data["freshness"]["live"] else None
+            value["published"] = jira_published(jira_key) if jira_key else None
+            value["human"] = jira_human(jira_key) if jira_key else None
         if phase == "review":
             value["review"] = hashed(root / f"artifacts/strat-reviews/{key}-review.md")
         saved[{"refine": "refined", "push": "pushed", "review": "reviewed"}[phase]][key] = value
@@ -277,6 +300,7 @@ def verify_progress(root, data, progress, *, live=True):
         return
     if saved.get("contract") != CONTRACT or saved.get("baseline") != base:
         raise ValueError("freshness: progress belongs to different inputs")
+    jira_keys = {key: strategy_jira_key(root, data, key) for key in saved["targets"]} if base["live"] else {}
     for phase, marks in (("refined", progress.get("refine", {})), ("pushed", (progress.get("push") or {}).get(
             "strategies", [])), ("reviewed", progress.get("review", {}))):
         for key in marks:
@@ -288,11 +312,16 @@ def verify_progress(root, data, progress, *, live=True):
                 raise ValueError(f"freshness: cached RFE inputs changed: {key}")
             if phase == "reviewed" and stamp["review"] != hashed(root / f"artifacts/strat-reviews/{key}-review.md"):
                 raise ValueError(f"freshness: saved review changed: {key}")
-            if phase == "pushed" and base["live"] and live and stamp["published"] != jira_published(key):
+            if (phase == "pushed" and base["live"] and live and jira_keys[key]
+                    and stamp["published"] != jira_published(jira_keys[key])):
                 raise ValueError(f"freshness: published strategy changed: {key}")
     if base["live"] and live:
         for key, target in saved["targets"].items():
-            expected, current = dict(target["human"]), jira_human(key)
+            if jira_keys[key] is None:
+                if target["human"] is not None:
+                    raise ValueError(f"freshness: local strategy has a remote snapshot: {key}")
+                continue
+            expected, current = dict(target["human"]), jira_human(jira_keys[key])
             if expected.get("summary") != current.get("summary") and own_summary_change(root, key, current["summary"]):
                 expected["summary"] = current["summary"]
             if expected != current:
