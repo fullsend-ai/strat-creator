@@ -390,6 +390,11 @@ refuses owned claims.
 
 ## Install in another repository
 
+For GitLab CI, the shared setup described below supports a consumer containing
+only `.fullsend/config.yaml`. It prepares the companions in private runtime
+state before invoking Fullsend. The `base:` approach below remains available
+for consumers that maintain their own harness wrappers.
+
 A harness added by URL (`fullsend agent add <url>`) resolves its relative paths
 against the consumer's `.fullsend/`, not against this repository. Instead,
 write a thin harness that names this one as `base:`. fullsend then fetches
@@ -433,6 +438,44 @@ pre-script stands in for that pin, and the orchestration script ships as the
 small scanned plugin in `plugins/strat-pipeline`. Once fullsend can pin a
 definition repository the way it pins a fleet agent, the vendoring step
 collapses into one `plugins:` entry.
+
+## GitLab CI consumer setup
+
+The pipeline repository owns the GitLab jobs, operator inputs and one
+`.fullsend/config.yaml` with remote, hash-pinned `strat-single` and `strat-batch`
+registrations. Reusable integration lives here under `.fullsend/ci/`: input and
+source checks, runtime preparation, the gateway launcher, dependency image,
+version pins and artifact redaction. Its model-free tests live in
+`tests/test_fullsend_ci.py`.
+
+CI clones `STRAT_CREATOR_REPO` at `STRAT_CREATOR_REF` and verifies HEAD before
+running this code. `fullsend-config.py validate <consumer>` checks manual inputs
+and verifies that both registrations match that source repository, commit and
+harness hashes. A source mismatch or an edited package stops preparation.
+
+`run-fullsend.sh strat-single` or `strat-batch` then prepares a separate target
+checkout and a private runtime directory under `.fullsend-state/<job>/`. The
+runtime contains companions copied from the verified source and an unchanged
+copy of the consumer's remote registrations. The released Fullsend 0.47.1 binary
+looks for some remote harness companions in its local configuration directory;
+a config-only native lock check reproduced the missing-plugin failure. Runtime
+materialization supplies those files without maintaining copies in the pipeline.
+
+The shared launcher uses direct Vertex, a job-owned Podman/OpenShell gateway,
+and `FULLSEND_SANDBOX_IMAGE` for the dependency image. Host preflight checks
+Python dependencies; the existing plugin hooks check Claude inside the sandbox.
+Model defaults, concurrency ten and background wait ceilings belong to the
+source harnesses. The existing business validator, one-attempt limit, owned
+claim cleanup and publication gates remain in place.
+
+Each new job fetches the current architecture-context default-branch HEAD,
+selects a real release directory and overlays, and records the observed commit.
+It excludes sibling aliases with unavailable targets. The copy remains stable
+within that prepared run; there is no configured architecture commit pin.
+
+Moving the integration does not qualify a new production runner. The real
+GitLab image/OpenShell/Vertex smoke remains required before cutover. None of
+the packaging tests invokes a model or writes to production Jira.
 
 ## Provenance
 

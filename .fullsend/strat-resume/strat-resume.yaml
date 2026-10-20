@@ -47,7 +47,8 @@ post_script: shared/post-strategy.sh
 # Failed business completion ends this prepared run. A later host-prepared
 # run may recover verified progress; no same-run model retry is automatic.
 validation_loop:
-  preflight_check: 'python3 scripts/check_claude_runtime.py && python3 -c "import jsonschema, yaml"'
+  # Host dependencies only; the plugin checks Claude inside the sandbox.
+  preflight_check: 'python3 -c "import jsonschema, yaml, certifi, diff_match_patch"'
   script: shared/validate-output.sh
   schema: shared/result.schema.json
   max_iterations: 1
@@ -64,6 +65,12 @@ env:
     JIRA_TOKEN: "${JIRA_TOKEN}"
     # Context is fetched by the pre-script; the skills must not fetch again.
     RFE_SKIP_BOOTSTRAP: "1"
+    DISABLE_AUTOUPDATER: "1"
+    CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS: "10"
+    CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "5400000"
+    ANTHROPIC_DEFAULT_SONNET_MODEL: claude-opus-4-6
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: claude-opus-4-6
+    ANTHROPIC_DEFAULT_FABLE_MODEL: claude-opus-4-6
     ANTHROPIC_DEFAULT_OPUS_MODEL: claude-opus-4-6
     CLAUDE_CODE_SUBAGENT_MODEL: claude-opus-4-6
   runner:
