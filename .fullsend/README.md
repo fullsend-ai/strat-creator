@@ -13,7 +13,7 @@ repository do the work.
 
 Requirements: the harnesses pin the Fullsend **0.47.1** sandbox by its
 multi-architecture image digest. Its published Containerfile and OCI build history
-pin Claude Code **2.1.296**, the runtime qualified for these hooks. Preflight and
+pin Claude Code **2.1.296**, the runtime qualified for these hooks. Runtime hooks and
 the launch guard refuse other versions. Upgrade only after repeating the native
 hook controls; newer versions are not assumed compatible. See the pinned [Containerfile](https://github.com/fullsend-ai/fullsend/blob/v0.47.1/images/sandbox/Containerfile)
 and the runtime's [hook failure policy](https://code.claude.com/docs/en/hooks).
@@ -26,12 +26,17 @@ known version mismatch, but a deployment smoke test remains necessary.
 ## Agent registration
 
 This repository provides harnesses, prompts, the plugin and shared helpers.
-`.fullsend/config.yaml` is installer-managed and is deliberately absent and
-ignored here. Register the three sources shown in `fleet-entry.example.yaml`
-through the deployment's external fleet configuration. The example is an agent
-selection fragment, not a complete fleet manifest. Run the normal installer to
-generate repository configuration, then lock the dependencies. Tests create an
-isolated generated configuration to exercise dispatch.
+Its committed `.fullsend/config.yaml` combines the onboarding configuration
+from PR 86 with the three strategy agent sources and their remote-resource
+allowlist. The existing runtime, roles, generic agents, issue targets and status
+notifications are retained. Keep those settings when changing strategy
+registration. The onboarding installer is not a recurring regeneration step
+for this repository.
+
+`fleet-entry.example.yaml` is a strategy registration fragment for other
+deployments. Merge it into their existing configuration, preserving the other
+agents and settings; it is not a complete repository config. The GitLab pipeline
+maintains its own remote single/batch registrations as described below.
 
 ## How a run works
 
@@ -483,5 +488,7 @@ The three publication helpers in `shared/publish/` (`push-results.py`,
 `push-to-org-pulse.py`, `clone-data-repo.sh`) are carried from
 github.com/jctanner-opendatahub-io/strat-creator at `78ab3f1e`
 (`.fullsend/scripts/ci/`, Apache-2.0). They have no other public source. Subsequent changes add sealed run identity and recovery for interrupted
-publication, including partial source cleanup. Everything else under
-`.fullsend/` was introduced by this integration.
+publication, including partial source cleanup. The repository config starts
+from the merged onboarding PR 86 and adds the strategy registrations. The
+strategy harnesses, plugin, shared helpers and CI setup were introduced by
+this integration.

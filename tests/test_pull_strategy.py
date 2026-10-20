@@ -17,8 +17,7 @@ from jira_utils import (
     build_rfe_reference,
     markdown_to_adf,
 )
-from pull_strategy import _newest_attachment
-from pull_strategy import pull_strategy
+from pull_strategy import _newest_attachment, pull_strategy
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPT = os.path.join(PROJECT_ROOT, "scripts", "pull_strategy.py")

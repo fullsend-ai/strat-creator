@@ -1,0 +1,54 @@
+# This file is managed by 'fullsend repos': repos-config-v1
+# Committed onboarding configuration, extended with repository strategy agents.
+# Preserve those entries when updating the onboarding scaffold.
+runtime: claude
+roles:
+    - fullsend
+    - triage
+    - coder
+    - review
+    - retro
+    - prioritize
+agents:
+    - name: code
+      runtime: claude
+      model: opus
+    - name: fix
+      model: sonnet
+    - name: prioritize
+      runtime: pi
+      model: google-vertex/gemini-3.8-flash
+    - name: review
+      runtime: pi
+      model: sonnet
+      subagents:
+        challenger: opus
+        correctness: openai/gpt-6.1-sol
+        docs-currency: google-vertex/gemini-3.8-flash
+        intent-coherence: google-vertex/gemini-3.8-flash
+        risk-assessment: google-vertex/gemini-3.8-flash
+        security: openai/gpt-6.1-sol
+        style-conventions: google-vertex/gemini-3.8-flash
+    - name: retro
+      enabled: false
+      model: sonnet
+    - name: triage
+      model: sonnet
+    - name: strat-single
+      source: strat-single/strat-single.yaml
+    - name: strat-batch
+      source: strat-batch/strat-batch.yaml
+    - name: strat-resume
+      source: strat-resume/strat-resume.yaml
+allowed_remote_resources:
+    - https://raw.githubusercontent.com/fullsend-ai/fullsend/
+    - https://raw.githubusercontent.com/fullsend-ai/agents/
+    - https://raw.githubusercontent.com/fullsend-ai/strat-creator/
+create_issues:
+    allow_targets:
+        repos:
+            - fullsend-ai/fullsend
+status_notifications:
+    reaction:
+        start: enabled
+        completion: enabled

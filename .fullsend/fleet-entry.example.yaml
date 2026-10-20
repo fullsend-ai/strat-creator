@@ -1,6 +1,10 @@
-# Register these agent sources in the external fleet manifest.
-# fullsend repos install generates .fullsend/config.yaml; do not commit it here.
+# Strategy registration fragment for a deployment's committed .fullsend/config.yaml.
+# Merge these entries into that file, preserving its roles and other agents.
 agents:
   - source: strat-single/strat-single.yaml
   - source: strat-batch/strat-batch.yaml
   - source: strat-resume/strat-resume.yaml
+allowed_remote_resources:
+  - https://raw.githubusercontent.com/fullsend-ai/fullsend/
+  - https://raw.githubusercontent.com/fullsend-ai/agents/
+  - https://raw.githubusercontent.com/fullsend-ai/strat-creator/
