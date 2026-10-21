@@ -15,16 +15,56 @@ from jira_utils import (
     reconstruct_business_need_file,
 )
 from push_strategy import (
+    DRAFT_PREFIX,
     STAFF_INPUT_HEADING,
     STRATEGY_HEADING,
     _build_description_stub,
     _ensure_private_directory,
     _find_strategy_attachment,
+    compute_synced_summary,
     extract_source_rfe,
     extract_staff_input_section,
     extract_strategy_section,
     extract_tldr_section,
 )
+
+
+class TestComputeSyncedSummary:
+
+    def test_no_change_when_titles_match_bare(self):
+        result = compute_synced_summary("CUDA Continuous Delivery", "CUDA Continuous Delivery")
+        assert result is None
+
+    def test_no_change_when_both_have_draft_prefix(self):
+        current = DRAFT_PREFIX + "CUDA Continuous Delivery"
+        local_title = DRAFT_PREFIX + "CUDA Continuous Delivery"
+        result = compute_synced_summary(current, local_title)
+        assert result is None
+
+    def test_does_not_double_prefix_when_both_already_drafted(self):
+        # Regression test: local frontmatter titles keep the DRAFT prefix
+        # until sign-off, so a naive re-prepend produces "[DRAFT] [DRAFT] ...".
+        current = DRAFT_PREFIX + "CUDA Continuous Delivery"
+        local_title = DRAFT_PREFIX + "CUDA Continuous Delivery for 3.6 EA2"
+        result = compute_synced_summary(current, local_title)
+        assert result == DRAFT_PREFIX + "CUDA Continuous Delivery for 3.6 EA2"
+        assert result.count(DRAFT_PREFIX.strip()) == 1
+
+    def test_preserves_draft_prefix_when_current_has_it_and_local_does_not(self):
+        current = DRAFT_PREFIX + "Old Title"
+        local_title = "New Title"
+        result = compute_synced_summary(current, local_title)
+        assert result == DRAFT_PREFIX + "New Title"
+
+    def test_does_not_add_prefix_when_current_lacks_it(self):
+        current = "Old Title"
+        local_title = DRAFT_PREFIX + "New Title"
+        result = compute_synced_summary(current, local_title)
+        assert result == "New Title"
+
+    def test_updates_bare_titles_without_prefix(self):
+        result = compute_synced_summary("Old Title", "New Title")
+        assert result == "New Title"
 
 
 class TestExtractStrategySection:
