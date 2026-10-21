@@ -131,13 +131,14 @@ REJECT:   total < 3   OR   2+ zeros       → needs_attention=true
 
 ## Step 6: Run Prose Reviews
 
-Use the **Skill tool** to invoke all four reviewer skills in parallel. Each runs in its own isolated `context: fork` — no reviewer sees another's output. Pass the strategy key to each:
+Use the **Skill tool** to invoke all five reviewer skills in parallel. Each runs in its own isolated `context: fork` — no reviewer sees another's output. Pass the strategy key to each:
 
-```
+```text
 Skill(skill="strategy-feasibility-review", args="RHAISTRAT-NNNN")
 Skill(skill="strategy-testability-review", args="RHAISTRAT-NNNN")
 Skill(skill="strategy-scope-review", args="RHAISTRAT-NNNN")
 Skill(skill="strategy-architecture-review", args="RHAISTRAT-NNNN")
+Skill(skill="strategy-consistency-review", args="RHAISTRAT-NNNN")
 ```
 
 Do NOT use the Agent tool for reviews. Use the Skill tool — the reviewer skills are defined in `.claude/skills/` and contain specific review instructions.
@@ -146,12 +147,13 @@ Do NOT use the Agent tool for reviews. Use the Skill tool — the reviewer skill
 - **`strategy-testability-review`**: Are acceptance criteria testable? What edge cases are missing?
 - **`strategy-scope-review`**: Is the strategy right-sized? Does the effort match the scope?
 - **`strategy-architecture-review`** (if architecture context available): Are dependencies correctly identified? Are integration patterns correct?
+- **`strategy-consistency-review`**: Do the Business Need, source RFE context, strategy sections, and architecture context make mutually compatible claims?
 
 Each reviewer auto-detects local mode (`local/strat-tasks/` vs `artifacts/strat-tasks/`) and reads the appropriate directories.
 
 ## Step 7: Write Prose to Review Files
 
-Update the review file body in `artifacts/strat-reviews/{id}-review.md` with the prose from all four reviewers. The scores table was already written by `apply_scores.py` in Step 5 — add the prose sections after it.
+Update the review file body in `artifacts/strat-reviews/{id}-review.md` with the prose from all five reviewers. The scores table was already written by `apply_scores.py` in Step 5 — add the prose sections after it.
 
 The review file body should contain:
 
@@ -171,12 +173,28 @@ The review file body should contain:
 ## Architecture Review: {STRAT_ID} — {title}
 <assessment from architecture reviewer, or "skipped — no context">
 
+## Consistency Review: {STRAT_ID} — {title}
+<assessment from consistency reviewer>
+
 ## Agreements
 <where reviewers aligned>
 
 ## Disagreements
 <where reviewers diverged — preserve both views>
 ```
+
+The consistency reviewer output must include its single `consistency_result`
+YAML block unchanged in the Consistency Review section. Parse that block as
+YAML before writing the review. Accept only a mapping with `status` equal to
+`clear`, `contradictions-found`, or `insufficient-context`, and
+`finding_severities` as a list containing only `critical`, `high`, `medium`, or
+`low`. Do not infer these values from prose. Store the validated values in the
+review frontmatter as `consistency_status` and `consistency_severities` using
+the repository frontmatter tooling. If the block is missing, malformed, has
+unknown fields, or contains an invalid value, fail closed: store
+`consistency_status: insufficient-context` with an empty severity list, keep
+`needs_attention: true`, and do not emit a signoff-ready result or apply
+`strat-creator-rubric-pass`.
 
 After writing prose, update the `reviewers.*` frontmatter fields with each prose reviewer's individual verdict:
 
@@ -188,7 +206,13 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-reviews/<
     reviewers.architecture=<prose_verdict>
 ```
 
-**Important:** The `recommendation` field is NEVER changed by prose reviewers. It comes from the numeric scores only. Prose reviewers set their own `reviewers.*` verdicts for informational purposes — these do NOT affect the gate decision.
+**Important:** The `recommendation` field is NEVER changed by prose reviewers,
+and the consistency result does not change numeric scores or that
+recommendation. Prose reviewers set their own `reviewers.*` verdicts. The
+consistency review is recorded separately in structured frontmatter, and its
+validated status and severities drive the consistency hard gate below: high or
+critical contradictions block strategy signoff even when the numeric
+recommendation is APPROVE.
 
 **Preserve disagreements.** If the feasibility reviewer says "this is fine" but the scope reviewer says "this is too big," report both views. Do not average or harmonize.
 
@@ -216,8 +240,25 @@ Compose the comment in markdown using this format:
 
 {For each dimension scored < 2, one sentence summarizing the issue from the prose review.}
 
+{If the structured consistency status is `contradictions-found`, include:}
+**Consistency:** contradictions-found
+**Open question for strategy refinement:** {the exact SME/PM decision needed}
+
+{If the structured consistency status is `insufficient-context`, include:}
+**Consistency:** insufficient-context
+**Required human review:** {the missing or invalid source input that prevented assessment}
+
 **Action:** {verdict-specific guidance}
 ```
+
+The consistency follow-up must be included in the Jira summary comment when
+the structured consistency status is `contradictions-found` or
+`insufficient-context`. For contradictions, state the decision needed without
+choosing a resolution. For insufficient context, state the missing or invalid
+input and require explicit human review. A review with
+`needs_attention=false` is never signoff-ready unless the consistency status is
+valid and the assessment is complete (`clear` or a valid non-blocking result).
+Missing or invalid consistency data must fail closed.
 
 Action text by verdict:
 - **APPROVE**: "No action needed — strategy passed quality review."
@@ -261,21 +302,54 @@ In dry-run mode, skip and print `[DRY RUN] Skipping attachment for RHAISTRAT-NNN
 
 ## Step 7c: Apply Verdict Labels
 
-If NOT in dry-run mode and `jira_key` is not null, add the appropriate label based on the verdict:
+If NOT in dry-run mode and `jira_key` is not null, reconcile the labels based on
+the validated numeric verdict and structured consistency result:
 
 ```bash
 python3 -c "
 import sys; sys.path.insert(0, 'scripts')
-from jira_utils import add_labels, require_env
+from jira_utils import add_labels, remove_labels, require_env
 s, u, t = require_env()
+remove_labels(s, u, t, sys.argv[1], [
+    'strat-creator-consistency-needs-attention',
+    'strat-creator-needs-attention',
+    'strat-creator-rubric-pass',
+])
 add_labels(s, u, t, sys.argv[1], sys.argv[2:])
-" RHAISTRAT-NNNN <labels>
+" RHAISTRAT-NNNN <desired-labels>
 ```
 
-Labels by verdict:
-- **APPROVE**: add `strat-creator-rubric-pass`
-- **REVISE**: add `strat-creator-needs-attention`
-- **REJECT**: add `strat-creator-needs-attention`
+Always remove all three gate labels first so stale mutually exclusive labels
+cannot survive a re-review. Then apply only the desired labels:
+
+- **APPROVE with `clear`, or contradictions below high severity**: add only
+  `strat-creator-rubric-pass`.
+- **REVISE or REJECT with `clear`, or contradictions below high severity**:
+  add only `strat-creator-needs-attention`.
+- **`contradictions-found` with any `high` or `critical` severity**: add both
+  `strat-creator-consistency-needs-attention` and
+  `strat-creator-needs-attention`; never add rubric-pass.
+- **`insufficient-context`, or any missing/invalid consistency result**: add
+  both attention labels; never add rubric-pass. This is fail-closed and
+  requires explicit human review.
+
+Consistency hard gate:
+
+- Read and validate `consistency_status` and `consistency_severities` from the
+  review frontmatter before applying labels; do not match prose literals.
+- The status must be one of `clear`, `contradictions-found`, or
+  `insufficient-context`; every severity must be one of `critical`, `high`,
+  `medium`, or `low`.
+- A valid `contradictions-found` result with high or critical severity is a
+  hard gate even if the numeric score is APPROVE. The dedicated label records
+  the reason, and the standard needs-attention label prevents
+  `strategy-signoff` from proceeding.
+- Missing or invalid structured data is blocking. Never apply
+  `strat-creator-rubric-pass` when the consistency gate cannot be validated.
+- The numeric score and recommendation field remain unchanged. This is a
+  separate blocking policy, not a fifth score dimension.
+- For `clear`, or contradictions below high severity, apply only the ordinary
+  verdict label after stale gate labels have been removed.
 
 Print `[LABEL] <label> added to RHAISTRAT-NNNN`.
 
@@ -283,8 +357,16 @@ In dry-run mode, skip and print `[DRY RUN] Skipping labels for RHAISTRAT-NNNN`.
 
 ## Step 8: Advise the User
 
-Based on the result:
-- **Approved** (`needs_attention=false`): Tell the user the strategy is ready for sign-off.
+Based on the validated frontmatter result:
+- **Approved with no blocking consistency finding** (`needs_attention=false` and
+  a completed, valid consistency assessment): Tell the user the strategy is
+  ready for sign-off.
+- **Blocked by consistency**: Tell the user that the numeric score may be
+  APPROVE, but a high/critical contradiction requires PM/SME resolution before
+  sign-off. Include the open question and the two conflicting claims.
+- **Insufficient context**: Tell the user that source inputs were missing or
+  invalid, the result is not signoff-ready, and explicit human review is
+  required before proceeding.
 - **Needs revision** (`needs_attention=true`, verdict=REVISE): List specific issues by dimension. Tell the user to edit the strategy, remove `needs-attention`, and re-run `/strategy-review`.
 - **Fundamental problems** (`needs_attention=true`, verdict=REJECT): Recommend revisiting the RFE or re-running `/strategy-refine` with different constraints.
 

@@ -204,6 +204,19 @@ SCHEMAS = {
             "required": True,
             "default": False,
         },
+        "consistency_status": {
+            "type": "string",
+            "required": False,
+            "enum": ["clear", "contradictions-found", "insufficient-context"],
+        },
+        "consistency_severities": {
+            "type": "list",
+            "required": False,
+            "items": {
+                "type": "string",
+                "enum": ["critical", "high", "medium", "low"],
+            },
+        },
         "scores": {
             "type": "dict",
             "required": True,
@@ -327,6 +340,10 @@ def _validate_field(name, value, spec, path=""):
         if not isinstance(value, list):
             errors.append(
                 f"{full_name}: expected list, got {type(value).__name__}")
+        elif "items" in spec:
+            for index, item in enumerate(value):
+                errors.extend(_validate_field(
+                    str(index), item, spec["items"], full_name))
 
     elif expected_type == "dict":
         if not isinstance(value, dict):
@@ -425,6 +442,11 @@ def get_schema_yaml(schema_type):
                 if "enum" in fspec:
                     fentry["enum"] = fspec["enum"]
                 entry["fields"][fname] = fentry
+        if spec.get("type") == "list" and "items" in spec:
+            ispec = spec["items"]
+            entry["items"] = {"type": ispec["type"]}
+            if "enum" in ispec:
+                entry["items"]["enum"] = ispec["enum"]
 
         if spec.get("required", False):
             output["required"][name] = entry

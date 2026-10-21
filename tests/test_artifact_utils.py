@@ -339,6 +339,31 @@ class TestStratReviewSchema:
         data = self._valid_review(strat_id="RHAISTRAT-400")
         assert validate(data, "strat-review") == []
 
+    @pytest.mark.parametrize(
+        "status", ["clear", "contradictions-found", "insufficient-context"])
+    def test_consistency_status_valid(self, status):
+        data = self._valid_review(consistency_status=status,
+                                  consistency_severities=["high"])
+        assert validate(data, "strat-review") == []
+
+    def test_consistency_status_invalid(self):
+        data = self._valid_review(consistency_status="unknown")
+        errors = validate(data, "strat-review")
+        assert any("consistency_status" in e and "not in" in e
+                   for e in errors)
+
+    def test_consistency_severities_must_be_list(self):
+        data = self._valid_review(consistency_severities="high")
+        errors = validate(data, "strat-review")
+        assert any("consistency_severities" in e and "expected list" in e
+                   for e in errors)
+
+    def test_consistency_severity_enum(self):
+        data = self._valid_review(consistency_severities=["urgent"])
+        errors = validate(data, "strat-review")
+        assert any("consistency_severities.0" in e and "not in" in e
+                   for e in errors)
+
 
 # ─── Frontmatter R/W ─────────────────────────────────────────────────────────
 
