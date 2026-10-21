@@ -39,6 +39,22 @@ if [[ ! -f "${OWNER_RECORD}" ]]; then
   exit 1
 fi
 owner=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["owner"])' "${OWNER_RECORD}")
-python3 "${ROOT}/scripts/lock_issues.py" unlock --owner "${owner}" "${keys[@]}"
+# Release is owner-checked cleanup, independent of the failed work's freshness.
+# An isolated directory prevents discovering the target's prepared input or
+# inheriting its mutation journal. Keep the original host record on any error.
+RECORD="$(cd -- "$(dirname -- "${RECORD}")" && pwd)/$(basename -- "${RECORD}")"
+cleanup=$(mktemp -d)
+trap 'rmdir -- "${cleanup}"' EXIT
+(
+  cd -- "${cleanup}"
+  unset STRAT_EFFECTS_DIR STRAT_RUN_ID
+  failed=false
+  for key in "${keys[@]}"; do
+    if ! python3 "${ROOT}/scripts/lock_issues.py" unlock --owner "${owner}" "${key}"; then
+      failed=true
+    fi
+  done
+  [[ "${failed}" == false ]]
+)
 # Keep the record as evidence, renamed so a rerun does not treat it as live.
 mv -f -- "${RECORD}" "${RECORD}.released"

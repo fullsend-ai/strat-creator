@@ -1,6 +1,8 @@
 """Publication-to-reader contracts, including mixed legacy/Workflow history."""
+import hashlib
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +24,7 @@ def load(relative, name):
 extract = load("scripts/extract-pipeline-data.py", "discovery_extract")
 dashboard = load("scripts/generate-dashboard.py", "discovery_dashboard")
 publisher = load(".fullsend/shared/publish/push-results.py", "discovery_publisher")
+publication = load(".fullsend/shared/prepare_publication.py", "discovery_bundle")
 
 
 def artifacts(root, timestamp, *, dry_run=False):
@@ -94,3 +97,59 @@ def test_both_readers_reject_invalid_identified_run_metadata(tmp_path, fault):
     for reader in (lambda: dashboard.scan_all_runs(str(tmp_path), {}), lambda: extract.scan_runs(str(tmp_path))):
         with pytest.raises(ValueError, match="published run"):
             reader()
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+@pytest.mark.parametrize("header,row,labels", [
+    ("RFE | Summary | Reason", "RHAIRFE-7001 | A gated RFE | Existing STRAT is Closed", ""),
+    ("RFE | Summary | Reason | Run", "RHAIRFE-7001 | A gated RFE | Existing STRAT is Closed | fixture", ""),
+    ("RFE | Summary | Labels | Missing",
+     "RHAIRFE-7001 | A gated RFE | legacy-input-label | Existing STRAT is Closed", "legacy-input-label"),
+])
+def test_sealed_skip_only_publication_survives_summary_extraction(tmp_path, dry_run, header, row, labels):
+    handoff = tmp_path / "handoff"
+    handoff.mkdir()
+    separator = " | ".join("---" for _ in header.split("|"))
+    (handoff / "strat-skipped.md").write_text(f"| {header} |\n| {separator} |\n| {row} |\n")
+    result = tmp_path / "agent-result.json"
+    result.write_text(json.dumps({"dry_run": dry_run}))
+    bundle = tmp_path / "bundle"
+    publication.prepare(handoff, bundle, result, "batch")
+    results = tmp_path / "results"
+    shutil.copytree(bundle, results)
+    subprocess.run(["git", "init", "-q", str(results)], check=True)
+    run = publisher.organize_identified_run(results, "skip-only")
+    runs = extract.scan_runs(str(run.parent))
+    assert len(runs) == 1 and runs[0]["stats"]["total"] == 0
+    assert runs[0]["dry_run"] is dry_run
+    assert runs[0]["skipped"] == [{"rfe_key": "RHAIRFE-7001", "title": "A gated RFE",
+                                  "labels": labels, "missing": "Existing STRAT is Closed"}]
+    output = run.parent / "summary.json"
+    completed = subprocess.run([sys.executable, str(ROOT / "scripts/extract-pipeline-data.py"),
+                                "--data-dir", str(run.parent), "--output", str(output)],
+                               capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    summary = json.loads(output.read_text())
+    assert len(summary["runs"]) == 1 and summary["summary"]["skipped"][0]["rfe_key"] == "RHAIRFE-7001"
+    production = json.loads(output.with_name("summary-production.json").read_text())
+    assert len(production["runs"]) == (0 if dry_run else 1)
+
+
+def test_empty_legacy_or_unsealed_runs_are_not_adopted(tmp_path):
+    (tmp_path / "20261021-160000").mkdir()
+    run = tmp_path / "run-incomplete"
+    run.mkdir()
+    (run / ".publication.json").write_text(json.dumps({"contract": "strat-publication-v1", "run_id": "incomplete"}))
+    (run / "pipeline-data.json").write_text(json.dumps({"timestamp": "2026-10-21T17:00:00", "strategies": []}))
+    assert extract.scan_runs(str(tmp_path)) == []
+
+
+def test_empty_publication_metadata_must_match_its_seal(tmp_path):
+    run = tmp_path / "run-invalid"
+    run.mkdir()
+    data = json.dumps({"timestamp": "2026-10-21T17:00:00", "strategies": [], "stats": {"total": 0}})
+    (run / "pipeline-data.json").write_text(data + "\n")
+    (run / ".publication.json").write_text(json.dumps({"contract": "strat-publication-v1", "run_id": "invalid",
+        "files": {"pipeline-data.json": hashlib.sha256(data.encode()).hexdigest()}}))
+    with pytest.raises(ValueError, match="published run"):
+        extract.scan_runs(str(tmp_path))

@@ -13,12 +13,12 @@ If `--dry-run` is in `$ARGUMENTS`, skip ALL external writes:
 - Do NOT write or update any Jira issues
 - Do NOT post review comments to Jira — save them to `artifacts/strat-reviews/{id}-review-comment.md` instead
 - DO still read from Jira and local artifacts (reads are safe)
+- DO still create local review files in `artifacts/strat-reviews/`
 
 For a prepared pipeline run, `tmp/strat-input.json` determines the mode.
 Never add `--dry-run` to work around a live publication error. A prepared live
 run rejects that override and requires successful publication before review
 completion can be recorded.
-- DO still create local review files in `artifacts/strat-reviews/`
 
 ## Local Mode
 

@@ -442,6 +442,77 @@ def test_release_locks_after_the_run(host, jira):
     assert again.returncode == 0 and "no lock record" in again.stdout
 
 
+@pytest.mark.parametrize("value", ["TRUE", "yes", "false", "tru", "2", " "])
+def test_invalid_dry_run_stops_before_preparation(host, jira, value):
+    preserved = host["target"] / "tmp/keep.txt"
+    preserved.parent.mkdir()
+    preserved.write_text("preserve previous work")
+    result = _pre(host, "single", RFE_KEY="RHAIRFE-7999", STRAT_DRY_RUN=value)
+    assert result.returncode != 0
+    assert "STRAT_DRY_RUN" in result.stderr
+    assert "Jira" not in result.stderr and "HTTP" not in result.stderr
+    assert preserved.read_text() == "preserve previous work"
+    assert not host["state"].exists()
+
+
+@pytest.mark.parametrize("value", ["TRUE", "yes", "false", "tru", "2", " "])
+def test_direct_prepare_rejects_bad_dry_run_before_context_or_jira(tmp_path, value):
+    state = tmp_path / "host-state"
+    env = {**os.environ, "STRAT_DRY_RUN": value, "STRAT_STATE_DIR": str(state),
+           "STRAT_RUN_ID": "dry-run-validation", "TARGET_REPO_DIR": str(tmp_path),
+           "RFE_KEY": "RHAIRFE-7999", "JIRA_SERVER": "http://127.0.0.1:1"}
+    result = subprocess.run([sys.executable, str(SHARED / "prepare_run.py"), "single"],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode != 0 and "STRAT_DRY_RUN" in result.stderr
+    assert "Traceback" not in result.stderr and not state.exists()
+
+
+@pytest.mark.parametrize("change", ["rfe", "source"])
+def test_owned_cleanup_from_target_does_not_require_work_freshness(host, jira, change):
+    jira.create("RHAIRFE-7251", "RFE", "Original need.")
+    assert _pre(host, "single", RFE_KEY="RHAIRFE-7251").returncode == 0
+    if change == "rfe":
+        jira.request("PUT", "/rest/api/3/issue/RHAIRFE-7251", {"fields": {"summary": "Changed need"}})
+    else:
+        (host["target"] / "scripts/state.py").write_text("# changed after preparation\n")
+    original = (host["target"] / "tmp/strat-input.json").read_bytes()
+    release = host["state"] / "strat-creator/.fullsend/shared/release-locks.sh"
+    result = subprocess.run(["bash", str(release), str(host["state"])], cwd=host["target"],
+                            env=host["env"], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert PROCESSING not in _labels(jira, "RHAIRFE-7251")
+    assert (host["target"] / "tmp/strat-input.json").read_bytes() == original
+
+
+@pytest.mark.parametrize("failure", ["foreign", "missing"])
+def test_cleanup_attempts_later_owned_keys_after_one_failure(host, jira, failure):
+    from strat_side_effects import owner_label
+
+    keys = ["RHAIRFE-7252", "RHAIRFE-7253"]
+    for key in keys:
+        jira.create(key, "RFE", "Need.", labels=["strat-creator-3.8", "tech-reviewed"])
+    assert _pre(host, "batch", BATCH_EXPECTED_KEYS=" ".join(keys)).returncode == 0
+    record = host["state"] / "owned-rfe-ids.txt"
+    original = record.read_bytes()
+    if failure == "foreign":
+        foreign = [PROCESSING, owner_label("another-run")]
+        jira.request("PUT", "/rest/api/3/issue/" + keys[0], {"fields": {"labels": foreign}})
+    else:
+        # A missing earlier key simulates an unreadable issue during cleanup.
+        record.write_text("RHAIRFE-7999\n" + original.decode())
+        original = record.read_bytes()
+    release = host["state"] / "strat-creator/.fullsend/shared/release-locks.sh"
+    result = subprocess.run(["bash", str(release), str(host["state"])], env=host["env"],
+                            capture_output=True, text=True)
+    assert result.returncode != 0
+    assert PROCESSING not in _labels(jira, keys[1])
+    assert not any(x.startswith("strat-creator-owner-") for x in _labels(jira, keys[1]))
+    assert record.read_bytes() == original
+    assert not record.with_name(record.name + ".released").exists()
+    if failure == "foreign":
+        assert _labels(jira, keys[0]) == set(foreign)
+
+
 # ── a downloaded repository as the agent leaves it ──────────────────────────────
 
 def _state(repo, *args):
@@ -747,7 +818,8 @@ def test_post_script_hands_off_regular_files_and_builds_the_report(host, jira, v
     assert "RESULTS_REPO_URL not set" in result.stdout
 
 
-def test_post_script_retry_does_not_duplicate_remote_run_or_summary(host, jira, validated_run):
+@pytest.mark.parametrize("concurrent", [False, True])
+def test_post_script_retry_does_not_duplicate_remote_run_or_summary(host, jira, validated_run, concurrent):
     jira.create("RHAIRFE-7221", "RFE", "Need.")
     assert _pre(host, "single", RFE_KEY="RHAIRFE-7221").returncode == 0
     repo, _, _ = validated_run
@@ -765,6 +837,49 @@ def test_post_script_retry_does_not_duplicate_remote_run_or_summary(host, jira, 
     env = {**host["env"], "REPO_DIR": str(repo), "FULLSEND_VALIDATED_ITERATION_DIR": str(iteration),
            "FULLSEND_RUN_DIR": str(host["tmp"] / "run"), "RESULTS_REPO_URL": str(remote),
            "RESULTS_PUSH_TOKEN": "isolated-local-placeholder", "ORG_PULSE_URL": "", "ORG_PULSE_API_TOKEN": ""}
+    if concurrent:
+        # Insert a real competing publication between our generation and push.
+        # The two publishers have distinct workspaces and share only bare Git.
+        competitor = host["tmp"] / "competitor.py"
+        competitor.write_text('''
+import json, os, shutil, subprocess, sys
+from datetime import datetime, timedelta
+from pathlib import Path
+root, remote, publish = map(Path, sys.argv[1:])
+env = {**os.environ, "PATH": os.environ["ORIGINAL_PATH"]}
+other = publish.parent / "other-results"
+def command(*args):
+    subprocess.run(args, cwd=other, env=env, check=True, capture_output=True)
+subprocess.run([os.environ["REAL_GIT"], "clone", str(remote), str(other)], env=env, check=True, capture_output=True)
+shutil.copytree(publish / "bundle", other, dirs_exist_ok=True)
+data = other / "pipeline-data.json"
+value = json.loads(data.read_text())
+value["timestamp"] = (datetime.fromisoformat(value["timestamp"]) + timedelta(seconds=1)).isoformat()
+data.write_text(json.dumps(value))
+command(sys.executable, str(root / ".fullsend/shared/publish/push-results.py"),
+        "--results-dir", str(other), "--results-repo", str(remote), "--run-id", "concurrent")
+command(sys.executable, str(root / "scripts/extract-pipeline-data.py"),
+        "--data-dir", str(other / "RHAISTRAT"), "--output", str(other / "RHAISTRAT/summary.json"), "--no-body")
+command("git", "add", "RHAISTRAT/summary.json", "RHAISTRAT/summary-production.json")
+command("git", "commit", "-m", "Concurrent summaries")
+command("git", "push", "origin", "HEAD")
+''')
+        binary = host["tmp"] / "bin"
+        binary.mkdir()
+        wrapper = binary / "git"
+        wrapper.write_text('''#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == push && "${2:-}" == origin && "${3:-}" == HEAD && ! -f "$RACE_MARKER" ]]; then
+  touch "$RACE_MARKER"
+  "$TEST_PYTHON" "$COMPETITOR" "$SOURCE_ROOT" "$RACE_REMOTE" "$RACE_PUBLISH"
+fi
+exec "$REAL_GIT" "$@"
+''')
+        wrapper.chmod(0o755)
+        env.update(REAL_GIT=shutil.which("git"), ORIGINAL_PATH=env["PATH"],
+                   PATH=str(binary) + os.pathsep + env["PATH"], TEST_PYTHON=sys.executable,
+                   COMPETITOR=str(competitor), SOURCE_ROOT=str(ROOT), RACE_REMOTE=str(remote),
+                   RACE_PUBLISH=str(host["tmp"] / "run/publish"), RACE_MARKER=str(host["tmp"] / "raced"))
     first = subprocess.run(["bash", str(SHARED / "post-strategy.sh")], env=env, capture_output=True, text=True)
     assert first.returncode == 0, first.stdout + first.stderr
     accepted = _git(remote, "rev-parse", "main")
@@ -776,8 +891,14 @@ def test_post_script_retry_does_not_duplicate_remote_run_or_summary(host, jira, 
     results = host["tmp"] / "run/publish/results/RHAISTRAT"
     summary = json.loads((results / "summary-production.json").read_text())
     assert summary["summary"]["total_strategies"] == 2
-    assert {s["run_id"] for s in summary["summary"]["strategies"]} == {"run-run-2"}
-    assert [p.name for p in results.iterdir() if p.is_dir() and not p.is_symlink()] == ["run-run-2"]
+    expected_runs = {"run-run-2", "run-concurrent"} if concurrent else {"run-run-2"}
+    assert {r["run_id"] for r in summary["runs"]} == expected_runs
+    assert {s["run_id"] for s in summary["summary"]["strategies"]} == {
+        "run-concurrent" if concurrent else "run-run-2"}
+    assert {p.name for p in results.iterdir() if p.is_dir() and not p.is_symlink()} == expected_runs
+    if concurrent:
+        assert (host["tmp"] / "raced").exists()
+        assert "Summary push failed" in first.stdout
 
 
 def test_jira_lookup_failure_is_reported_without_a_traceback(host):

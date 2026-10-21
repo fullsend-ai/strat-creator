@@ -191,6 +191,14 @@ def pull_strategy(server, user, token, strat_key, local_dir="local", *, pipeline
         result["rfe_key"] = rfe_key
         print(f"  RFE original: {rfe_path}")
 
+    # A reference-only pipeline import needs its section boundary before
+    # reconstruction; local human pulls retain their existing warning behavior.
+    if pipeline_rfe is not None:
+        if "## Business Need (from RFE)" not in description_md:
+            description_md = "## Business Need (from RFE)\n\n" + description_md
+        if STRATEGY_HEADING not in description_md:
+            description_md += "\n\n" + STRATEGY_HEADING + "\n<!-- To be filled by /strategy-refine -->\n"
+
     # Reconstruct Business Need from linked RFE if description has a reference
     if RFE_REFERENCE_MARKER in description_md and not rfe_key:
         print(f"  WARNING: {strat_key} description contains an RFE reference "
@@ -205,10 +213,8 @@ def pull_strategy(server, user, token, strat_key, local_dir="local", *, pipeline
 
     if pipeline_rfe is not None:
         from push_strategy import STAFF_INPUT_TEMPLATE
-        if "## Business Need (from RFE)" not in description_md:
-            description_md = "## Business Need (from RFE)\n\n" + description_md
-        if STRATEGY_HEADING not in description_md:
-            description_md += "\n\n" + STRATEGY_HEADING + "\n<!-- To be filled by /strategy-refine -->\n"
+        if RFE_REFERENCE_MARKER in description_md:
+            raise ValueError(f"{strat_key}: Business Need reconstruction failed; original RFE content is required")
         if "## Staff Engineer / SME Input" not in description_md:
             description_md += "\n\n" + STAFF_INPUT_TEMPLATE
 

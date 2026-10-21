@@ -20,6 +20,11 @@
 # clone) still releases what the lock record lists.
 set -euo pipefail
 
+case "${STRAT_DRY_RUN:-}" in
+  ''|0|1|true) ;;
+  *) echo "STRAT_DRY_RUN must be empty/0 (live) or 1/true (dry run)" >&2; exit 1 ;;
+esac
+
 : "${TARGET_REPO_DIR:?TARGET_REPO_DIR must be set}"
 : "${STRAT_STATE_DIR:?STRAT_STATE_DIR must name a host-only directory}"
 MODE="${STRAT_MODE:?STRAT_MODE must be single, batch or resume}"

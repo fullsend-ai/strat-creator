@@ -20,6 +20,7 @@ Usage:
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -95,17 +96,23 @@ def load_run_artifacts(run_dir):
     skipped_path = os.path.join(run_dir, "strat-skipped.md")
     if os.path.exists(skipped_path):
         with open(skipped_path, encoding="utf-8") as f:
+            header = {}
             for line in f:
                 line = line.strip()
-                if line.startswith("|") and not line.startswith("| RFE") and not line.startswith("|--"):
-                    cols = [c.strip() for c in line.split("|")[1:-1]]
-                    if len(cols) >= 4:
-                        skipped.append({
-                            "rfe_key": cols[0],
-                            "title": cols[1],
-                            "labels": cols[2],
-                            "missing": cols[3],
-                        })
+                if not line.startswith("|"):
+                    continue
+                cols = [c.strip() for c in line.split("|")[1:-1]]
+                if cols and cols[0] == "RFE":
+                    header = {name.lower(): index for index, name in enumerate(cols)}
+                if len(cols) < 3 or not re.fullmatch(r"(?:RHAIRFE|RFE)-[0-9]+", cols[0]):
+                    continue
+                reason = header.get("reason", header.get("missing", 3 if len(cols) >= 4 else 2))
+                labels = header.get("labels", 2 if not header and len(cols) >= 4 else None)
+                skipped.append({
+                    "rfe_key": cols[0], "title": cols[1],
+                    "labels": cols[labels] if labels is not None and labels < len(cols) else "",
+                    "missing": cols[reason] if reason < len(cols) else "",
+                })
 
     return tasks, reviews, review_comments, skipped
 
@@ -328,6 +335,22 @@ def discover_runs(data_dir):
         yield entry, entry_path, ts
 
 
+def sealed_empty_publication(entry_path, pdata):
+    """Adopt intentionally empty publications, never incomplete artifact trees."""
+    if not (Path(entry_path).name.startswith("run-") and isinstance(pdata, dict)
+            and type((pdata.get("stats") or {}).get("total")) is int
+            and pdata["stats"]["total"] == 0 and pdata.get("strategies") == []):
+        return False
+    identity = json.loads((Path(entry_path) / ".publication.json").read_text())
+    expected = (identity.get("files") or {}).get("pipeline-data.json")
+    if not expected:
+        return False
+    actual = hashlib.sha256((Path(entry_path) / "pipeline-data.json").read_bytes()).hexdigest()
+    if expected != actual:
+        raise ValueError("published run metadata disagrees with its seal")
+    return True
+
+
 def scan_runs(data_dir, max_runs=None):
     """Discover published runs and extract data."""
     runs = []
@@ -341,7 +364,12 @@ def scan_runs(data_dir, max_runs=None):
 
     for entry, entry_path, ts in discover_runs(data_dir):
         print(f"  Scanning run {entry}...", file=sys.stderr)
-        run_data = extract_run(entry_path)
+        pdata = None
+        json_path = os.path.join(entry_path, "pipeline-data.json")
+        if os.path.exists(json_path):
+            with open(json_path, encoding="utf-8") as f:
+                pdata = json.load(f)
+        run_data = extract_run(entry_path, allow_empty=sealed_empty_publication(entry_path, pdata))
         if run_data is None:
             print("    Skipped (no artifacts)", file=sys.stderr)
             continue
@@ -350,11 +378,7 @@ def scan_runs(data_dir, max_runs=None):
         run_data["timestamp"] = ts.isoformat()
         run_data["is_current"] = (entry == current_target)
 
-        pdata = None
-        json_path = os.path.join(entry_path, "pipeline-data.json")
-        if os.path.exists(json_path):
-            with open(json_path, encoding="utf-8") as f:
-                pdata = json.load(f)
+        if pdata is not None:
             run_data["dry_run"] = pdata.get("dry_run", True)
             run_data["config"] = pdata.get("config")
         else:

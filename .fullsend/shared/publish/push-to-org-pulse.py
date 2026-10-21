@@ -198,6 +198,9 @@ def main():
     # Build feature payloads
     features = build_features(strategies)
     print(f"Prepared {len(features)} features for org pulse")
+    if not features:
+        print("INFO: No completed strategies available for export")
+        sys.exit(0)
 
     if args.dry_run:
         print("DRY RUN: Skipping API call")

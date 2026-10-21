@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -35,3 +36,25 @@ def test_pending_assessment_is_not_exported_as_a_completed_review(role, capsys):
     assert publisher.build_features([provisional, strategy()]) == [feature()]
     assert provisional == original
     assert "provisional review" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_all_provisional_cli_exits_without_a_sample_or_api_call(tmp_path, monkeypatch, capsys, dry_run):
+    provisional = strategy()
+    provisional["reviewers"]["scope"] = "pending"
+    directory = tmp_path / "RHAISTRAT"
+    directory.mkdir()
+    (directory / "summary-production.json").write_text(json.dumps({"summary": {"strategies": [provisional]}}))
+    monkeypatch.setenv("ORG_PULSE_API_TOKEN", "isolated-placeholder")
+    args = ["push-to-org-pulse.py", "--results-dir", str(tmp_path), "--api-url", "https://orgpulse.invalid"]
+    monkeypatch.setattr(sys, "argv", args + (["--dry-run"] if dry_run else []))
+
+    def unexpected(*args):
+        pytest.fail("provisional-only export must not call the API")
+
+    monkeypatch.setattr(publisher, "push_to_org_pulse", unexpected)
+    with pytest.raises(SystemExit) as stopped:
+        publisher.main()
+    assert stopped.value.code == 0
+    output = capsys.readouterr()
+    assert "No completed" in output.out and "Sample entry" not in output.out

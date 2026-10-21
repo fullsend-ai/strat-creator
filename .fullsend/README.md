@@ -276,6 +276,13 @@ generation time orders history. Explicit offsets are normalized to UTC, while
 legacy timestamps are interpreted as UTC. External timestamp-only readers need
 the same update before switching publication layouts.
 
+Intentionally empty identified publications remain in aggregate history with
+their skip reasons and dry-run classification. Their zero-strategy metadata
+must match the publication seal; empty legacy or incomplete directories are
+not adopted. Summary push retries synchronize and regenerate both summary
+files from the updated run inventory before each push. A synchronization
+failure stops publication rather than pushing a stale aggregate.
+
 Org Pulse remains a keyed bulk upsert; its deployment behavior is separate
 qualification, not an exactly-once event-delivery claim.
 Completed exports preserve individual reviewer dissent and architecture
@@ -285,11 +292,27 @@ warning. The Org Pulse consumer must accept architecture `skipped`; older
 consumers reject that entry. The non-blocking uploader logs per-entry errors,
 so check its warnings when qualifying a deployment.
 
+The consumer-owned contract is documented in Org Pulse's
+[data format reference](https://github.com/red-hat-data-services/rhai-org-pulse/blob/7ba9353e92dd29e056d9b83ea4b4d57e5940f7e1/docs/DATA-FORMATS.md)
+and enforced by its
+[feature validator](https://github.com/red-hat-data-services/rhai-org-pulse/blob/7ba9353e92dd29e056d9b83ea4b4d57e5940f7e1/modules/ai-impact/server/features/validation.js).
+[Consumer PR #1789](https://github.com/red-hat-data-services/rhai-org-pulse/pull/1789)
+merged that contract, matching `tests/fixtures/org-pulse-feature-contract.json`.
+It accepts `skipped` only for architecture and rejects `pending` for every role.
+Omitting a provisional strategy does not delete its earlier completed feature;
+the API retains that last completed result until a new completed result is
+exported. Consumer deployment and live ingestion still require qualification.
+
 Owned lock commands are `python3 scripts/lock_issues.py lock --owner RUN_ID
 --locked-keys-file PATH RHAIRFE-NNNN` and `unlock --owner RUN_ID RHAIRFE-NNNN`.
 Preserve the record and its `.owner.json` sidecar for cleanup. A bare `unlock`
 cannot clear an owned claim, and expected CLI errors return status 2 without
 a traceback.
+`release-locks.sh` checks ownership in an isolated host context, so failed
+work's freshness does not prevent release of this run's claims. It attempts
+every recorded key and returns failure after the inventory if any release
+fails. Foreign owners remain untouched and the outstanding record is retained
+for reconciliation; it is renamed `.released` only after all releases succeed.
 
 Validate these mechanics without inference using
 `uv run pytest tests/test_side_effect_recovery.py`; the isolated Jira/Git
@@ -406,6 +429,8 @@ are checked for blocking labels instead of being locked, and the skills run
 with `--dry-run`. Resume points still come from Jira in a dry run. A dry-run
 strategy is a local `STRAT-NNNN` with no Jira clone, so a dry run never
 resumes at `review`.
+Shared host preparation accepts only empty/`0` for live or `1`/`true` for a
+dry run. Any other value fails before Jira calls, vendoring or output cleanup.
 
 If the CI job itself is lost, the locks stay. Find them with the JQL
 `labels = strat-creator-processing`, and release them with

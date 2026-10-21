@@ -85,23 +85,26 @@ fi
 python3 "${SHARED}/publish/push-results.py" --results-dir "${RESULTS}" \
   --results-repo "${RESULTS_REPO_URL}" --run-id "$(field run_id)"
 cd -- "${RESULTS}"
-git pull --rebase -X theirs origin main || true
-python3 "${CLONE}/scripts/extract-pipeline-data.py" \
-  --data-dir "${RESULTS}/RHAISTRAT" --output "${RESULTS}/RHAISTRAT/summary.json" --no-body \
-  --generated-at "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generated_at"])' "${BUNDLE}/pipeline-data.json")"
-git add RHAISTRAT/summary.json RHAISTRAT/summary-production.json
-if git diff --cached --quiet; then
-  echo "Summaries unchanged, nothing to push."
-else
-  git commit -q -m "Update summaries"
-  pushed=false
-  for attempt in 1 2 3; do
-    if git push origin HEAD; then pushed=true; break; fi
-    echo "Summary push failed (attempt ${attempt}/3), pulling and retrying..."
-    git pull --rebase -X theirs origin main || true
-  done
-  [[ "${pushed}" == true ]] || { echo "ERROR: summary push failed after 3 attempts" >&2; exit 1; }
-fi
+generated_at="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generated_at"])' "${BUNDLE}/pipeline-data.json")"
+pushed=false
+for attempt in 1 2 3; do
+  # A successful rebase may retain our previous derived summary. Recompute
+  # from the synchronized run inventory before every push, including retries.
+  # A failed synchronization stops publication; never conceal a rebase error.
+  git pull --rebase -X theirs origin main
+  python3 "${CLONE}/scripts/extract-pipeline-data.py" \
+    --data-dir "${RESULTS}/RHAISTRAT" --output "${RESULTS}/RHAISTRAT/summary.json" --no-body \
+    --generated-at "${generated_at}"
+  git add RHAISTRAT/summary.json RHAISTRAT/summary-production.json
+  if git diff --cached --quiet; then
+    echo "Summaries unchanged, nothing to commit."
+  else
+    git commit -q -m "Update summaries"
+  fi
+  if git push origin HEAD; then pushed=true; break; fi
+  echo "Summary push failed (attempt ${attempt}/3), synchronizing and regenerating..."
+done
+[[ "${pushed}" == true ]] || { echo "ERROR: summary push failed after 3 attempts" >&2; exit 1; }
 
 if [[ -n "${ORG_PULSE_URL:-}" && -n "${ORG_PULSE_API_TOKEN:-}" ]]; then
   python3 "${SHARED}/publish/push-to-org-pulse.py" --results-dir "${RESULTS}" \
