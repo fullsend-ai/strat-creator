@@ -188,6 +188,65 @@ def test_registration_mismatch_stops_before_packaging(ci_consumer, tmp_path, fai
     assert not (tmp_path / "rejected").exists()
 
 
+def branch_registration(source, consumer, env):
+    branch = "feat/test-source"
+    git(source, "checkout", "-qb", branch)
+    config_path = consumer / ".fullsend/config.yaml"
+    content = yaml.safe_load(config_path.read_text())
+    for entry in content["agents"]:
+        name = entry["name"]
+        entry["source"] = f"https://raw.githubusercontent.com/example/strat-creator/{branch}/.fullsend/{name}/{name}.yaml"
+    config_path.write_text(yaml.safe_dump(content))
+    env["STRAT_CREATOR_BRANCH"] = branch
+    return branch, config_path.read_bytes()
+
+
+def test_branch_updates_only_affect_new_jobs(ci_consumer, tmp_path):
+    upstream, consumer, env = ci_consumer
+    branch, registered = branch_registration(upstream, consumer, env)
+    first_source = tmp_path / "first-source"
+    git(tmp_path, "clone", "-q", "--branch", branch, str(upstream), str(first_source))
+    first_revision = git(first_source, "rev-parse", "HEAD")
+    policy = upstream / ".fullsend/shared/policy.yaml"
+    policy.write_text(policy.read_text() + "\n# next job's policy\n")
+    git(upstream, "commit", "-qam", "advance branch")
+    second_source = tmp_path / "second-source"
+    git(tmp_path, "clone", "-q", "--branch", branch, str(upstream), str(second_source))
+    second_revision = git(second_source, "rev-parse", "HEAD")
+    assert first_revision != second_revision
+    # Resolve registrations and clone targets only after the upstream branch
+    # has moved. Both must still use each job's already fetched snapshot.
+    jobs = (("first", first_source, first_revision), ("second", second_source, second_revision))
+    for label, source, revision in jobs:
+        job_env = {**env, "STRAT_CREATOR_REF": revision}
+        runtime, target, receipt = (tmp_path / f"{label}-{name}" for name in ("runtime", "target", "source.json"))
+        config.materialize_runtime(consumer, runtime, job_env, source)
+        config.checkout_candidate(target, receipt, job_env, source)
+        assert git(target, "rev-parse", "HEAD") == revision
+        resolved = yaml.safe_load((runtime / "config.yaml").read_text())
+        record = json.loads(receipt.read_text())
+        assert record["branch"] == branch and record["commit"] == revision
+        for entry in resolved["agents"]:
+            name = entry["name"]
+            digest = hashlib.sha256((source / f".fullsend/{name}/{name}.yaml").read_bytes()).hexdigest()
+            assert entry["source"] == f"https://raw.githubusercontent.com/example/strat-creator/{revision}/.fullsend/{name}/{name}.yaml#sha256={digest}"
+            assert record["harness_sha256"][name] == digest
+        assert (runtime / "shared/policy.yaml").read_bytes() == (source / ".fullsend/shared/policy.yaml").read_bytes()
+        assert config.verify_consumer(consumer, job_env, source)["commit"] == revision
+    assert (consumer / ".fullsend/config.yaml").read_bytes() == registered
+    assert sorted(p.name for p in (consumer / ".fullsend").iterdir()) == ["config.yaml"]
+
+
+@pytest.mark.parametrize("branch", ["other-branch", "--bad", "bad ref", "bad..branch", "feature.lock"])
+def test_branch_registration_mismatch_is_rejected(ci_consumer, tmp_path, branch):
+    source, consumer, env = ci_consumer
+    branch_registration(source, consumer, env)
+    env["STRAT_CREATOR_BRANCH"] = branch
+    with pytest.raises(ValueError):
+        config.materialize_runtime(consumer, tmp_path / "rejected", env, source)
+    assert not (tmp_path / "rejected").exists()
+
+
 def test_secrets_and_private_key_fragments_scrubbed_without_following_links(tmp_path):
     key = tmp_path / "key.json"
     key.write_text(

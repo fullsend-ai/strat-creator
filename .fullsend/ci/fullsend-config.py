@@ -79,30 +79,45 @@ def verify_consumer(consumer, env, source=ROOT):
     if not re.fullmatch(r"https://github[.]com/[A-Za-z0-9_.-]+/strat-creator[.]git", repository):
         raise ValueError("STRAT_CREATOR_REPO must name a public GitHub strat-creator repository")
     prefix = repository.removesuffix(".git").replace("https://github.com/", "https://raw.githubusercontent.com/")
+    branch = env.get("STRAT_CREATOR_BRANCH", "")
+    if branch:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch):
+            raise ValueError("STRAT_CREATOR_BRANCH must name a branch")
+        try:
+            git("check-ref-format", "refs/heads/" + branch)
+        except subprocess.CalledProcessError as error:
+            raise ValueError("STRAT_CREATOR_BRANCH must name a valid branch") from error
     config = yaml.safe_load((consumer / ".fullsend/config.yaml").read_text())
     entries = config.get("agents", [])
     if len(entries) != 2 or {entry.get("name") for entry in entries} != {"strat-single", "strat-batch"}:
         raise ValueError("register exactly strat-single and strat-batch")
+    hashes = {}
     for entry in entries:
         name = entry["name"]
         path = f".fullsend/{name}/{name}.yaml"
         digest = hashlib.sha256((source / path).read_bytes()).hexdigest()
-        if entry.get("source") != f"{prefix}/{revision}/{path}#sha256={digest}":
-            raise ValueError("agent registration must match the source commit, path and hash")
+        expected = f"{prefix}/{branch}/{path}" if branch else f"{prefix}/{revision}/{path}#sha256={digest}"
+        if entry.get("source") != expected:
+            raise ValueError("agent registration must match the configured repository, branch/commit and harness")
+        hashes[name] = digest
         harness = yaml.safe_load((source / path).read_text())
         if harness["validation_loop"]["max_iterations"] != 1:
             raise ValueError("trial jobs require one validation iteration")
-    return {"repository": repository, "commit": revision}
+    record = {"repository": repository, "commit": revision, "harness_sha256": hashes}
+    if branch:
+        record["branch"] = branch
+    return record
 
 
 def materialize_runtime(consumer, destination, env, source=ROOT):
-    """Expand the pinned package into private runtime state, never source files.
+    """Expand one resolved source snapshot into private runtime state.
 
     Released Fullsend 0.47.1 resolves some remote companions against the
     consumer directory. Supply those companions from the verified checkout,
-    retaining the consumer's remote registrations unchanged.
+    Branch registrations are bound to the already checked-out commit here,
+    so later dependency resolution never follows the moving branch again.
     """
-    verify_consumer(consumer, env, source)
+    record = verify_consumer(consumer, env, source)
     if destination.exists():
         raise ValueError("runtime destination already exists; preserve the previous run")
     shutil.copytree(
@@ -119,7 +134,16 @@ def materialize_runtime(consumer, destination, env, source=ROOT):
             "fleet-entry.example.yaml",
         ),
     )
-    shutil.copyfile(consumer / ".fullsend/config.yaml", destination / "config.yaml")
+    if "branch" not in record:
+        shutil.copyfile(consumer / ".fullsend/config.yaml", destination / "config.yaml")
+    else:
+        config = yaml.safe_load((consumer / ".fullsend/config.yaml").read_text())
+        prefix = record["repository"].removesuffix(".git").replace("https://github.com/", "https://raw.githubusercontent.com/")
+        for entry in config["agents"]:
+            name = entry["name"]
+            digest = record["harness_sha256"][name]
+            entry["source"] = f"{prefix}/{record['commit']}/.fullsend/{name}/{name}.yaml#sha256={digest}"
+        (destination / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
 
 
 def checkout_candidate(destination, receipt, env, root=ROOT):

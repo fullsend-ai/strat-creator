@@ -467,21 +467,27 @@ collapses into one `plugins:` entry.
 ## GitLab CI consumer setup
 
 The pipeline repository owns the GitLab jobs, operator inputs and one
-`.fullsend/config.yaml` with remote, hash-pinned `strat-single` and `strat-batch`
+`.fullsend/config.yaml` with remote `strat-single` and `strat-batch`
 registrations. Reusable integration lives here under `.fullsend/ci/`: input and
 source checks, runtime preparation, the gateway launcher, dependency image,
 version pins and artifact redaction. Its model-free tests live in
 `tests/test_fullsend_ci.py`.
 
-CI clones `STRAT_CREATOR_REPO` at `STRAT_CREATOR_REF` and verifies HEAD before
-running this code. `fullsend-config.py validate <consumer>` checks manual inputs
-and verifies that both registrations match that source repository, commit and
-harness hashes. A source mismatch or an edited package stops preparation.
+CI follows `STRAT_CREATOR_BRANCH` in `STRAT_CREATOR_REPO`. Each job fetches the
+branch once, checks out its observed commit and exports that commit as the
+internal `STRAT_CREATOR_REF` before running this code. The consumer registrations
+name that same branch without maintained hashes. `fullsend-config.py validate
+<consumer>` checks manual inputs and verifies the repository, branch, checkout
+and harnesses. A source mismatch or an edited package stops preparation.
+Existing consumers with explicit commit/hash registrations remain supported.
 
 `run-fullsend.sh strat-single` or `strat-batch` then prepares a separate target
 checkout and a private runtime directory under `.fullsend-state/<job>/`. The
-runtime contains companions copied from the verified source and an unchanged
-copy of the consumer's remote registrations. The released Fullsend 0.47.1 binary
+runtime contains companions copied from the verified source. Branch registrations
+are resolved to that snapshot's commit and calculated hashes only in the private
+runtime config; the consumer's committed file stays unchanged. `source.json`
+records branch/commit/hash provenance. New jobs follow branch updates; a prepared
+job never refreshes its source. The released Fullsend 0.47.1 binary
 looks for some remote harness companions in its local configuration directory;
 a config-only native lock check reproduced the missing-plugin failure. Runtime
 materialization supplies those files without maintaining copies in the pipeline.
