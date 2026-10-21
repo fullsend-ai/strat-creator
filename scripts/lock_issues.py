@@ -46,6 +46,7 @@ BLOCKING_LABELS = frozenset({
     "strat-creator-processing",
     "strat-creator-needs-attention",
     "strat-creator-human-sign-off",
+    "strat-creator-rework-needed",
 })
 
 STRAT_REQUIRED_LABEL = "strat-creator-auto-created"

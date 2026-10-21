@@ -79,6 +79,17 @@ class TestLock:
         assert "BLOCKED" in result.stderr
         assert result.stdout.strip() == ""
 
+    def test_lock_rework_needed_single_skips(self, jira):
+        jira.create("RHAIRFE-5005", "RFE awaiting rework",
+                     "Description.",
+                     labels=["strat-creator-rework-needed"])
+
+        result = _run(jira, ["lock", "RHAIRFE-5005"])
+        assert result.returncode == 0
+        assert "BLOCKED" in result.stderr
+        assert "strat-creator-rework-needed" in result.stderr
+        assert result.stdout.strip() == ""
+
     def test_lock_batch_skips_blocked(self, jira):
         jira.create("RHAIRFE-5010", "Good RFE A", "Description.")
         jira.create("RHAIRFE-5011", "Locked RFE B",

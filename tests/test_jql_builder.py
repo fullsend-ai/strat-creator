@@ -5,8 +5,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 from jira_utils import build_jql_from_config
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 
 class TestBuildJqlFromConfig:
+
+    def test_default_settings_exclude_rework_needed_label(self):
+        config = os.path.join(PROJECT_ROOT, "config", "pipeline-settings.yaml")
+
+        jql = build_jql_from_config(config)
+
+        assert ('(labels NOT IN ("strat-creator-processing", '
+                '"strat-creator-rework-needed") OR labels IS EMPTY)') in jql
 
     def _write_config(self, tmp_path, content):
         path = tmp_path / "pipeline-settings.yaml"

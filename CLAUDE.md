@@ -76,7 +76,11 @@ Read operations support two modes:
 
 ### Write Operations
 
-Not yet implemented for strat-creator. Strategy submission to Jira will be added as a future skill.
+Skills that change Jira issues use `scripts/jira_utils.py` with the
+`JIRA_SERVER`, `JIRA_USER`, and `JIRA_TOKEN` environment variables. Use the
+provided helpers for comments, labels, and transitions rather than making raw
+REST calls. The `/strategy-reject` skill closes a pipeline-created strategy
+and returns its source RFE for human rework.
 
 ## Jira Field Mappings
 

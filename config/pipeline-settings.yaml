@@ -62,6 +62,7 @@ jql:
     - tech-reviewed
   excluded_labels:     # RFE-level locks — lock_issues.py would reject these
     - strat-creator-processing
+    - strat-creator-rework-needed
   excluded_statuses:
     - Closed
     - Resolved
