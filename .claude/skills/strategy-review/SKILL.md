@@ -138,6 +138,7 @@ Skill(skill="strategy-feasibility-review", args="RHAISTRAT-NNNN")
 Skill(skill="strategy-testability-review", args="RHAISTRAT-NNNN")
 Skill(skill="strategy-scope-review", args="RHAISTRAT-NNNN")
 Skill(skill="strategy-architecture-review", args="RHAISTRAT-NNNN")
+Skill(skill="strategy-security-review", args="RHAISTRAT-NNNN")
 ```
 
 Do NOT use the Agent tool for reviews. Use the Skill tool — the reviewer skills are defined in `.claude/skills/` and contain specific review instructions.
@@ -146,6 +147,7 @@ Do NOT use the Agent tool for reviews. Use the Skill tool — the reviewer skill
 - **`strategy-testability-review`**: Are acceptance criteria testable? What edge cases are missing?
 - **`strategy-scope-review`**: Is the strategy right-sized? Does the effort match the scope?
 - **`strategy-architecture-review`** (if architecture context available): Are dependencies correctly identified? Are integration patterns correct?
+- **`strategy-security-review`**: Are security NFRs addressed? Are there auth, data protection, supply chain, or agent/MCP risks?
 
 Each reviewer auto-detects local mode (`local/strat-tasks/` vs `artifacts/strat-tasks/`) and reads the appropriate directories.
 
@@ -171,6 +173,9 @@ The review file body should contain:
 ## Architecture Review: {STRAT_ID} — {title}
 <assessment from architecture reviewer, or "skipped — no context">
 
+## Security Review: {STRAT_ID} — {title}
+<assessment from security reviewer>
+
 ## Agreements
 <where reviewers aligned>
 
@@ -185,7 +190,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-reviews/<
     reviewers.feasibility=<prose_verdict> \
     reviewers.testability=<prose_verdict> \
     reviewers.scope=<prose_verdict> \
-    reviewers.architecture=<prose_verdict>
+    reviewers.architecture=<prose_verdict> \
+    reviewers.security=<prose_verdict>
 ```
 
 **Important:** The `recommendation` field is NEVER changed by prose reviewers. It comes from the numeric scores only. Prose reviewers set their own `reviewers.*` verdicts for informational purposes — these do NOT affect the gate decision.
