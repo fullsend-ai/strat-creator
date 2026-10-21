@@ -157,6 +157,28 @@ def require_env():
     return server, user, token
 
 
+def require_jira_write_auth():
+    """Validate Jira credentials are present for write operations.
+
+    Returns (server, user, token) if all three env vars are non-empty.
+    Raises SystemExit(1) with a clear message if any credential is missing,
+    providing an explicit authorization gate before Jira mutations.
+    """
+    server, user, token = require_env()
+    missing = []
+    if not server or not server.strip():
+        missing.append("JIRA_SERVER")
+    if not user or not user.strip():
+        missing.append("JIRA_USER")
+    if not token or not token.strip():
+        missing.append("JIRA_TOKEN")
+    if missing:
+        print(f"[AUTH] Jira write blocked: {', '.join(missing)} not set",
+              file=sys.stderr)
+        raise SystemExit(1)
+    return server, user, token
+
+
 # ─── Jira Operations ─────────────────────────────────────────────────────────
 
 def search_issues(server, user, token, jql, fields=None, max_results=50):

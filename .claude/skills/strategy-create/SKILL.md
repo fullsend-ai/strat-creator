@@ -176,7 +176,87 @@ From the script output, filter out any with status **Closed**, **Resolved**, **I
 
 **Multiple open STRATs**: After filtering, if **more than one** RHAISTRAT remains in early states (e.g., New, Open), **skip this RFE** — multiple open STRATs means ambiguity that requires human resolution. Append to `artifacts/strat-skipped.md` with reason: `multiple open STRATs: RHAISTRAT-NNNN, RHAISTRAT-MMMM`. Print `[SKIP] RHAIRFE-NNNN — multiple open STRATs found, requires human decision`. If exactly one remains, import it.
 
-**Pipeline label gate**: From the script output, check each remaining STRAT candidate's labels. If the STRAT has either `strat-creator-rubric-pass` or `strat-creator-needs-attention`, **skip this RFE** — the STRAT has already been processed by the pipeline:
+**Premature sign-off label check**: Before checking the pipeline gate, validate that `strat-creator-human-sign-off` is not applied without the prerequisite `strat-creator-rubric-pass`. From the script output, if any STRAT candidate has `strat-creator-human-sign-off` but does NOT have `strat-creator-rubric-pass`:
+- Remove the premature `strat-creator-human-sign-off` label
+- Post a comment to the STRAT explaining the label was removed and why
+- Continue processing this STRAT (do NOT skip it)
+
+```bash
+python3 -c "
+import sys, os, json, pathlib
+_sd = os.environ['CLAUDE_SKILL_DIR']
+if not os.path.isabs(_sd):
+    raise SystemExit('CLAUDE_SKILL_DIR must be an absolute path')
+sys.path.insert(0, str(pathlib.Path(_sd) / 'scripts'))
+from jira_utils import (get_issue, remove_labels, add_labels, add_comment,
+                         get_comments, adf_to_markdown, markdown_to_adf,
+                         require_jira_write_auth)
+s, u, t = require_jira_write_auth()
+key = 'RHAISTRAT-NNNN'
+# Deterministic guard: re-fetch current labels and verify preconditions before mutating
+issue = get_issue(s, u, t, key, fields=['labels'])
+labels = [l['name'] if isinstance(l, dict) else l for l in issue.get('fields', {}).get('labels', [])]
+if 'strat-creator-human-sign-off' not in labels:
+    print(f'[GUARD] {key}: strat-creator-human-sign-off not present, skipping removal')
+    sys.exit(0)
+if 'strat-creator-rubric-pass' in labels:
+    print(f'[GUARD] {key}: strat-creator-rubric-pass present, sign-off is valid')
+    sys.exit(0)
+# Preconditions met: sign-off present without rubric-pass — remove with compensation
+COMMENT_MARKER = 'label was removed because it was applied without the prerequisite'
+comment = '''*[Strat Creator]* The \`strat-creator-human-sign-off\` label was removed because it was applied without the prerequisite \`strat-creator-rubric-pass\` label.
+
+**Required workflow:**
+1. Strategy must first pass CI review (earn \`strat-creator-rubric-pass\`)
+2. Then a staff engineer can apply \`strat-creator-human-sign-off\` to mark it feature-ready
+
+This strategy will now be processed by the pipeline. Once it earns \`strat-creator-rubric-pass\`, you can use \`/strategy-signoff\` to properly sign off.'''
+try:
+    remove_labels(s, u, t, key, ['strat-creator-human-sign-off'])
+    # Idempotent comment: check if already posted before adding
+    existing = get_comments(s, u, t, key)
+    already_posted = any(
+        COMMENT_MARKER in adf_to_markdown(c.get('body', {}))
+        for c in existing if isinstance(c.get('body'), dict)
+    )
+    if not already_posted:
+        add_comment(s, u, t, key, markdown_to_adf(comment))
+    else:
+        print(f'[GUARD] {key}: premature sign-off comment already exists, skipping duplicate')
+except Exception as e:
+    # State-aware compensation: check current Jira state before deciding
+    print(f'[ERROR] Recovery failed ({e}). Checking current state for compensation.')
+    try:
+        current = get_issue(s, u, t, key, fields=['labels'])
+        current_labels = [l['name'] if isinstance(l, dict) else l for l in current.get('fields', {}).get('labels', [])]
+        if 'strat-creator-human-sign-off' in current_labels:
+            print(f'[RECOVERED] {key}: strat-creator-human-sign-off still present, no compensation needed.')
+        elif 'strat-creator-rubric-pass' in current_labels:
+            print(f'[RECOVERED] {key}: rubric-pass present, not re-adding premature sign-off (invariant preserved).')
+        else:
+            add_labels(s, u, t, key, ['strat-creator-human-sign-off'])
+            verify = get_issue(s, u, t, key, fields=['labels'])
+            verify_labels = [l['name'] if isinstance(l, dict) else l for l in verify.get('fields', {}).get('labels', [])]
+            if 'strat-creator-human-sign-off' not in verify_labels:
+                print(f'[FATAL] Compensation failed: strat-creator-human-sign-off not confirmed on {key} after re-add. Manual intervention required.')
+                sys.exit(1)
+            print(f'[COMPENSATED] Label re-added and verified on {key}.')
+    except Exception as e2:
+        print(f'[FATAL] Compensation also failed ({e2}). Label state for {key} is unknown. Manual intervention required.')
+        sys.exit(1)
+    sys.exit(1)
+# Re-fetch labels after successful recovery for downstream gate
+final_issue = get_issue(s, u, t, key, fields=['labels'])
+final_labels = [l['name'] if isinstance(l, dict) else l for l in final_issue.get('fields', {}).get('labels', [])]
+print('FINAL_LABELS=' + json.dumps(final_labels))
+print(f'[LABEL REMOVED] strat-creator-human-sign-off removed from {key} (missing prerequisite: strat-creator-rubric-pass)')
+print(f'[COMMENT] Posted explanation to {key}')
+"
+```
+
+The script exits with code 1 if recovery failed -- check output for `[COMPENSATED]` (label restored and verified, safe to continue), `[RECOVERED]` (no compensation needed, original state intact), or `[FATAL]` (label state unknown, requires manual intervention). If exit code is non-zero and output contains `[FATAL]`, **skip this STRAT** — do NOT proceed to the pipeline label gate with unknown Jira state. Print `[ERROR] Premature sign-off recovery FATAL for RHAISTRAT-NNNN — skipping to avoid processing with unknown label state` and continue to the next RFE. If exit code is non-zero with `[COMPENSATED]` or `[RECOVERED]`, print `[ERROR] Premature sign-off recovery failed for RHAISTRAT-NNNN -- check output for details, manual intervention may be needed` and continue processing. On success (exit 0), the output contains a `FINAL_LABELS=<json>` line with the STRAT's current labels after recovery -- use these for the gate check below instead of the earlier `find_strat_for_rfe.py` output to ensure the gate operates on current Jira state.
+
+**Pipeline label gate**: From the `FINAL_LABELS` output (if the recovery script ran and succeeded) or the original `find_strat_for_rfe.py` output, check each remaining STRAT candidate's labels. If the STRAT has either `strat-creator-rubric-pass` or `strat-creator-needs-attention`, **skip this RFE** — the STRAT has already been processed by the pipeline:
 - Do NOT import the STRAT
 - Append to `artifacts/strat-skipped.md` with reason and run info (same format as Step 2a): `RHAISTRAT-NNNN already processed (label: <label>)`
 - Print `[SKIP] RHAIRFE-NNNN — RHAISTRAT-NNNN already has <label>`
@@ -216,7 +296,11 @@ Template sections to append (only when missing per sub-steps c and d):
 
 ```bash
 python3 -c "
-import sys; sys.path.insert(0, '${CLAUDE_SKILL_DIR}/scripts')
+import sys, os, pathlib
+_sd = os.environ['CLAUDE_SKILL_DIR']
+if not os.path.isabs(_sd):
+    raise SystemExit('CLAUDE_SKILL_DIR must be an absolute path')
+sys.path.insert(0, str(pathlib.Path(_sd) / 'scripts'))
 from jira_utils import reconstruct_business_need_file
 if reconstruct_business_need_file('artifacts/strat-tasks/RHAISTRAT-NNNN.md', 'artifacts/strat-originals/RHAIRFE-NNNN.md'):
     print('[RECONSTRUCT] Business Need restored from RHAIRFE-NNNN')
@@ -288,7 +372,11 @@ If not in dry-run mode and a RHAISTRAT was created or imported (i.e., `jira_key`
 
 ```bash
 python3 -c "
-import sys; sys.path.insert(0, 'scripts')
+import sys, os, pathlib
+_sd = os.environ['CLAUDE_SKILL_DIR']
+if not os.path.isabs(_sd):
+    raise SystemExit('CLAUDE_SKILL_DIR must be an absolute path')
+sys.path.insert(0, str(pathlib.Path(_sd) / 'scripts'))
 from jira_utils import add_labels, require_env
 s, u, t = require_env()
 add_labels(s, u, t, 'RHAISTRAT-NNNN', ['strat-creator-auto-created'])

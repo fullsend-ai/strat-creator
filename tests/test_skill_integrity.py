@@ -15,6 +15,8 @@ SYSPATH_PATTERN = re.compile(
     r"sys\.path\.insert\(0,\s*'\$\{CLAUDE_SKILL_DIR\}/scripts'\)")
 IMPORT_PATTERN = re.compile(
     r'from\s+(\w+)\s+import')
+ENV_SKILL_DIR_PATTERN = re.compile(
+    r"os\.environ\[.CLAUDE_SKILL_DIR.\]")
 
 
 def _discover_skills():
@@ -43,19 +45,44 @@ def _extract_script_refs(content):
 
 
 def _extract_module_refs(content):
-    """Extract module names from sys.path.insert + import patterns."""
+    """Extract module names from trusted CLAUDE_SKILL_DIR import patterns."""
     modules = set()
     lines = content.split("\n")
     for i, line in enumerate(lines):
-        if SYSPATH_PATTERN.search(line):
-            for j in range(i, min(i + 3, len(lines))):
+        if SYSPATH_PATTERN.search(line) or ENV_SKILL_DIR_PATTERN.search(line):
+            for j in range(i, min(i + 8, len(lines))):
                 m = IMPORT_PATTERN.search(lines[j])
                 if m:
                     modules.add(m.group(1))
     return list(modules)
 
 
+CWD_SYSPATH_PATTERN = re.compile(
+    r"""sys\s*\.\s*path\s*\.\s*insert\s*\(\s*0\s*,\s*
+        (['"])(?:\./)?scripts\1\s*\)""",
+    re.VERBOSE,
+)
+
+ALL_SKILLS = _discover_skills()
 ALL_SKILLS_WITH_SCRIPT_REFS = _skills_referencing_scripts()
+
+
+# ─── No CWD-based Imports ──────────────────────────────────────────────────
+
+
+class TestNoCwdImports:
+
+    @pytest.mark.parametrize("skill_name,skill_path,content",
+                             ALL_SKILLS,
+                             ids=[s[0] for s in ALL_SKILLS])
+    def test_no_cwd_based_sys_path_insert(self, skill_name, skill_path,
+                                           content):
+        matches = CWD_SYSPATH_PATTERN.findall(content)
+        assert not matches, (
+            f"Skill '{skill_name}' uses CWD-based "
+            f"sys.path.insert(0, 'scripts') ({len(matches)} occurrence(s)). "
+            f"Use sys.path.insert(0, '${{CLAUDE_SKILL_DIR}}/scripts') instead "
+            f"to avoid CWE-427 untrusted search path.")
 
 
 # ─── Symlink Presence ────────────────────────────────────────────────────────
