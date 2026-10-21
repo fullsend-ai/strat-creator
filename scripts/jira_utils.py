@@ -20,6 +20,7 @@ import tempfile
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from strat_side_effects import check_owner, digest, perform
@@ -427,14 +428,19 @@ def same_jira_value(current, expected):
     return current == expected
 
 
+def find_matching_comment(server, user, token, issue_key, body_adf):
+    """Read back one exact comment, without posting or adopting duplicates."""
+    matches = [c for c in get_comments(server, user, token, issue_key) if same_jira_value(c.get("body"), body_adf)]
+    if len(matches) > 1:
+        raise RuntimeError("duplicate matching review comments require reconciliation")
+    return matches[0] if matches else None
+
+
 def add_comment(server, user, token, issue_key, body_adf):
     """Post once per exact body, reconciling visible comments before retry."""
     path = f"/issue/{issue_key}/comment"
     def read():
-        matches = [c for c in get_comments(server, user, token, issue_key) if same_jira_value(c.get("body"), body_adf)]
-        if len(matches) > 1:
-            raise RuntimeError("duplicate matching review comments require reconciliation")
-        return matches[0] if matches else None
+        return find_matching_comment(server, user, token, issue_key, body_adf)
     return perform(server, "comment", issue_key, body_adf, read,
                    lambda: api_call(server, path, user, token, body={"body": body_adf}),
                    lambda data: check_owner(server, user, token, issue_key, data), slot="review-summary")
@@ -597,20 +603,7 @@ def add_attachment(server, user, token, issue_key, filepath, filename=None,
         "X-Atlassian-Token": "no-check",
     }
     def read():
-        attachments = get_issue(server, user, token, issue_key, fields=["attachment"])["fields"].get("attachment", [])
-        matches = []
-        for att in attachments:
-            if att.get("filename") != filename:
-                continue
-            with tempfile.TemporaryDirectory() as temp:
-                local = os.path.join(temp, "attachment")
-                download_attachment(server, user, token, att["content"], local)
-                with open(local, "rb") as stream:
-                    if stream.read() == file_data:
-                        matches.append(att)
-        if len(matches) > 1:
-            raise RuntimeError("duplicate matching attachments require reconciliation")
-        return matches if matches else None
+        return find_matching_attachments(server, user, token, issue_key, filename, file_data)
     def write():
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:
@@ -620,17 +613,59 @@ def add_attachment(server, user, token, issue_key, filepath, filename=None,
                    lambda data: check_owner(server, user, token, issue_key, data), slot=filename)
 
 
+def find_matching_attachments(server, user, token, issue_key, filename, file_data):
+    """Read back exact uploaded bytes, without issuing an upload."""
+    attachments = get_issue(server, user, token, issue_key, fields=["attachment"])["fields"].get("attachment", [])
+    matches = []
+    for attachment in attachments:
+        if attachment.get("filename") != filename:
+            continue
+        with tempfile.TemporaryDirectory() as temporary:
+            local = os.path.join(temporary, "attachment")
+            download_attachment(server, user, token, attachment["content"], local)
+            with open(local, "rb") as stream:
+                if stream.read() == file_data:
+                    matches.append(attachment)
+    if len(matches) > 1:
+        raise RuntimeError("duplicate matching attachments require reconciliation")
+    return matches if matches else None
+
+
+def _attachment_origin(url):
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("attachment URL must use HTTP(S) without embedded credentials")
+    return parsed.scheme, parsed.hostname.lower(), parsed.port or (443 if parsed.scheme == "https" else 80)
+
+
 def download_attachment(server, user, token, content_url, dest_path):
-    """Download a Jira attachment by its content URL."""
+    """Follow attachment redirects without sending Jira credentials off-origin."""
+    jira_origin = _attachment_origin(server)
     credentials = base64.b64encode(f"{user}:{token}".encode()).decode()
-    headers = {
-        "Authorization": f"Basic {credentials}",
-        "Accept": "*/*",
-    }
-    req = urllib.request.Request(content_url, headers=headers)
-    with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:
-        with open(dest_path, "wb") as f:
-            f.write(resp.read())
+    url, require_https = content_url, jira_origin[0] == "https"
+    for redirects in range(_MAX_REDIRECTS + 1):
+        origin = _attachment_origin(url)
+        if require_https and origin[0] != "https":
+            raise ValueError("attachment download cannot downgrade HTTPS")
+        require_https = require_https or origin[0] == "https"
+        headers = {"Accept": "*/*"}
+        if origin == jira_origin:
+            headers["Authorization"] = f"Basic {credentials}"
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with _redirect_opener.open(req, timeout=120) as response:
+                body = response.read()
+            with open(dest_path, "wb") as stream:
+                stream.write(body)
+            return
+        except urllib.error.HTTPError as error:
+            if error.code not in (301, 302, 303, 307, 308) or not error.headers.get("Location"):
+                raise
+            location = error.headers["Location"]
+            error.close()
+            if redirects == _MAX_REDIRECTS:
+                raise RuntimeError("too many attachment redirects") from None
+            url = urllib.parse.urljoin(url, location)
 
 
 def attachment_sort_key(attachment):

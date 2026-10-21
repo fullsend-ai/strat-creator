@@ -499,6 +499,15 @@ Model defaults, concurrency ten and background wait ceilings belong to the
 source harnesses. The existing business validator, one-attempt limit, owned
 claim cleanup and publication gates remain in place.
 
+The shared sandbox policy allows the Jira API and api.media.atlassian.com:443
+for Python attachment verification. Jira Cloud redirects uploaded file downloads
+to its signed media endpoint. The client keeps Jira credentials on the Jira
+origin and rejects HTTPS downgrades. Prepared live reviews cannot fall back to
+--dry-run after a network failure. Recording review completion reads back the
+numeric verdict label, exact summary and uploaded review bytes; incomplete
+publication preserves the composed reports and write intent for reconciliation.
+The fast local completion hooks do not perform this network work.
+
 Each new job fetches the current architecture-context default-branch HEAD,
 selects a real release directory and overlays, and records the observed commit.
 It excludes sibling aliases with unavailable targets. The copy remains stable

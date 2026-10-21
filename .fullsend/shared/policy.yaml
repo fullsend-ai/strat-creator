@@ -29,5 +29,10 @@ network_policies:
     - host: redhat.atlassian.net
       port: 443
       tls: skip
+    # Jira Cloud serves uploaded attachment bytes through this signed media
+    # redirect. The client verifies TLS and sends no Jira credentials here.
+    - host: api.media.atlassian.com
+      port: 443
+      tls: skip
     binaries:
     - path: '**/python3*'

@@ -487,6 +487,8 @@ def _downloaded_repo(tmp_path, run, verdicts):
         _state(repo, "mark", "refine", strat)
     _state(repo, "mark", "push")
     for strat, _ in verdicts.values():
+        subprocess.run([sys.executable, str(ROOT / "scripts/publish_review.py"), strat],
+                       cwd=repo, check=True, capture_output=True, text=True)
         _state(repo, "record-review", strat)
     _state(repo, "result")
     return repo
@@ -500,7 +502,9 @@ def _validate(repo, run_path, env):
 
 
 @pytest.fixture
-def validated_run(tmp_path, jira):
+def validated_run(tmp_path, jira, monkeypatch):
+    for name, value in {"JIRA_SERVER": jira.url, "JIRA_USER": "admin", "JIRA_TOKEN": "admin"}.items():
+        monkeypatch.setenv(name, value)
     jira.create("RHAIRFE-7101", "RFE one", "Need.")
     jira.create("RHAIRFE-7102", "RFE two", "Need.")
     _strat(jira, "RHAISTRAT-8101", "RHAIRFE-7101", ["strat-creator-auto-created",

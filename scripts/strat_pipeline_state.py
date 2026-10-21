@@ -418,6 +418,12 @@ def cmd_record_review(args):
             die("review composition belongs to another workflow run")
     except Exception as error:
         die(f"cannot record review {key}: {error}")
+    if not data.get("dry_run"):
+        from publish_review import verify_publication
+        try:
+            verify_publication(Path.cwd().resolve(), key)
+        except (OSError, ValueError, RuntimeError) as error:
+            die(f"cannot record review {key}: live publication is incomplete: {error}")
     path = REVIEWS / f"{key}-review.md"
     if path.is_symlink() or not path.is_file():
         die(f"{path} not found")

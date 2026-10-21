@@ -314,6 +314,7 @@ def test_verified_push_reuses_unchanged_inputs_in_later_job(live):
 
 def test_review_only_draft_import_is_restored_before_review_and_final_validation(live, monkeypatch):
     from artifact_utils import read_frontmatter_validated, update_frontmatter
+    from publish_review import publish
     from review_composition import verify_review
     from review_composition_support import prepare
     from strat_pipeline_outcome import verify_completion
@@ -344,6 +345,7 @@ def test_review_only_draft_import_is_restored_before_review_and_final_validation
     assert jira.get("RHAISTRAT-8801")["fields"]["description"] == published
     monkeypatch.chdir(repo)
     prepare(repo, "RHAISTRAT-8801", "RHAIRFE-8801", (1, 1, 1, 1))
+    assert publish(repo, "RHAISTRAT-8801")["needs_attention"] is True
     assert command(repo, "record-review", "RHAISTRAT-8801").returncode == 0
     assert command(repo, "result").returncode == 0
     receipt = verify_completion(repo, repo / "output/agent-result.json")

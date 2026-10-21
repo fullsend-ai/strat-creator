@@ -92,6 +92,13 @@ Never substitute an MCP mutation or raw POST after a helper error. Use
 numeric verdict labels. Jira ownership labels are recovery guards, not atomic
 distributed locks; foreign or multiple owners stop work and cleanup.
 
+Prepared live reviews cannot substitute `--dry-run` or silently save locally
+when credentials/publication are unavailable. `record-review` verifies the
+published summary, attachment bytes and numeric verdict label before marking
+completion. Preserve pending effects and composed reports after a publication
+failure. Jira attachment redirects use signed media access without forwarding
+Jira credentials off-origin.
+
 HTTP retries apply to reads (including POST search), not Jira mutations. A
 failed write may already have committed; the helpers reconcile its readback
 or stop on uncertainty. Standalone human use without prepared pipeline state

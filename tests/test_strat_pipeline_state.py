@@ -78,6 +78,11 @@ def test_draft_review_import_cannot_be_promoted_without_matching_unused_proof(re
 
 
 def test_review_only_strategy_needs_no_refine_or_push(repo):
+    # This unit fixture checks local progress; live publication is covered
+    # separately against the Jira emulator before record-review can succeed.
+    data = json.loads((repo / "tmp/strat-input.json").read_text())
+    data["dry_run"] = True
+    (repo / "tmp/strat-input.json").write_text(json.dumps(data))
     _task(repo, "RHAISTRAT-1", "RHAIRFE-1")
     _task(repo, "RHAISTRAT-2", "RHAIRFE-2")
     created = json.loads(_run(repo, "record-create").stdout)

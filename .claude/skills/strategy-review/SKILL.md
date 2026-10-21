@@ -13,6 +13,11 @@ If `--dry-run` is in `$ARGUMENTS`, skip ALL external writes:
 - Do NOT write or update any Jira issues
 - Do NOT post review comments to Jira — save them to `artifacts/strat-reviews/{id}-review-comment.md` instead
 - DO still read from Jira and local artifacts (reads are safe)
+
+For a prepared pipeline run, `tmp/strat-input.json` determines the mode.
+Never add `--dry-run` to work around a live publication error. A prepared live
+run rejects that override and requires successful publication before review
+completion can be recorded.
 - DO still create local review files in `artifacts/strat-reviews/`
 
 ## Local Mode
@@ -243,7 +248,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/publish_review.py RHAISTRAT-NNNN
 ```
 
 In dry-run mode use `--dry-run`; it saves the summary and skips external writes.
-Missing credentials also saves locally. For local human review, skip this step.
+Standalone use without credentials also saves locally. A prepared live run
+requires credentials and verified publication. `record-review` reads back the
+exact summary, review attachment and numeric verdict label before recording
+completion. A network error must remain a failed publication; do not substitute
+dry-run or record it complete. For local human review, skip this step.
 
 A pending or conflicting write stops publication. Preserve `tmp/strat-effects/`
 and the verified review. Do not regenerate reports, change the summary, delete
