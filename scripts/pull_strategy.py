@@ -197,7 +197,12 @@ def pull_strategy(server, user, token, strat_key, local_dir="local", *, pipeline
         if "## Business Need (from RFE)" not in description_md:
             description_md = "## Business Need (from RFE)\n\n" + description_md
         if STRATEGY_HEADING not in description_md:
-            description_md += "\n\n" + STRATEGY_HEADING + "\n<!-- To be filled by /strategy-refine -->\n"
+            # Reconstruction replaces everything before Strategy. Put that
+            # boundary before SME/other sections so human guidance survives.
+            boundary = re.search(r"(?m)^## (?!Business Need \(from RFE\))", description_md)
+            index = boundary.start() if boundary else len(description_md)
+            placeholder = "\n\n" + STRATEGY_HEADING + "\n<!-- To be filled by /strategy-refine -->\n\n"
+            description_md = description_md[:index].rstrip() + placeholder + description_md[index:]
 
     # Reconstruct Business Need from linked RFE if description has a reference
     if RFE_REFERENCE_MARKER in description_md and not rfe_key:

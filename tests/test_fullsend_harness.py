@@ -45,6 +45,7 @@ def test_harness_shape(name):
     assert h["validation_loop"]["feedback_mode"] == "append"
     assert all(PINNED.match(u) for u in h["openshell"]["profiles"] + h["providers"])
     runner = h["env"]["runner"]
+    assert h["env"]["sandbox"]["STRAT_MANAGED_RUN"] == "1"
     assert runner["STRAT_MODE"] == name.removeprefix("strat-")
     assert "STRAT_STATE_DIR" in runner and "STRAT_STATE_DIR" not in h["env"]["sandbox"]
     assert "STRAT_CREATOR_REF" in runner

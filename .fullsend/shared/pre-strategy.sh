@@ -20,9 +20,10 @@
 # clone) still releases what the lock record lists.
 set -euo pipefail
 
-case "${STRAT_DRY_RUN:-}" in
-  ''|0|1|true) ;;
-  *) echo "STRAT_DRY_RUN must be empty/0 (live) or 1/true (dry run)" >&2; exit 1 ;;
+export STRAT_DRY_RUN="${STRAT_DRY_RUN:-1}"
+case "${STRAT_DRY_RUN}" in
+  0|1|true) ;;
+  *) echo "STRAT_DRY_RUN must be 0 (live) or 1/true (dry run; default)" >&2; exit 1 ;;
 esac
 
 : "${TARGET_REPO_DIR:?TARGET_REPO_DIR must be set}"

@@ -221,9 +221,9 @@ def main(argv, env):
         print("usage: prepare_run.py single|batch|resume", file=sys.stderr)
         return 1
     mode = argv[1]
-    dry_value = env.get("STRAT_DRY_RUN", "")
-    if dry_value not in ("", "0", "1", "true"):
-        print("prepare-run: STRAT_DRY_RUN must be empty/0 (live) or 1/true (dry run)", file=sys.stderr)
+    dry_value = env.get("STRAT_DRY_RUN") or "1"
+    if dry_value not in ("0", "1", "true"):
+        print("prepare-run: STRAT_DRY_RUN must be 0 (live) or 1/true (dry run; default)", file=sys.stderr)
         return 1
     dry_run = dry_value in ("1", "true")
     run_id, state = env.get("STRAT_RUN_ID", ""), env.get("STRAT_STATE_DIR", "")

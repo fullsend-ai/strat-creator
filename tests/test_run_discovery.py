@@ -103,6 +103,8 @@ def test_both_readers_reject_invalid_identified_run_metadata(tmp_path, fault):
 @pytest.mark.parametrize("header,row,labels", [
     ("RFE | Summary | Reason", "RHAIRFE-7001 | A gated RFE | Existing STRAT is Closed", ""),
     ("RFE | Summary | Reason | Run", "RHAIRFE-7001 | A gated RFE | Existing STRAT is Closed | fixture", ""),
+    ("RFE Key | Title | Reason | Run", "RHAIRFE-7001 | A gated RFE | Existing STRAT is Closed | fixture", ""),
+    ("RFE Key | Title | Run | Reason", "RHAIRFE-7001 | A gated RFE | fixture | Existing STRAT is Closed", ""),
     ("RFE | Summary | Labels | Missing",
      "RHAIRFE-7001 | A gated RFE | legacy-input-label | Existing STRAT is Closed", "legacy-input-label"),
 ])

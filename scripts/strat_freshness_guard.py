@@ -2,6 +2,7 @@
 """Check S1 freshness before Skill/Workflow launch; refuse native journal replay."""
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -10,6 +11,8 @@ def guard(event):
     root = Path(event.get("cwd") or Path.cwd()).resolve()
     path = root / "tmp/strat-input.json"
     if not path.exists():
+        if os.environ.get("STRAT_MANAGED_RUN") == "1":
+            raise ValueError("managed run is missing tmp/strat-input.json; preserve state and stop")
         return
     sys.path.insert(0, str(root / "scripts"))
     # Unit fixtures can invoke the root copy; the plugin resolves vendored code.

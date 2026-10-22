@@ -321,6 +321,8 @@ def test_actual_ci_wrapper_releases_claims_and_preserves_failure(
     (scripts / "with-fullsend-gateway.sh").write_text("""#!/bin/bash
 set -e
 mkdir -p "$STRAT_STATE_DIR/strat-creator/.fullsend/shared"
+printf 'RHAIRFE-19\\n' > "$STRAT_STATE_DIR/owned-rfe-ids.txt"
+printf '{"owner":"synthetic-run"}\\n' > "$STRAT_STATE_DIR/owned-rfe-ids.txt.owner.json"
 cat > "$STRAT_STATE_DIR/strat-creator/.fullsend/shared/release-locks.sh" <<'EOF'
 #!/bin/sh
 touch "$CI_PROJECT_DIR/released"
@@ -360,3 +362,6 @@ shift
     assert "synthetic-jira-secret" not in result.stdout
     status = json.loads((tmp_path / "fullsend-output/exit-status.json").read_text())
     assert status == {"run_exit": run_code, "release_exit": release_code if head_matches else 1}
+    exported = tmp_path / "fullsend-output/host-state"
+    assert (exported / "owned-rfe-ids.txt").read_text() == "RHAIRFE-19\n"
+    assert json.loads((exported / "owned-rfe-ids.txt.owner.json").read_text()) == {"owner": "synthetic-run"}

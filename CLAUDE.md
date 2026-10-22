@@ -105,6 +105,12 @@ or stop on uncertainty. Standalone human use without prepared pipeline state
 requires no pipeline owner. Clones carry a `strat-creator-clone-<digest>` label
 for recovery; it is not a verdict or a discovery/approval gate.
 
+Fullsend harnesses set `STRAT_MANAGED_RUN=1`: a missing `tmp/strat-input.json`
+then stops helper writes and launches instead of falling back to local mode.
+Keep that flag and prepared state intact. Direct harness preparation defaults
+to dry-run; set `STRAT_DRY_RUN=0` explicitly for live execution. These checks
+catch mistakes, not a compromised agent that can edit its code or credentials.
+
 ### Freshness on recovery
 
 The S1 host records `strat-freshness-v1` before agent work. Same-run reuse and

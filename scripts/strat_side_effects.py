@@ -69,6 +69,8 @@ def context():
             raise ValueError("Jira writes are forbidden in a dry run")
         owner_label(data.get("run_id"))
         return Path("tmp/strat-effects"), data
+    if os.environ.get("STRAT_MANAGED_RUN") == "1":
+        raise ValueError("managed run is missing tmp/strat-input.json; preserve state and stop")
     directory = os.environ.get("STRAT_EFFECTS_DIR")
     if directory:
         run = os.environ.get("STRAT_RUN_ID")

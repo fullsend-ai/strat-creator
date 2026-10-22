@@ -24,6 +24,7 @@ fi
 SHARED="${CLONE}/.fullsend/shared"
 : "${FULLSEND_VALIDATED_ITERATION_DIR:?no validated iteration}"
 RESULT_FILE="${FULLSEND_VALIDATED_ITERATION_DIR}/agent-result.json"
+python3 "${CLONE}/.fullsend/ci/fullsend-redact.py" check "${RESULT_FILE}"
 
 field() {
   python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "${RESULT_FILE}" "$1"
@@ -51,6 +52,7 @@ exec 9>"${PUBLISH_DIR}/post.lock"
 flock -x 9
 python3 "${SHARED}/handoff.py" "${REPO_DIR}" "${HANDOFF}" "${RESULT_FILE}" "${HANDOFF}/strat-progress.json"
 cp -f "${RESULT_FILE}" "${HANDOFF}/agent-result.json"
+python3 "${CLONE}/.fullsend/ci/fullsend-redact.py" check "${HANDOFF}"
 # The run's record lives in the target repository: artifacts/ as CI uploads it.
 mkdir -p -- "${TARGET_REPO_DIR}/artifacts"
 for dir in strat-tasks strat-reviews strat-originals; do rm -rf -- "${TARGET_REPO_DIR}/artifacts/${dir}"; done

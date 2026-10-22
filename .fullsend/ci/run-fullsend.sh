@@ -52,7 +52,7 @@ cleanup() {
     fi
   fi
   mkdir -p "$FULLSEND_OUTPUT_DIR/host-state"
-  for item in run.json owned-rfe-ids.txt recovery; do
+  for item in run.json owned-rfe-ids.txt owned-rfe-ids.txt.owner.json recovery; do
     [[ ! -e "$STRAT_STATE_DIR/$item" ]] || cp -R "$STRAT_STATE_DIR/$item" "$FULLSEND_OUTPUT_DIR/host-state/"
   done
   printf '{"run_exit":%s,"release_exit":%s}\n' "$rc" "$release_rc" >"$FULLSEND_OUTPUT_DIR/exit-status.json"

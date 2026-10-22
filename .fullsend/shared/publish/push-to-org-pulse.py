@@ -31,6 +31,7 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 # Carried from github.com/jctanner-opendatahub-io/strat-creator at 78ab3f1e,
 # .fullsend/scripts/ci/push-to-org-pulse.py (Apache-2.0); see .fullsend/README.md.
@@ -39,6 +40,13 @@ import urllib.request
 
 BATCH_SIZE = 25
 REQUEST_TIMEOUT = 60
+
+
+class NoRedirects(urllib.request.HTTPRedirectHandler):
+    """An authenticated POST must never be replayed at a redirected endpoint."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def find_summary_file(results_dir):
@@ -97,6 +105,16 @@ def build_features(strategies):
 
 def push_batch(api_url, api_token, batch, batch_num, num_batches):
     """POST a single batch of features to the org pulse bulk endpoint."""
+    try:
+        parts = urlsplit(api_url)
+        valid = (parts.scheme == "https" and parts.hostname and parts.port != 0
+                 and parts.username is None and parts.password is None
+                 and not parts.query and not parts.fragment
+                 and not any(char.isspace() for char in api_url))
+    except ValueError:
+        valid = False
+    if not valid:
+        return False, "Org Pulse base URL must be HTTPS without userinfo, query, fragment or whitespace."
     url = f"{api_url.rstrip('/')}/api/modules/ai-impact/features/bulk"
     payload = json.dumps({"features": batch}).encode("utf-8")
 
@@ -114,9 +132,10 @@ def push_batch(api_url, api_token, batch, batch_num, num_batches):
     # Temporary exception for this exporter until corporate CA trust is configured.
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
+    opener = urllib.request.build_opener(NoRedirects(), urllib.request.HTTPSHandler(context=ctx))
 
     try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT, context=ctx) as resp:
+        with opener.open(req, timeout=REQUEST_TIMEOUT) as resp:
             raw = resp.read().decode("utf-8")
             try:
                 body = json.loads(raw)

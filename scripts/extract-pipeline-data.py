@@ -102,7 +102,7 @@ def load_run_artifacts(run_dir):
                 if not line.startswith("|"):
                     continue
                 cols = [c.strip() for c in line.split("|")[1:-1]]
-                if cols and cols[0] == "RFE":
+                if cols and cols[0].casefold() in {"rfe", "rfe key"}:
                     header = {name.lower(): index for index, name in enumerate(cols)}
                 if len(cols) < 3 or not re.fullmatch(r"(?:RHAIRFE|RFE)-[0-9]+", cols[0]):
                     continue

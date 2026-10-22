@@ -68,6 +68,26 @@ def _setup_strat_with_rfe(jira, strat_key, rfe_key, labels=None):
 
 class TestPullWithRubricPass:
 
+    @pytest.mark.parametrize("has_business_heading", [True, False])
+    def test_reference_only_missing_strategy_heading_preserves_sme_input(
+            self, jira, tmp_path, has_business_heading):
+        strat, rfe = "RHAISTRAT-2092", "RHAIRFE-3092"
+        body = ("## Business Need (from RFE)\n\n" if has_business_heading else "")
+        body += build_rfe_reference(rfe, jira.url)
+        body += "\n\n## Staff Engineer / SME Input\n\nKeep the SME-selected routing design.\n"
+        jira.create(strat, "Strategy awaiting refinement", body)
+        jira.create(rfe, "Source RFE", "Original source business need.")
+        jira.request("POST", "/rest/api/3/issueLink", {
+            "type": {"name": "Cloners"}, "inwardIssue": {"key": strat}, "outwardIssue": {"key": rfe}})
+        before = jira.get(strat)
+        pull_strategy(jira.url, "admin", "admin", strat, str(tmp_path), pipeline_rfe=rfe)
+        _, content = read_frontmatter(str(tmp_path / f"strat-tasks/{strat}.md"))
+        assert "Original source business need." in content
+        assert content.count("Keep the SME-selected routing design.") == 1
+        assert content.count("## Staff Engineer / SME Input") == 1
+        assert content.count("## Strategy (") == 1
+        assert jira.get(strat) == before
+
     @pytest.mark.parametrize("rfe_body", ["", "The complete business need."])
     @pytest.mark.parametrize("has_heading", [False, True])
     def test_prepared_reference_only_import_restores_need_or_preserves_prior_task(

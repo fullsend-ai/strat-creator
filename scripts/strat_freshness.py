@@ -167,6 +167,8 @@ def verify(root, data=None, *, live=True, trusted_source=None):
     path = root / "tmp/strat-input.json"
     if data is None:
         if not path.exists():
+            if os.environ.get("STRAT_MANAGED_RUN") == "1":
+                raise ValueError("managed run is missing tmp/strat-input.json; preserve state and stop")
             return None  # Standalone/local human Skill usage, outside the S1 harness.
         data = json.loads(path.read_text())
     if not pipeline(root, data):

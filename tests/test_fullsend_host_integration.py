@@ -61,7 +61,7 @@ def host(tmp_path, source, jira):
     prescript_out.write_text("")
     env = {**os.environ, "TARGET_REPO_DIR": str(target), "STRAT_STATE_DIR": str(state),
            "STRAT_CREATOR_REF": ref, "STRAT_CREATOR_REPO": str(src), "STRAT_RUN_ID": "run-1",
-           "STRAT_ARCHITECTURE_CONTEXT_PATH": str(CONTEXT), "STRAT_DRY_RUN": "",
+           "STRAT_ARCHITECTURE_CONTEXT_PATH": str(CONTEXT), "STRAT_DRY_RUN": "0",
            "STRAT_PREVIOUS_PROGRESS": "", "FULLSEND_PRESCRIPT_OUTPUT": str(prescript_out),
            "JIRA_SERVER": jira.url, "JIRA_USER": "admin", "JIRA_TOKEN": "admin"}
     env.pop("RFE_SKIP_BOOTSTRAP", None)
@@ -269,6 +269,26 @@ def test_dry_run_takes_no_lock(host, jira):
     assert "selected (dry run) RHAIRFE-7007:create" in result.stdout
     assert PROCESSING not in _labels(jira, "RHAIRFE-7007")
     assert _run_record(host)["dry_run"] is True
+
+
+@pytest.mark.parametrize("entry", ["prescript", "prepare"])
+@pytest.mark.parametrize("value", [None, "", "1", "0"])
+def test_live_preparation_requires_explicit_zero(host, jira, entry, value):
+    jira.create("RHAIRFE-7290", "Explicit publication mode", "A distinct business need.")
+    env = {**host["env"], "STRAT_MODE": "single", "RFE_KEY": "RHAIRFE-7290"}
+    if value is None:
+        env.pop("STRAT_DRY_RUN")
+    else:
+        env["STRAT_DRY_RUN"] = value
+    if entry == "prepare":
+        shutil.copytree(CONTEXT, host["target"] / ".context/architecture-context")
+        command = [sys.executable, str(SHARED / "prepare_run.py"), "single"]
+    else:
+        command = ["bash", str(SHARED / "pre-strategy.sh")]
+    result = subprocess.run(command, cwd=host["target"], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _run_record(host)["dry_run"] is (value != "0")
+    assert (PROCESSING in _labels(jira, "RHAIRFE-7290")) is (value == "0")
 
 
 def test_fresh_dry_run_completes_with_live_rfe_freshness(host, jira, monkeypatch):

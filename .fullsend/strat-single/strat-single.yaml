@@ -41,6 +41,7 @@ timeout_minutes: 90
 
 env:
   sandbox:
+    STRAT_MANAGED_RUN: "1"
     JIRA_SERVER: "${JIRA_SERVER}"
     JIRA_USER: "${JIRA_USER}"
     # Opaque TLS tunnel (shared/policy.yaml): the Python Jira client sends the

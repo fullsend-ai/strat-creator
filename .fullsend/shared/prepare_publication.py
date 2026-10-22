@@ -24,6 +24,12 @@ def inventory(root):
 
 
 def prepare(handoff, bundle, result_file, label):
+    def check(path):
+        subprocess.run([sys.executable, str(ROOT / ".fullsend/ci/fullsend-redact.py"), "check", str(path)],
+                       check=True)
+
+    check(handoff)
+    check(result_file)
     state = bundle.with_suffix(".json")
     source = {"handoff": inventory(handoff), "result": hashlib.sha256(result_file.read_bytes()).hexdigest(),
               "label": label}
@@ -34,6 +40,7 @@ def prepare(handoff, bundle, result_file, label):
         if saved and saved.get("ready"):
             if inventory(bundle) != saved["files"]:
                 raise ValueError("sealed publication bundle changed")
+            check(bundle)
             return
         atomic(state, {"source": source, "ready": False})
         shutil.copytree(handoff, bundle, dirs_exist_ok=True)
@@ -55,6 +62,7 @@ def prepare(handoff, bundle, result_file, label):
         if result.get("dry_run") is True:
             command.append("--dry-run")
         subprocess.run(command, check=True)
+        check(bundle)
         atomic(state, {"source": source, "ready": True, "files": inventory(bundle)})
 
 

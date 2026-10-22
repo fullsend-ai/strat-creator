@@ -63,9 +63,30 @@ def scrub_tree(directory, values):
                 path.write_text(updated)
 
 
+def require_clean(directory, values):
+    """Reject unsafe publication without changing validated or sealed bytes."""
+    if directory.is_symlink() or not directory.exists():
+        raise ValueError("publication input is missing or is a symlink")
+    paths = directory.rglob("*") if directory.is_dir() else [directory]
+    for path in paths:
+        if path.is_symlink():
+            raise ValueError("publication input contains a symlink")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise ValueError("publication input contains a non-regular file")
+        try:
+            text = path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError("publication input contains a binary artifact") from error
+        name = str(path.relative_to(directory)) if directory.is_dir() else path.name
+        if redact(text, values) != text or redact(name, values) != name:
+            raise ValueError("publication input contains credentials or authorization material")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=["stream", "tree"])
+    parser.add_argument("operation", choices=["stream", "tree", "check"])
     parser.add_argument("directory", nargs="?", type=Path)
     args = parser.parse_args()
     values = secrets(os.environ)
@@ -74,8 +95,14 @@ def main():
             print(redact(line, values), end="", flush=True)
     else:
         if args.directory is None:
-            parser.error("tree requires a directory")
-        scrub_tree(args.directory, values)
+            parser.error("tree/check requires a path")
+        if args.operation == "check":
+            try:
+                require_clean(args.directory, values)
+            except ValueError as error:
+                parser.exit(1, f"ERROR: {error}\n")
+        else:
+            scrub_tree(args.directory, values)
 
 
 if __name__ == "__main__":

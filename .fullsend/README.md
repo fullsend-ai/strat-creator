@@ -75,16 +75,44 @@ sequenceDiagram
 | `shared/post-strategy.sh`, `handoff.py`, `publish/` | host, after validation | copies only the regular files the validated result lists |
 | `shared/release-locks.sh` | CI, after `fullsend run` | the host lock record |
 
-The agent never locks or unlocks RFEs and never sees JQL. The sandbox can reach
-Jira (opaque TLS tunnel, `shared/policy.yaml`) and the model provider, and
-nothing else. It cannot reach GitHub or the results services.
+Discovery, locking and unlocking belong to the host scripts; the agent receives
+the prepared ticket set. The policy allows the Jira API and signed attachment
+media endpoint through Python, plus the shared model-provider profile. That
+Vertex profile allows `*.googleapis.com`, not only the inference API. GitHub
+and results-service endpoints are not explicitly allowed.
 
-The sandbox does hold `JIRA_TOKEN`, and this is a known exposure. Strategy
-creation has to write to Jira (clone, link, label, push, comment), and the
-repository's Python Jira client signs those requests itself, so the token
-cannot stay on the runner the way rfe-creator's read-only Jira provider keeps
-it. The policy limits that token to `redhat.atlassian.net:443`, called from
-`python3`. The `strat-resume` trigger accepts only a human with `write`,
+### Trust assumptions
+
+The sandbox has a writable workspace, uploaded plugin and settings. Its hooks,
+checkpoints, freshness inputs and write ledger are quality and recovery checks
+for normal execution. They are not tamper-resistant controls against a
+compromised agent that can change their code or state. Captured report hashes
+bind saved and published bytes; they do not prove independent reviewers ran
+against a malicious sandbox. The numeric approval gate remains unchanged.
+
+The current design supplies `JIRA_TOKEN` to the sandbox because its Python
+helpers publish clones, links, labels, descriptions, comments and attachments
+during the Workflow. That token permits direct API calls outside those helpers.
+The sandbox also receives a raw Google service-account file for inference;
+the token scopes and Google IAM permissions remain part of the deployment's
+trust assumptions. Moving Jira publication to a host-only writer is a separate
+architectural option, not a requirement of Fullsend's standard entrypoint.
+
+Host validation uses trusted source and host-only run state to check final
+artifacts and expected Jira state. It cannot prevent or undo unexpected Jira
+writes that happened earlier, or detect temporary changes restored before the
+final check. Publication additionally checks known configured credentials and
+authorization material before copying artifacts to the CI artifact handoff,
+sealing the bundle or pushing results. Unsafe output stops without rewriting
+validated bytes. This check does not establish that arbitrary encoded secrets
+or sensitive content are absent.
+
+All three harnesses set `STRAT_MANAGED_RUN=1`. While that flag is present, missing
+`tmp/strat-input.json` refuses helper writes and new Skill/Workflow launches.
+This catches accidental missing state; an agent can change the flag or helpers.
+Interactive local skills outside a managed run still work without that file.
+
+The `strat-resume` trigger accepts only a human with `write`,
 `maintain` or `admin` role, because the run it starts writes to Jira. The
 role of a Jira commenter comes from fullsend's Jira adapter. The trigger was
 evaluated with `fullsend dispatch` on the event fixtures in
@@ -157,7 +185,7 @@ The receiving agent and scorer keep their existing tools and status schema.
 The plugin bundles `scripts/review_scope.py`; its copy matches the project
 helper in a repository test. The interactive strat-creator plugin bundles the
 same hooks. Keep the plugin loaded and hooks enabled: standalone Skill files
-alone supply instructions, without this enforced tool boundary.
+alone supply instructions, without these hook scope checks.
 
 This adapter targets Claude Code 2.1.296. It binds scope using each agent's
 initial assignment transcript and the hook's agent ID, not a shared current-key
@@ -178,8 +206,9 @@ content quality assessment.
 After refinement, one agent runs `strat_pipeline_state.py refine-status`.
 The StructuredOutput hook compares its returned JSON with the actual saved
 progress and files. A missing or malformed receipt can recover when that
-evidence verifies completion; a plausible receipt alone cannot advance a
-strategy. The initial read also verifies saved refinement readiness. Completed
+evidence verifies completion. With the expected hooks and helpers intact, a
+receipt must agree with the saved strategy before progress advances. The
+initial read also verifies saved refinement readiness. Completed
 work is not repeated just to repair its receipt.
 
 ### Review composition
@@ -295,6 +324,10 @@ so check its warnings when qualifying a deployment.
 The host Org Pulse exporter temporarily disables TLS certificate and hostname
 verification, matching the legacy pipeline while CI lacks the corporate CA.
 Restore verification when that CA is configured in the job's trust store.
+The configured base URL must still use HTTPS without embedded user credentials,
+query parameters or fragments. Authenticated uploads do not follow redirects;
+configure the final service URL directly. This prevents redirect credential
+forwarding but does not restore server identity verification.
 
 The consumer-owned contract is documented in Org Pulse's
 [data format reference](https://github.com/red-hat-data-services/rhai-org-pulse/blob/7ba9353e92dd29e056d9b83ea4b4d57e5940f7e1/docs/DATA-FORMATS.md)
@@ -312,6 +345,8 @@ Owned lock commands are `python3 scripts/lock_issues.py lock --owner RUN_ID
 Preserve the record and its `.owner.json` sidecar for cleanup. A bare `unlock`
 cannot clear an owned claim, and expected CLI errors return status 2 without
 a traceback.
+The CI cleanup exports both files to `fullsend-output/host-state/` when they
+remain, including after a failed release, so later cleanup can verify ownership.
 `release-locks.sh` checks ownership in an isolated host context, so failed
 work's freshness does not prevent release of this run's claims. It attempts
 every recorded key and returns failure after the inventory if any release
@@ -363,7 +398,7 @@ Markdown whitespace or HTML comments that publication removes. Links, marks,
 heading levels and table spans still matter. Live published-strategy readback
 runs in command helpers and host validation before reuse or writes.
 
-Short completion/refinement hooks check local immutable evidence without Jira
+Short completion/refinement hooks check saved local evidence without Jira
 network calls. Pre/PostToolUse hooks explicitly set `onFailure: block`, supported
 by the qualified runtime, so a timeout cannot silently permit the tool call.
 SubagentStop allows at most one correction; if parsing still fails during active
@@ -389,9 +424,9 @@ counterparts are checked for byte equality.
 Native controls run the real 2.1.296 binary against an authored loopback API with
 fresh Claude state and no inherited credentials. Sanitized observed payloads
 under `tests/fixtures/native-hooks/` document the runtime-specific fields. These
-controls verify orchestration and enforcement, not model reasoning or content
-quality. Diagnostic run scripts also create a fresh `CLAUDE_CONFIG_DIR`; they
-never copy the developer's global Claude history.
+controls verify orchestration and hook behavior, not model reasoning, content
+quality or malicious-agent containment. Diagnostic run scripts also create a
+fresh `CLAUDE_CONFIG_DIR`; they never copy the developer's global Claude history.
 
 The optional full Workflow smoke uses stub skills and the real scorer,
 composition and checkpoint helpers. Its stubs follow the enforced target and
@@ -413,7 +448,8 @@ sandboxes. These are the steps a CI job takes. Every variable referenced in
 export STRAT_CREATOR_REF=<the strat-creator commit this harness is pinned to>
 export STRAT_CREATOR_REPO=                       # empty: https://github.com/fullsend-ai/strat-creator.git
 export STRAT_RUN_ID="${CI_JOB_ID}" STRAT_STATE_DIR="$(mktemp -d)"   # host only
-export STRAT_DRY_RUN= STRAT_PREVIOUS_PROGRESS= STRAT_ARCHITECTURE_CONTEXT_PATH= STRAT_PUBLISH_DIR=
+export STRAT_DRY_RUN=1                          # 0 explicitly enables live Jira writes
+export STRAT_PREVIOUS_PROGRESS= STRAT_ARCHITECTURE_CONTEXT_PATH= STRAT_PUBLISH_DIR=
 export RESULTS_REPO_URL= RESULTS_PUSH_TOKEN= RESULTS_GIT_USER= ORG_PULSE_URL= ORG_PULSE_API_TOKEN=
 export RFE_KEY=RHAIRFE-1234                      # strat-single
 export BATCH_SIZE=10 BATCH_OFFSET=0 BATCH_EXPECTED_KEYS=   # strat-batch
@@ -433,8 +469,9 @@ are checked for blocking labels instead of being locked, and the skills run
 with `--dry-run`. Resume points still come from Jira in a dry run. A dry-run
 strategy is a local `STRAT-NNNN` with no Jira clone, so a dry run never
 resumes at `review`.
-Shared host preparation accepts only empty/`0` for live or `1`/`true` for a
-dry run. Any other value fails before Jira calls, vendoring or output cleanup.
+Shared host preparation defaults unset or empty mode to dry-run. Only `0`
+enables live mode; `1`/`true` select dry-run. Any other value fails before Jira
+calls, vendoring or output cleanup. Dry-run still reads live Jira inputs.
 
 If the CI job itself is lost, the locks stay. Find them with the JQL
 `labels = strat-creator-processing`, and release them with
