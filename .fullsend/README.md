@@ -292,6 +292,10 @@ warning. The Org Pulse consumer must accept architecture `skipped`; older
 consumers reject that entry. The non-blocking uploader logs per-entry errors,
 so check its warnings when qualifying a deployment.
 
+The host Org Pulse exporter temporarily disables TLS certificate and hostname
+verification, matching the legacy pipeline while CI lacks the corporate CA.
+Restore verification when that CA is configured in the job's trust store.
+
 The consumer-owned contract is documented in Org Pulse's
 [data format reference](https://github.com/red-hat-data-services/rhai-org-pulse/blob/7ba9353e92dd29e056d9b83ea4b4d57e5940f7e1/docs/DATA-FORMATS.md)
 and enforced by its

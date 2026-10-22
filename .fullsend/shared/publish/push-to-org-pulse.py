@@ -34,8 +34,8 @@ import urllib.request
 
 # Carried from github.com/jctanner-opendatahub-io/strat-creator at 78ab3f1e,
 # .fullsend/scripts/ci/push-to-org-pulse.py (Apache-2.0); see .fullsend/README.md.
-# Adapted: retain normal certificate and hostname verification; the CI image
-# must trust the configured service CA through its system store/SSL_CERT_FILE.
+# Temporary compatibility with the legacy uploader: Org Pulse's corporate CA
+# is unavailable in the CI trust store, so its HTTPS requests skip verification.
 
 BATCH_SIZE = 25
 REQUEST_TIMEOUT = 60
@@ -111,6 +111,9 @@ def push_batch(api_url, api_token, batch, batch_num, num_batches):
     )
 
     ctx = ssl.create_default_context()
+    # Temporary exception for this exporter until corporate CA trust is configured.
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
 
     try:
         with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT, context=ctx) as resp:
