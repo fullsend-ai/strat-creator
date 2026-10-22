@@ -580,7 +580,7 @@ def create_issue_link(server, user, token, type_name, inward_key, outward_key):
 
 def add_attachment(server, user, token, issue_key, filepath, filename=None,
                    max_retries=3):
-    """Upload once per filename and exact bytes; never blindly retry POST."""
+    """Reconcile newest named bytes; append revisions without blindly retrying POST."""
     import mimetypes
     if filename is None:
         filename = os.path.basename(filepath)
@@ -614,21 +614,17 @@ def add_attachment(server, user, token, issue_key, filepath, filename=None,
 
 
 def find_matching_attachments(server, user, token, issue_key, filename, file_data):
-    """Read back exact uploaded bytes, without issuing an upload."""
+    """Match the newest named attachment readers use, never an obsolete copy."""
     attachments = get_issue(server, user, token, issue_key, fields=["attachment"])["fields"].get("attachment", [])
-    matches = []
-    for attachment in attachments:
-        if attachment.get("filename") != filename:
-            continue
-        with tempfile.TemporaryDirectory() as temporary:
-            local = os.path.join(temporary, "attachment")
-            download_attachment(server, user, token, attachment["content"], local)
-            with open(local, "rb") as stream:
-                if stream.read() == file_data:
-                    matches.append(attachment)
-    if len(matches) > 1:
-        raise RuntimeError("duplicate matching attachments require reconciliation")
-    return matches if matches else None
+    candidates = [attachment for attachment in attachments if attachment.get("filename") == filename]
+    if not candidates:
+        return None
+    latest = max(candidates, key=attachment_sort_key)
+    with tempfile.TemporaryDirectory() as temporary:
+        local = os.path.join(temporary, "attachment")
+        download_attachment(server, user, token, latest["content"], local)
+        with open(local, "rb") as stream:
+            return [latest] if stream.read() == file_data else None
 
 
 def _attachment_origin(url):

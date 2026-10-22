@@ -269,8 +269,12 @@ Concurrency is the Workflow default: min(16, CPUs - 2) agents at a time.
 
 Jira mutations use a separate durable intent ledger in `tmp/strat-effects/`.
 Before sending a write, the helper fsyncs intent; before repeating it, the helper
-reads Jira. Identical comments and byte-identical named attachments are reused,
-clone creation carries a searchable marker in the same request as the ticket,
+reads Jira. Identical comments and byte-identical newest named attachments are
+reused. An older matching attachment cannot stand in for a newer different one:
+a deliberate revision in a fresh run appends the desired content as the newest
+copy. A superseded pending or verified write in the same run stops for
+reconciliation instead of uploading again. Clone creation carries a searchable
+marker in the same request as the ticket,
 and existing links, fields and labels are reconciled. Reads may retry transient
 HTTP errors; append writes never receive blind HTTP retries. If a pending write
 is absent or differs, preserve the ledger and reconcile it instead of reposting.
