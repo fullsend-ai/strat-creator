@@ -411,6 +411,17 @@ Markdown whitespace or HTML comments that publication removes. Links, marks,
 heading levels and table spans still matter. Live published-strategy readback
 runs in command helpers and host validation before reuse or writes.
 
+Prepared imports reject an overflow notice when the full named strategy
+attachment is missing. Downloads are staged before publishing the task and its
+supporting context. `tmp/strat-imports/<KEY>.json` records completion only after
+all files are published, and belongs to that prepared run. A task without this
+record is an incomplete import: retry rebuilds its supporting inputs while
+preserving the existing task's refined text. A completed import is reused
+without replacing later refinement or review output. Missing recorded context,
+a different run identity, or an incomplete import already bound to a review
+stops for reconciliation. Local publication uses individual atomic replacements;
+the completion record distinguishes an interrupted publication from success.
+
 Short completion/refinement hooks check saved local evidence without Jira
 network calls. Pre/PostToolUse hooks explicitly set `onFailure: block`, supported
 by the qualified runtime, so a timeout cannot silently permit the tool call.

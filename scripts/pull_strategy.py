@@ -114,6 +114,10 @@ def pull_strategy(server, user, token, strat_key, local_dir="local", *, pipeline
     att_filename = STRATEGY_ATTACHMENT_TEMPLATE.format(strat_key=strat_key)
     strategy_attachment = _newest_attachment(attachments, att_filename)
 
+    if pipeline_rfe is not None and ATTACHMENT_NOTICE_MARKER in description_md and not strategy_attachment:
+        raise ValueError(f"{strat_key}: full strategy attachment {att_filename} is missing; "
+                         "cannot import the TL;DR stub")
+
     if strategy_attachment and ATTACHMENT_NOTICE_MARKER in description_md:
         with tempfile.NamedTemporaryFile(
                 mode="wb", suffix=".md", delete=False) as tmp:
