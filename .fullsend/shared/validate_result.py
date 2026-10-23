@@ -21,7 +21,8 @@ Checks, in order:
      strategy's task and review files agree with the claim;
   6. the verdict follows from the review's scores (parse_results.py rules);
   7. with Jira credentials and not a dry run, each STRAT exists, is cloned
-     from its RFE and carries the verdict label.
+     from its RFE, carries consistent verdict labels and has the exact published
+     review summary and newest named review attachment.
 
 Each failure prints one FAIL line; fullsend appends them to the next attempt's
 prompt (feedback_mode: append). Exit 0 only when every check passes.
@@ -42,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from artifact_utils import compute_strat_labels, read_frontmatter  # noqa: E402
 from handoff import allowed as handoff_allows  # noqa: E402
 from parse_results import CRITERIA, compute_verdict  # noqa: E402
+from publish_review import verify_publication  # noqa: E402
 from review_composition import verify_review  # noqa: E402
 from strat_pipeline_outcome import verify_completion  # noqa: E402
 
@@ -236,7 +238,7 @@ def check_artifacts(c, result, repo):
             c.fail(f"{s['strat']} review composition: {error}")
 
 
-def check_jira(c, result):
+def check_jira(c, result, repo):
     from find_strat_for_rfe import find_strat_clones
     from jira_utils import get_issue, require_env
 
@@ -253,6 +255,12 @@ def check_jira(c, result):
         expected = set(compute_strat_labels("Reviewed", s["recommendation"]))
         missing = sorted(expected - labels)
         c.check(not missing, f"{s['strat']} is missing Jira label(s) {', '.join(missing)}")
+        try:
+            # Import from this trusted checkout; the downloaded repo is data.
+            # Recording inside the sandbox does not prove these effects still exist.
+            verify_publication(repo.resolve(), s["strat"])
+        except Exception as exc:
+            c.fail(f"Jira review publication of {s['strat']} failed: {str(exc)[:200]}")
 
 
 def validate(result_path, repo, schema_path, run_path, env):
@@ -289,7 +297,7 @@ def validate(result_path, repo, schema_path, run_path, env):
     if result["dry_run"]:
         print("INFO: dry run, Jira readback skipped")
     elif all(env.get(k) for k in ("JIRA_SERVER", "JIRA_USER", "JIRA_TOKEN")):
-        check_jira(c, result)
+        check_jira(c, result, repo)
     else:
         print("INFO: no Jira credentials on the runner, Jira readback skipped")
     return c.failures

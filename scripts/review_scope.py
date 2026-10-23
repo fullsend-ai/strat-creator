@@ -10,8 +10,6 @@ import sys
 import time
 from pathlib import Path
 
-import yaml
-
 TARGET = re.compile(r"(?:RHAISTRAT|STRAT)-[0-9]+")
 SOURCE = re.compile(r"(?:RHAIRFE|RFE)-[0-9]+")
 MARKER = "REVIEW_SCOPE_TARGET: "
@@ -90,14 +88,15 @@ def safe_path(root, value):
 
 
 def inputs(root, key):
+    from artifact_utils import read_frontmatter
+
     root = root.resolve()
     local = root / "local/strat-tasks" / f"{key}.md"
     mode = "local" if local.is_file() else "artifacts"
     strategy = safe_path(root, f"{mode}/strat-tasks/{key}.md")
-    content = strategy.read_text()
-    if not content.startswith("---\n") or "\n---" not in content[4:]:
+    metadata, _ = read_frontmatter(strategy)
+    if not metadata:
         raise ScopeError("Strategy frontmatter is missing.")
-    metadata = yaml.safe_load(content.split("---", 2)[1])
     if not isinstance(metadata, dict) or metadata.get("strat_id") != key:
         raise ScopeError("Strategy frontmatter does not match the assigned key.")
     source = metadata.get("source_rfe", "")
@@ -190,6 +189,10 @@ def main():
     event = {}
     try:
         event = json.load(sys.stdin)
+        # Bundled hooks use the workspace's vendored helpers. Trusted host
+        # imports do not enter main() or change their module search path.
+        if event.get("cwd"):
+            sys.path.insert(0, str(Path(event["cwd"]).resolve() / "scripts"))
         scope = guard(event)
         audit(event, scope)
     except Exception as error:

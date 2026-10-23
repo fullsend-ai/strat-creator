@@ -99,13 +99,22 @@ trust assumptions. Moving Jira publication to a host-only writer is a separate
 architectural option, not a requirement of Fullsend's standard entrypoint.
 
 Host validation uses trusted source and host-only run state to check final
-artifacts and expected Jira state. It cannot prevent or undo unexpected Jira
+artifacts and expected Jira state. In live runs it reads back the exact review
+summary, the newest named review attachment and consistent numeric verdict
+labels, in addition to clone membership and provenance labels. A recorded review
+does not waive this final readback; a mismatch fails validation without rewriting
+Jira or repeating the review. It cannot prevent or undo unexpected Jira
 writes that happened earlier, or detect temporary changes restored before the
 final check. Publication additionally checks known configured credentials and
 authorization material before copying artifacts to the CI artifact handoff,
 sealing the bundle or pushing results. Unsafe output stops without rewriting
 validated bytes. This check does not establish that arbitrary encoded secrets
 or sensitive content are absent.
+
+Failed-run CI exports also check every relative file and directory name for known
+credentials before retaining artifacts. An unsafe pathname or unreadable binary
+causes the generated CI export to be removed with a generic error; private host
+recovery remains available for reconciliation and owned-lock cleanup still runs.
 
 All three harnesses set `STRAT_MANAGED_RUN=1`. While that flag is present, missing
 `tmp/strat-input.json` refuses helper writes and new Skill/Workflow launches.

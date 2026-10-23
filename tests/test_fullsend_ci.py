@@ -273,18 +273,45 @@ def test_adc_authorization_is_redacted_without_knowing_its_value():
     assert redactor.redact(text, []) == 'Authorization: Bearer [REDACTED]\n{"access_token":"[REDACTED]"}'
 
 
+@pytest.mark.parametrize("kind", ["file", "directory", "empty-directory"])
+def test_recovery_scrubber_rejects_secret_paths_without_echoing_them(tmp_path, kind):
+    secret = "synthetic-path-secret-123"
+    path = tmp_path / secret
+    if kind == "file":
+        path.write_text("Harmless body.")
+    else:
+        path.mkdir()
+        if kind == "directory":
+            (path / "report.md").write_text("Harmless body.")
+    with pytest.raises(ValueError, match="credential") as error:
+        redactor.scrub_tree(tmp_path, [secret])
+    assert secret not in str(error.value)
+
+
+def test_binary_scrub_error_does_not_echo_filename_or_traceback(tmp_path):
+    filename = "private-name.bin"
+    (tmp_path / filename).write_bytes(b"\xff\x00")
+    process = subprocess.run([sys.executable, str(ROOT / ".fullsend/ci/fullsend-redact.py"), "tree", str(tmp_path)],
+                             capture_output=True, text=True, timeout=15)
+    assert process.returncode != 0 and "binary artifact" in process.stderr
+    assert filename not in process.stderr and "Traceback" not in process.stderr
+
+
 @pytest.mark.parametrize(
-    "run_code,release_code,head_matches,expected",
-    [(23, 0, True, 23), (0, 17, True, 17), (0, 0, True, 0), (0, 0, False, 1)],
+    "run_code,release_code,head_matches,recovery_case,expected",
+    [(23, 0, True, "none", 23), (0, 17, True, "none", 17), (0, 0, True, "none", 0),
+     (0, 0, False, "none", 1), (23, 0, True, "file", 23),
+     (23, 0, True, "directory", 23), (0, 0, True, "file", 1)],
 )
 def test_actual_ci_wrapper_releases_claims_and_preserves_failure(
-    tmp_path, run_code, release_code, head_matches, expected
+    tmp_path, run_code, release_code, head_matches, recovery_case, expected
 ):
     """Run the real outer shell with fake external services and no credentials."""
     scripts = tmp_path / ".fullsend/ci"
     scripts.mkdir(parents=True)
     for name in ("run-fullsend.sh", "fullsend-redact.py"):
         shutil.copyfile(ROOT / ".fullsend/ci" / name, scripts / name)
+    shutil.copyfile(ROOT / ".fullsend/shared/capture_failure.py", scripts / "capture_failure.py")
     tools = tmp_path / "tools"
     tools.mkdir()
 
@@ -328,6 +355,16 @@ cat > "$STRAT_STATE_DIR/strat-creator/.fullsend/shared/release-locks.sh" <<'EOF'
 touch "$CI_PROJECT_DIR/released"
 exit "$TEST_RELEASE_CODE"
 EOF
+if [[ "$TEST_RECOVERY_CASE" != none ]]; then
+  mkdir -p "$TARGET_REPO_DIR/tmp"
+  if [[ "$TEST_RECOVERY_CASE" == directory ]]; then
+    mkdir -p "$TARGET_REPO_DIR/tmp/$JIRA_TOKEN"
+    printf 'Harmless body.\\n' > "$TARGET_REPO_DIR/tmp/$JIRA_TOKEN/report.md"
+  else
+    printf 'Harmless body.\\n' > "$TARGET_REPO_DIR/tmp/$JIRA_TOKEN.txt"
+  fi
+  python3 "$CI_PROJECT_DIR/.fullsend/ci/capture_failure.py" "$TARGET_REPO_DIR" "$STRAT_STATE_DIR" missing.json
+fi
 shift
 "$@"
 """)
@@ -351,6 +388,7 @@ shift
         "TEST_BINARY_ARCHIVE": str(archive),
         "TEST_RUN_CODE": str(run_code),
         "TEST_RELEASE_CODE": str(release_code),
+        "TEST_RECOVERY_CASE": recovery_case,
     }
     for name in ("CONFIG_FILE", "RFE_FILTER", "STRAT_KEY"):
         env.pop(name, None)
@@ -360,6 +398,12 @@ shift
     assert result.returncode == expected, result.stderr
     assert (tmp_path / "released").exists() == head_matches
     assert "synthetic-jira-secret" not in result.stdout
+    assert "synthetic-jira-secret" not in result.stderr
+    if recovery_case != "none":
+        assert "credential" in result.stderr
+        assert not (tmp_path / "fullsend-output").exists()
+        assert (tmp_path / ".fullsend-state/123/strat-state/recovery").is_dir()
+        return  # Original private recovery is kept; unsafe CI export is removed.
     status = json.loads((tmp_path / "fullsend-output/exit-status.json").read_text())
     assert status == {"run_exit": run_code, "release_exit": release_code if head_matches else 1}
     exported = tmp_path / "fullsend-output/host-state"

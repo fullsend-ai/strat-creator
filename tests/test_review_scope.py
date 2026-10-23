@@ -1,6 +1,10 @@
 """Ticket scope controls, including parallel identity and escaped input paths."""
 import importlib.util
 import json
+import os
+import shutil
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -8,6 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("review_scope", ROOT / "scripts/review_scope.py")
 scope = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scope)
@@ -45,6 +50,38 @@ def test_local_mode_depends_on_the_assigned_ticket(batch):
     strategy(root, "RHAISTRAT-2", "RHAIRFE-2", mode="local")
     assert scope.inputs(root, "RHAISTRAT-1")["strategy"].parent == root / "artifacts/strat-tasks"
     assert scope.inputs(root, "RHAISTRAT-2")["rfe"].parent == root / "local/strat-originals"
+
+
+@pytest.mark.parametrize("mode", ["artifacts", "local"])
+@pytest.mark.parametrize("quoted", [False, True])
+def test_title_delimiters_do_not_truncate_frontmatter(tmp_path, mode, quoted):
+    path = strategy(tmp_path, "RHAISTRAT-1", "RHAIRFE-1", mode=mode)
+    title = '"Support --- in query syntax"' if quoted else "Support --- in query syntax"
+    path.write_text(path.read_text().replace("source_rfe:", f"title: {title}\nsource_rfe:"))
+    selected = scope.inputs(tmp_path, "RHAISTRAT-1")
+    assert selected["strategy"] == path
+    assert selected["source_rfe"] == "RHAIRFE-1"
+
+
+@pytest.mark.parametrize("bundled", [False, True])
+def test_scope_hook_reads_title_delimiters_with_vendored_helpers(tmp_path, bundled):
+    path = strategy(tmp_path, "RHAISTRAT-1", "RHAIRFE-1")
+    path.write_text(path.read_text().replace("source_rfe:", 'title: "Support --- in queries"\nsource_rfe:'))
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    shutil.copyfile(ROOT / "scripts/artifact_utils.py", scripts / "artifact_utils.py")
+    transcript = tmp_path / "agent-title.jsonl"
+    transcript.write_text(json.dumps({"type": "user", "message": {
+        "content": "REVIEW_SCOPE_TARGET: RHAISTRAT-1\n"}}) + "\n")
+    event = {"cwd": str(tmp_path), "agent_id": "title", "agent_transcript_path": str(transcript),
+             "agent_type": "strat-reviewer", "hook_event_name": "PreToolUse",
+             "tool_name": "Read", "tool_input": {"file_path": str(path)}}
+    plugin = ROOT / ".fullsend/plugins/strat-pipeline" if bundled else ROOT
+    process = subprocess.run([sys.executable, str(plugin / "scripts/review_scope.py")],
+                             cwd=tmp_path, env={**os.environ, "PYTHONPATH": ""}, input=json.dumps(event),
+                             capture_output=True, text=True, timeout=15)
+    assert process.returncode == 0, process.stderr
+    assert json.loads((tmp_path / "tmp/review-scope/title.jsonl").read_text())["allowed"]
 
 
 def test_fullsend_frozen_source_is_preferred_and_does_not_require_rfe_tasks(batch):

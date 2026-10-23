@@ -48,7 +48,14 @@ def redact(text, values):
 
 
 def scrub_tree(directory, values):
-    for path in directory.rglob("*"):
+    paths = list(directory.rglob("*"))
+    # Check names before retaining anything, including empty directories and
+    # links. Redacting bodies alone leaves secrets in archive entry names.
+    for path in paths:
+        name = str(path.relative_to(directory))
+        if redact(name, values) != name:
+            raise ValueError("cannot safely scrub artifact path containing credentials")
+    for path in paths:
         if path.is_symlink():
             # Never follow a generated link outside the artifact boundary.
             path.unlink()
@@ -57,7 +64,7 @@ def scrub_tree(directory, values):
             try:
                 text = data.decode("utf-8")
             except UnicodeDecodeError as error:
-                raise ValueError(f"cannot safely scrub binary artifact {path.name}") from error
+                raise ValueError("cannot safely scrub binary artifact") from error
             updated = redact(text, values)
             if updated != text:
                 path.write_text(updated)
@@ -96,13 +103,13 @@ def main():
     else:
         if args.directory is None:
             parser.error("tree/check requires a path")
-        if args.operation == "check":
-            try:
+        try:
+            if args.operation == "check":
                 require_clean(args.directory, values)
-            except ValueError as error:
-                parser.exit(1, f"ERROR: {error}\n")
-        else:
-            scrub_tree(args.directory, values)
+            else:
+                scrub_tree(args.directory, values)
+        except ValueError as error:
+            parser.exit(1, f"ERROR: {error}\n")
 
 
 if __name__ == "__main__":
