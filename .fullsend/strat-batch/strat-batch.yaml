@@ -1,0 +1,91 @@
+---
+# strat-batch: create, refine, push and review strategies for the RHAIRFEs the default JQL discovers.
+# The sequence runs in the strat-pipeline Workflow, shipped as a Claude Code
+# plugin (plugins/strat-pipeline) that fullsend uploads and scans. See
+# ../README.md.
+agent: strat-batch/prompt.md
+description: Create, refine, push and review strategies for the RHAIRFEs the default JQL discovers.
+model: claude-opus-4-6
+effort: high
+# fullsend v0.47.1 sandbox image (multi-arch index digest); pins Claude Code 2.1.296.
+image: ghcr.io/fullsend-ai/fullsend-sandbox@sha256:2fc886b02c280ccf11f317662d182a56cefa6f9299ca9cbd54e780fced743ca7
+policy: shared/policy.yaml
+# A role the hosted mint serves (not the agent name). triage is the narrowest:
+# the agent writes only to Jira, never to the repository.
+role: triage
+slug: opendatahub-io-strat-creator
+plugins:
+  - plugins/strat-pipeline
+
+host_files:
+  - src: shared/gcp-vertex.env
+    dest: /sandbox/workspace/.env.d/gcp-vertex.env
+    expand: true
+  - src: ${GOOGLE_APPLICATION_CREDENTIALS}
+    dest: /tmp/.gcp-credentials.json
+
+pre_script: shared/pre-strategy.sh
+post_script: shared/post-strategy.sh
+
+# Failed business completion ends this prepared run. A later host-prepared
+# run may recover verified progress; no same-run model retry is automatic.
+validation_loop:
+  # Host dependencies only; the plugin checks Claude inside the sandbox.
+  preflight_check: 'python3 -c "import jsonschema, yaml, certifi, diff_match_patch"'
+  script: shared/validate-output.sh
+  schema: shared/result.schema.json
+  max_iterations: 1
+  feedback_mode: append
+
+timeout_minutes: 295
+
+env:
+  sandbox:
+    STRAT_MANAGED_RUN: "1"
+    JIRA_SERVER: "${JIRA_SERVER}"
+    JIRA_USER: "${JIRA_USER}"
+    # Opaque TLS tunnel (shared/policy.yaml): the Python Jira client sends the
+    # token itself, so it is in the sandbox.
+    JIRA_TOKEN: "${JIRA_TOKEN}"
+    # Context is fetched by the pre-script; the skills must not fetch again.
+    RFE_SKIP_BOOTSTRAP: "1"
+    DISABLE_AUTOUPDATER: "1"
+    CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS: "10"
+    CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "17700000"
+    ANTHROPIC_DEFAULT_SONNET_MODEL: claude-opus-4-6
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: claude-opus-4-6
+    ANTHROPIC_DEFAULT_FABLE_MODEL: claude-opus-4-6
+    ANTHROPIC_DEFAULT_OPUS_MODEL: claude-opus-4-6
+    CLAUDE_CODE_SUBAGENT_MODEL: claude-opus-4-6
+  runner:
+    STRAT_MODE: batch
+    # The strat-creator commit this harness is pinned to (the same sha as the
+    # harness URL a consumer installs). The pre-script clones and verifies it
+    # on the host; STRAT_CREATOR_REPO may name a mirror (default: GitHub).
+    STRAT_CREATOR_REF: ${STRAT_CREATOR_REF}
+    STRAT_CREATOR_REPO: ${STRAT_CREATOR_REPO}
+    BATCH_SIZE: ${BATCH_SIZE}
+    BATCH_OFFSET: ${BATCH_OFFSET}
+    BATCH_EXPECTED_KEYS: ${BATCH_EXPECTED_KEYS}
+    STRAT_RUN_ID: ${STRAT_RUN_ID}
+    # Host-only run and lock record (prepare_run.py); never in the sandbox.
+    # The CI cleanup releases locks from it (shared/release-locks.sh).
+    STRAT_STATE_DIR: ${STRAT_STATE_DIR}
+    STRAT_DRY_RUN: ${STRAT_DRY_RUN}
+    STRAT_PREVIOUS_PROGRESS: ${STRAT_PREVIOUS_PROGRESS}
+    STRAT_ARCHITECTURE_CONTEXT_PATH: ${STRAT_ARCHITECTURE_CONTEXT_PATH}
+    STRAT_PUBLISH_DIR: ${STRAT_PUBLISH_DIR}
+    JIRA_SERVER: ${JIRA_SERVER}
+    JIRA_USER: ${JIRA_USER}
+    JIRA_TOKEN: ${JIRA_TOKEN}
+    RESULTS_REPO_URL: ${RESULTS_REPO_URL}
+    RESULTS_PUSH_TOKEN: ${RESULTS_PUSH_TOKEN}
+    RESULTS_GIT_USER: ${RESULTS_GIT_USER}
+    ORG_PULSE_URL: ${ORG_PULSE_URL}
+    ORG_PULSE_API_TOKEN: ${ORG_PULSE_API_TOKEN}
+
+openshell:
+  profiles:
+    - https://raw.githubusercontent.com/fullsend-ai/agents/11dd3ad15ab5033fd04661d7faf6f7af45548d2f/profiles/fullsend-vertex-ai.yaml#sha256=71ea4699ec497d4b9592220adf7588019eb8445dbc77af8e0e6767e68dcb5585
+providers:
+  - https://raw.githubusercontent.com/fullsend-ai/agents/11dd3ad15ab5033fd04661d7faf6f7af45548d2f/providers/vertex-ai.yaml#sha256=ae5ebe527e5d7b0fa6994346fde3f6ba11b632a3ba78ece96591b5ed85083ec1

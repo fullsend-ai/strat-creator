@@ -83,7 +83,7 @@ def extract_review_comment(comments):
     return matches[-1] if matches else None
 
 
-def pull_strategy(server, user, token, strat_key, local_dir="local"):
+def pull_strategy(server, user, token, strat_key, local_dir="local", *, pipeline_rfe=None):
     """Pull a RHAISTRAT issue and its context into the local workspace.
 
     Returns a dict summarizing what was pulled, or raises SystemExit on error.
@@ -96,7 +96,7 @@ def pull_strategy(server, user, token, strat_key, local_dir="local"):
 
     # Validate post-CI labels
     labels = set(fields.get("labels", []))
-    if not labels & POST_CI_LABELS:
+    if pipeline_rfe is None and not labels & POST_CI_LABELS:
         print(f"Error: {strat_key} does not have a post-CI label "
               f"({', '.join(sorted(POST_CI_LABELS))}). "
               f"Current labels: {', '.join(sorted(labels)) or '(none)'}",
@@ -113,6 +113,10 @@ def pull_strategy(server, user, token, strat_key, local_dir="local"):
     attachments = fields.get("attachment", [])
     att_filename = STRATEGY_ATTACHMENT_TEMPLATE.format(strat_key=strat_key)
     strategy_attachment = _newest_attachment(attachments, att_filename)
+
+    if pipeline_rfe is not None and ATTACHMENT_NOTICE_MARKER in description_md and not strategy_attachment:
+        raise ValueError(f"{strat_key}: full strategy attachment {att_filename} is missing; "
+                         "cannot import the TL;DR stub")
 
     if strategy_attachment and ATTACHMENT_NOTICE_MARKER in description_md:
         with tempfile.NamedTemporaryFile(
@@ -157,6 +161,20 @@ def pull_strategy(server, user, token, strat_key, local_dir="local"):
         if rfe_key:
             break
 
+    if pipeline_rfe is not None:
+        sources = {link.get(side, {}).get("key") for link in strat_links
+                   if link.get("type", {}).get("name") == "Cloners"
+                   for side in ("inwardIssue", "outwardIssue")
+                   if link.get(side, {}).get("key", "").startswith("RHAIRFE-")}
+        if sources != {pipeline_rfe}:
+            raise ValueError("import source does not match the prepared RFE")
+        snapshot_dir = os.path.join(local_dir, "strat-originals")
+        os.makedirs(snapshot_dir, exist_ok=True)
+        snapshot_path = os.path.join(snapshot_dir, f"{strat_key}.md")
+        if not os.path.exists(snapshot_path):
+            with open(snapshot_path, "w", encoding="utf-8") as stream:
+                stream.write(adf_to_markdown(description_adf).strip() + "\n")
+
     result = {"strat_key": strat_key, "files": []}
 
     # Fetch RFE original (needed before writing strategy file for reconstruction)
@@ -177,6 +195,19 @@ def pull_strategy(server, user, token, strat_key, local_dir="local"):
         result["rfe_key"] = rfe_key
         print(f"  RFE original: {rfe_path}")
 
+    # A reference-only pipeline import needs its section boundary before
+    # reconstruction; local human pulls retain their existing warning behavior.
+    if pipeline_rfe is not None:
+        if "## Business Need (from RFE)" not in description_md:
+            description_md = "## Business Need (from RFE)\n\n" + description_md
+        if STRATEGY_HEADING not in description_md:
+            # Reconstruction replaces everything before Strategy. Put that
+            # boundary before SME/other sections so human guidance survives.
+            boundary = re.search(r"(?m)^## (?!Business Need \(from RFE\))", description_md)
+            index = boundary.start() if boundary else len(description_md)
+            placeholder = "\n\n" + STRATEGY_HEADING + "\n<!-- To be filled by /strategy-refine -->\n\n"
+            description_md = description_md[:index].rstrip() + placeholder + description_md[index:]
+
     # Reconstruct Business Need from linked RFE if description has a reference
     if RFE_REFERENCE_MARKER in description_md and not rfe_key:
         print(f"  WARNING: {strat_key} description contains an RFE reference "
@@ -188,6 +219,13 @@ def pull_strategy(server, user, token, strat_key, local_dir="local"):
               f"description is empty. Business Need will NOT be reconstructed.",
               file=sys.stderr)
     description_md = reconstruct_business_need(description_md, rfe_md)
+
+    if pipeline_rfe is not None:
+        from push_strategy import STAFF_INPUT_TEMPLATE
+        if RFE_REFERENCE_MARKER in description_md:
+            raise ValueError(f"{strat_key}: Business Need reconstruction failed; original RFE content is required")
+        if "## Staff Engineer / SME Input" not in description_md:
+            description_md += "\n\n" + STAFF_INPUT_TEMPLATE
 
     # Write strategy file
     tasks_dir = os.path.join(local_dir, "strat-tasks")
@@ -201,14 +239,24 @@ def pull_strategy(server, user, token, strat_key, local_dir="local"):
         "source_rfe": rfe_key or "RHAIRFE-0",
         "jira_key": strat_key,
         "priority": priority,
-        "status": "Refined",
-        "workflow": "local",
+        "status": "Draft" if pipeline_rfe is not None else "Refined",
+        "workflow": None if pipeline_rfe is not None else "local",
     }
-    write_frontmatter(strat_path, frontmatter, "strat-task")
-
-    # Append body content
-    with open(strat_path, "a", encoding="utf-8") as f:
-        f.write(f"\n{description_md}\n")
+    # The frontmatter helper preserves an existing body. Build a fresh file
+    # so a refresh replaces the prior document rather than appending to it.
+    # Keep the previous document intact if validation or writing fails.
+    with tempfile.NamedTemporaryFile(
+            dir=tasks_dir, prefix=f".{strat_key}-", suffix=".md",
+            delete=False) as tmp:
+        replacement_path = tmp.name
+    try:
+        write_frontmatter(replacement_path, frontmatter, "strat-task")
+        with open(replacement_path, "a", encoding="utf-8") as f:
+            f.write(f"\n{description_md}\n")
+        os.replace(replacement_path, strat_path)
+    finally:
+        if os.path.exists(replacement_path):
+            os.unlink(replacement_path)
     result["files"].append(strat_path)
     print(f"  Strategy: {strat_path}")
 

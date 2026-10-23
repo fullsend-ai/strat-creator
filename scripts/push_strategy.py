@@ -29,12 +29,12 @@ from contextlib import contextmanager
 from jira_utils import (
     add_attachment,
     adf_to_markdown,
-    api_call_with_retry,
     attachment_sort_key,
     build_rfe_reference,
     get_issue,
     markdown_to_adf,
     require_env,
+    set_fields_verified,
     strip_metadata,
 )
 
@@ -289,9 +289,7 @@ def _build_description_stub(existing_md, strategy_section, staff_input_section,
 
 def update_description(server, user, token, issue_key, description_adf):
     """PUT only the description field (no summary change)."""
-    body = {"fields": {"description": description_adf}}
-    path = f"/issue/{issue_key}"
-    api_call_with_retry(server, path, user, token, body=body, method="PUT")
+    set_fields_verified(server, user, token, issue_key, {"description": description_adf})
 
 
 def _find_strategy_attachment(attachments, issue_key):

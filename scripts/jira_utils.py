@@ -10,15 +10,20 @@ Environment variables:
 
 import base64
 import collections
+import hashlib
 import json
 import os
 import re
 import ssl
 import sys
+import tempfile
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
+
+from strat_side_effects import check_owner, digest, perform
 
 ssl_ctx = ssl.create_default_context()
 try:
@@ -116,7 +121,14 @@ def api_call(server, path, user, token, body=None, method=None):
 
 def api_call_with_retry(server, path, user, token, body=None, method=None,
                         max_retries=3):
-    """Wrap api_call with retry on transient errors."""
+    """Retry reads only; writes must reconcile a possibly committed request.
+
+    POST search is a read. Even a transient write error can arrive after Jira
+    commits, so an HTTP retry must not silently repeat that mutation.
+    """
+    actual_method = method or ("POST" if body is not None else "GET")
+    if actual_method not in ("GET", "HEAD") and path != "/search/jql":
+        return api_call(server, path, user, token, body, method)
     last_error = None
     for attempt in range(max_retries):
         try:
@@ -372,11 +384,91 @@ def get_comments(server, user, token, issue_key):
     return comments
 
 
+def canonical_adf(value):
+    """Ignore server-generated IDs/defaults, retaining content and meaningful attrs.
+
+    Links, heading levels, code languages, marks and nondefault table spans are
+    part of identity. Plain-text equality would silently lose those distinctions.
+    """
+    if isinstance(value, list):
+        items = [canonical_adf(item) for item in value]
+        merged = []
+        for item in items:
+            if (merged and isinstance(item, dict) and item.get("type") == "text"
+                    and isinstance(merged[-1], dict) and merged[-1].get("type") == "text"
+                    and {k: v for k, v in item.items() if k != "text"}
+                    == {k: v for k, v in merged[-1].items() if k != "text"}):
+                merged[-1] = {**merged[-1], "text": merged[-1].get("text", "") + item.get("text", "")}
+            else:
+                merged.append(item)
+        return merged
+    if not isinstance(value, dict):
+        return value
+    result = {k: canonical_adf(v) for k, v in value.items() if k != "localId"}
+    defaults = {"table": {"layout": "default", "isNumberColumnEnabled": False},
+                "tableCell": {"colspan": 1, "rowspan": 1, "colwidth": None},
+                "tableHeader": {"colspan": 1, "rowspan": 1, "colwidth": None}}
+    if "attrs" in result:
+        result["attrs"] = {k: v for k, v in result["attrs"].items()
+                           if k not in defaults.get(value.get("type"), {})
+                           or v != defaults[value["type"]][k]}
+    for field in ("attrs", "marks", "content"):
+        if result.get(field) in ({}, []):
+            result.pop(field, None)
+    if result.get("type") == "doc" and result.get("version", 1) == 1:
+        result.pop("version", None)
+    if "marks" in result:
+        result["marks"] = sorted(result["marks"], key=lambda mark: json.dumps(mark, sort_keys=True))
+    return result
+
+
+def same_jira_value(current, expected):
+    if isinstance(expected, dict) and expected.get("type") == "doc":
+        return canonical_adf(current) == canonical_adf(expected)
+    return current == expected
+
+
+def find_matching_comment(server, user, token, issue_key, body_adf):
+    """Read back one exact comment, without posting or adopting duplicates."""
+    matches = [c for c in get_comments(server, user, token, issue_key) if same_jira_value(c.get("body"), body_adf)]
+    if len(matches) > 1:
+        raise RuntimeError("duplicate matching review comments require reconciliation")
+    return matches[0] if matches else None
+
+
 def add_comment(server, user, token, issue_key, body_adf):
-    """POST a comment with ADF body."""
+    """Post once per exact body, reconciling visible comments before retry."""
     path = f"/issue/{issue_key}/comment"
-    return api_call_with_retry(server, path, user, token,
-                               body={"body": body_adf})
+    def read():
+        return find_matching_comment(server, user, token, issue_key, body_adf)
+    return perform(server, "comment", issue_key, body_adf, read,
+                   lambda: api_call(server, path, user, token, body={"body": body_adf}),
+                   lambda data: check_owner(server, user, token, issue_key, data), slot="review-summary")
+
+
+def create_clone(server, user, token, source_key, **fields):
+    """Create with an atomic searchable marker; recover even before linking.
+
+    A missing search result after pending intent is uncertain, not permission
+    to create again. Both marker and Cloners links must resolve uniquely.
+    """
+    marker = "strat-creator-clone-" + digest({"server": server.rstrip("/"), "source": source_key,
+                                           "project": fields["project"]})[:32]
+    fields = dict(fields)
+    fields["labels"] = sorted(set(fields.get("labels", [])) | {marker})
+    def read():
+        linked = get_issue(server, user, token, source_key, fields=["issuelinks"])["fields"].get("issuelinks", [])
+        keys = {link.get(side, {}).get("key", "") for link in linked
+                if link.get("type", {}).get("name") == "Cloners" for side in ("inwardIssue", "outwardIssue")
+                if link.get(side, {}).get("key", "").startswith(fields["project"] + "-")}
+        issues = search_issues(server, user, token, f'project = "{fields["project"]}" AND labels = "{marker}"')
+        keys.update(issue["key"] for issue in issues)
+        if len(keys) > 1:
+            raise RuntimeError("multiple clone candidates require reconciliation")
+        return next(iter(keys)) if keys else None
+    return perform(server, "clone", source_key, fields, read,
+                   lambda: create_issue(server, user, token, **fields),
+                   lambda data: check_owner(server, user, token, source_key, data), slot=fields["project"])
 
 
 def create_issue(server, user, token, project, issue_type, summary,
@@ -415,21 +507,12 @@ def create_issue(server, user, token, project, issue_type, summary,
 
 def update_issue(server, user, token, issue_key, summary, description_adf):
     """PUT to update an existing issue's summary and description."""
-    body = {
-        "fields": {
-            "summary": summary,
-            "description": description_adf,
-        }
-    }
-    path = f"/issue/{issue_key}"
-    api_call_with_retry(server, path, user, token, body=body, method="PUT")
+    set_fields_verified(server, user, token, issue_key, {"summary": summary, "description": description_adf})
 
 
 def update_summary(server, user, token, issue_key, summary):
     """PUT to update only an issue's summary field."""
-    body = {"fields": {"summary": summary}}
-    path = f"/issue/{issue_key}"
-    api_call_with_retry(server, path, user, token, body=body, method="PUT")
+    set_fields_verified(server, user, token, issue_key, {"summary": summary})
 
 
 def add_labels(server, user, token, issue_key, labels):
@@ -440,7 +523,7 @@ def add_labels(server, user, token, issue_key, labels):
         }
     }
     path = f"/issue/{issue_key}"
-    api_call_with_retry(server, path, user, token, body=body, method="PUT")
+    _label_write(server, user, token, issue_key, labels, body, path, adding=True)
 
 
 def remove_labels(server, user, token, issue_key, labels):
@@ -451,7 +534,27 @@ def remove_labels(server, user, token, issue_key, labels):
         }
     }
     path = f"/issue/{issue_key}"
-    api_call_with_retry(server, path, user, token, body=body, method="PUT")
+    _label_write(server, user, token, issue_key, labels, body, path, adding=False)
+
+
+def _label_write(server, user, token, key, labels, body, path, adding):
+    def read():
+        current = set(get_issue(server, user, token, key, fields=["labels"])["fields"].get("labels", []))
+        done = set(labels) <= current if adding else not set(labels) & current
+        return True if done else None
+    perform(server, "add-labels" if adding else "remove-labels", key, sorted(labels), read,
+            lambda: api_call(server, path, user, token, body=body, method="PUT"),
+            lambda data: check_owner(server, user, token, key, data))
+
+
+def set_fields_verified(server, user, token, key, fields):
+    """Reconcile field replacement, halting if a pending write was overwritten."""
+    def read():
+        current = get_issue(server, user, token, key, fields=list(fields))["fields"]
+        return True if all(same_jira_value(current.get(k), v) for k, v in fields.items()) else None
+    return perform(server, "fields", key, fields, read,
+                   lambda: api_call(server, f"/issue/{key}", user, token, body={"fields": fields}, method="PUT"),
+                   lambda data: check_owner(server, user, token, key, data))
 
 
 def create_issue_link(server, user, token, type_name, inward_key, outward_key):
@@ -461,12 +564,23 @@ def create_issue_link(server, user, token, type_name, inward_key, outward_key):
         "inwardIssue": {"key": inward_key},
         "outwardIssue": {"key": outward_key},
     }
-    api_call_with_retry(server, "/issueLink", user, token, body=body)
+    def read():
+        links = get_issue(server, user, token, inward_key, fields=["issuelinks"])["fields"].get("issuelinks", [])
+        matches = [x for x in links if x.get("type", {}).get("name") == type_name
+                   and x.get("outwardIssue", {}).get("key") == outward_key]
+        if len(matches) > 1:
+            raise RuntimeError("duplicate matching links require reconciliation")
+        return True if matches else None
+    # Cloners is created before the target has a source link; check the RFE.
+    target = outward_key if outward_key.startswith("RHAIRFE-") else inward_key
+    perform(server, "link", inward_key, body, read,
+            lambda: api_call(server, "/issueLink", user, token, body=body),
+            lambda data: check_owner(server, user, token, target, data))
 
 
 def add_attachment(server, user, token, issue_key, filepath, filename=None,
                    max_retries=3):
-    """POST /rest/api/3/issue/{key}/attachments — upload a file."""
+    """Reconcile newest named bytes; append revisions without blindly retrying POST."""
     import mimetypes
     if filename is None:
         filename = os.path.basename(filepath)
@@ -488,42 +602,66 @@ def add_attachment(server, user, token, issue_key, filepath, filename=None,
         "Content-Type": f"multipart/form-data; boundary={boundary}",
         "X-Atlassian-Token": "no-check",
     }
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            req = urllib.request.Request(url, data=body, headers=headers,
-                                        method="POST")
-            with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:
-                return json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            if e.code in (429, 502, 503, 504):
-                wait = max(int(e.headers.get("Retry-After", 1)), 4 ** attempt)
-                print(f"  HTTP {e.code}, retrying in {wait}s...",
-                      file=sys.stderr)
-                time.sleep(wait)
-                last_error = e
-                continue
-            raise
-        except urllib.error.URLError as e:
-            wait = 4 ** attempt
-            print(f"  Network error: {e.reason}, retrying in {wait}s...",
-                  file=sys.stderr)
-            time.sleep(wait)
-            last_error = e
-    raise last_error
+    def read():
+        return find_matching_attachments(server, user, token, issue_key, filename, file_data)
+    def write():
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:
+            return json.loads(resp.read())
+    return perform(server, "attachment", issue_key,
+                   {"filename": filename, "sha256": hashlib.sha256(file_data).hexdigest()}, read, write,
+                   lambda data: check_owner(server, user, token, issue_key, data), slot=filename)
+
+
+def find_matching_attachments(server, user, token, issue_key, filename, file_data):
+    """Match the newest named attachment readers use, never an obsolete copy."""
+    attachments = get_issue(server, user, token, issue_key, fields=["attachment"])["fields"].get("attachment", [])
+    candidates = [attachment for attachment in attachments if attachment.get("filename") == filename]
+    if not candidates:
+        return None
+    latest = max(candidates, key=attachment_sort_key)
+    with tempfile.TemporaryDirectory() as temporary:
+        local = os.path.join(temporary, "attachment")
+        download_attachment(server, user, token, latest["content"], local)
+        with open(local, "rb") as stream:
+            return [latest] if stream.read() == file_data else None
+
+
+def _attachment_origin(url):
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("attachment URL must use HTTP(S) without embedded credentials")
+    return parsed.scheme, parsed.hostname.lower(), parsed.port or (443 if parsed.scheme == "https" else 80)
 
 
 def download_attachment(server, user, token, content_url, dest_path):
-    """Download a Jira attachment by its content URL."""
+    """Follow attachment redirects without sending Jira credentials off-origin."""
+    jira_origin = _attachment_origin(server)
     credentials = base64.b64encode(f"{user}:{token}".encode()).decode()
-    headers = {
-        "Authorization": f"Basic {credentials}",
-        "Accept": "*/*",
-    }
-    req = urllib.request.Request(content_url, headers=headers)
-    with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:
-        with open(dest_path, "wb") as f:
-            f.write(resp.read())
+    url, require_https = content_url, jira_origin[0] == "https"
+    for redirects in range(_MAX_REDIRECTS + 1):
+        origin = _attachment_origin(url)
+        if require_https and origin[0] != "https":
+            raise ValueError("attachment download cannot downgrade HTTPS")
+        require_https = require_https or origin[0] == "https"
+        headers = {"Accept": "*/*"}
+        if origin == jira_origin:
+            headers["Authorization"] = f"Basic {credentials}"
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with _redirect_opener.open(req, timeout=120) as response:
+                body = response.read()
+            with open(dest_path, "wb") as stream:
+                stream.write(body)
+            return
+        except urllib.error.HTTPError as error:
+            if error.code not in (301, 302, 303, 307, 308) or not error.headers.get("Location"):
+                raise
+            location = error.headers["Location"]
+            error.close()
+            if redirects == _MAX_REDIRECTS:
+                raise RuntimeError("too many attachment redirects") from None
+            url = urllib.parse.urljoin(url, location)
 
 
 def attachment_sort_key(attachment):

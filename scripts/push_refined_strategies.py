@@ -16,12 +16,25 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 from jira_utils import add_labels, require_env
 
 REFINED_LABEL = "strat-creator-auto-refined"
+
+
+def review_only_strategies():
+    """A restored import is Refined, but its verified prior push is reused."""
+    if not Path("tmp/strat-input.json").exists():
+        return set()
+    from strat_pipeline_state import load_input, load_progress, review_only
+    data = load_input()
+    progress = load_progress(data["run_id"])
+    rfes = set(review_only(data))
+    return {pair["strat"] for pair in (progress.get("create") or {}).get("strategies", [])
+            if pair["rfe"] in rfes}
 
 
 def read_frontmatter(filepath):
@@ -75,6 +88,7 @@ def main():
     pushed = 0
     skipped = 0
     failed = 0
+    reused = review_only_strategies()
 
     for filepath in files:
         basename = os.path.basename(filepath)
@@ -86,6 +100,11 @@ def main():
 
         status = fm.get("status")
         jira_key = fm.get("jira_key")
+
+        if jira_key in reused:
+            print(f"[SKIP] {basename} — verified review-only import; prior push reused")
+            skipped += 1
+            continue
 
         if status != "Refined" or not jira_key:
             print(f"[SKIP] {basename} — status={status}, jira_key={jira_key}")

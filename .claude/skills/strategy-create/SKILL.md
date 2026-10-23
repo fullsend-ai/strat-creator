@@ -96,9 +96,10 @@ If **all** selected RFEs are skipped, stop and tell the user all selected RFEs w
 
 For each selected RFE that needs a new STRAT (Path B from Step 5a), clone it into the RHAISTRAT project. This creates a new RHAISTRAT issue with the same summary, description, priority, and labels, and links the two with a Cloners link.
 
-**Try MCP first.** If `mcp__atlassian__*` tools are available, use Jira's clone operation via MCP.
-
-**If MCP is NOT available, use the REST API clone script:**
+**Always use the recoverable clone script for writes.** MCP may still serve reads.
+Do not fall back to an MCP clone, raw POST, or another create path after a write
+error. The script reconciles its atomic clone marker and existing Cloners links;
+a pending write with no visible match requires reconciliation, not another clone.
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/clone_issue.py RHAIRFE-NNNN --target-project RHAISTRAT --issue-type Feature
@@ -184,6 +185,21 @@ From the script output, filter out any with status **Closed**, **Resolved**, **I
 
 If all STRAT candidates for this RFE are skipped by the label gate, move to the next RFE (do NOT fall through to Path B).
 
+For a host-prepared run (`tmp/strat-input.json` exists), use the deterministic
+import helper instead of manually executing steps 1–3a below:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/import_strategy.py RHAISTRAT-NNNN --rfe RHAIRFE-NNNN
+```
+
+It verifies the source link, reads the actual Jira description and full strategy
+attachment when overflow is indicated, reconstructs the Business Need, preserves
+staff input and writes a Draft task. Never substitute only the TL;DR stub for
+an attached strategy. Continue at step 4 after it succeeds. Do not overwrite an
+already imported task or bypass an import error with manual content edits.
+
+For standalone use without a prepared host run:
+
 1. Fetch the RHAISTRAT issue from Jira:
 
 ```bash
@@ -238,6 +254,12 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-tasks/RHA
 ```
 
 5. Print `[IMPORT] RHAISTRAT-NNNN imported (cloned from RHAIRFE-NNNN)` for each imported STRAT.
+
+For a Workflow import, `strat_pipeline_state.py record-create` restores Refined
+only when the host selected review-only recovery and the imported strategy
+matches its verified earlier push. It does this before scoring or review binds
+the artifact bytes. Do not infer prior refinement from a Jira label alone or
+change task status after a review has been composed.
 
 ### Path B: No Cloners link (no existing STRAT — create new)
 

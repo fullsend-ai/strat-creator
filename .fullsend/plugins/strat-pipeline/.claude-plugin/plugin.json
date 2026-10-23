@@ -1,0 +1,10 @@
+{
+  "name": "strat-pipeline",
+  "version": "0.1.0",
+  "description": "Workflow that runs strat-creator's create, refine, push and review sequence for the strat-single, strat-batch and strat-resume fullsend agents.",
+  "author": {
+    "name": "strat-creator maintainers",
+    "url": "https://github.com/opendatahub-io/strat-creator"
+  },
+  "license": "Apache-2.0"
+}

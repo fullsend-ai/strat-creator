@@ -20,12 +20,13 @@ import argparse
 import sys
 
 from jira_utils import (
-    create_issue,
+    create_clone,
     create_issue_link,
     get_issue,
     get_project_versions,
     require_env,
 )
+from strat_side_effects import OWNER_PREFIX
 
 
 def _resolve_parent_outcome(server, user, token, source_fields):
@@ -100,7 +101,7 @@ def main():
     priority = priority_obj.get("name", "Major") if isinstance(
         priority_obj, dict) else "Major"
     labels = [label for label in fields.get("labels", [])
-              if label != "strat-creator-processing"]
+              if label != "strat-creator-processing" and not label.startswith(OWNER_PREFIX)]
     components = [c["name"] for c in fields.get("components", [])
                   if isinstance(c, dict) and "name" in c]
     affects_versions = [v["name"] for v in fields.get("versions", [])
@@ -122,8 +123,9 @@ def main():
 
     parent_key = _resolve_parent_outcome(server, user, token, fields)
 
-    new_key = create_issue(
+    new_key = create_clone(
         server, user, token,
+        source_key=args.source_key,
         project=args.target_project,
         issue_type=args.issue_type,
         summary=summary,

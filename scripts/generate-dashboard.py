@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a multi-run executive dashboard from strategy pipeline data.
 
-Scans all timestamped run directories in a RHAISTRAT/ data directory,
+Scans timestamped and identified runs in a RHAISTRAT/ data directory,
 extracts aggregate stats from each run, and produces a self-contained
 HTML dashboard with trend charts (Chart.js) and per-run drill-down.
 
@@ -603,7 +603,7 @@ def load_cost_backfill(data_dir):
 
 
 def scan_all_runs(data_dir, config, max_runs=None):
-    """Discover all timestamped run directories and extract stats."""
+    """Discover published runs using the same contract as the summary extractor."""
     runs = []
     current_target = None
 
@@ -613,16 +613,7 @@ def scan_all_runs(data_dir, config, max_runs=None):
 
     cost_backfill = load_cost_backfill(data_dir)
 
-    for entry in sorted(os.listdir(data_dir)):
-        entry_path = os.path.join(data_dir, entry)
-        if not os.path.isdir(entry_path) or os.path.islink(entry_path):
-            continue
-        # Must match YYYYMMDD-HHMMSS
-        try:
-            ts = datetime.strptime(entry, "%Y%m%d-%H%M%S")
-        except ValueError:
-            continue
-
+    for entry, entry_path, ts in _epd.discover_runs(data_dir):
         print(f"  Scanning run {entry}...")
         stats = load_run_from_json(entry_path, config)
         if stats is None:
@@ -649,7 +640,7 @@ def scan_all_runs(data_dir, config, max_runs=None):
         runs.append(stats)
 
     # Sort chronologically (oldest first) and cap if requested
-    runs.sort(key=lambda r: r["run_id"])
+    runs.sort(key=lambda r: (r["timestamp"], r["run_id"]))
     if max_runs and len(runs) > max_runs:
         runs = runs[-max_runs:]
 
