@@ -14,7 +14,7 @@ from strat_pipeline_outcome import regular
 from strat_pipeline_state import check_strat, load_input, load_progress
 from strat_side_effects import atomic, locked
 
-CONTRACT = "strat-import-v1"
+CONTRACT = "strat-import-v2"
 
 
 def output_paths(key, rfe):
@@ -109,6 +109,23 @@ def prepare_import(root, key, rfe, data):
         if not required <= set(files) <= allowed:
             raise ValueError("downloaded import has an incomplete or unexpected artifact inventory")
         check_directories(root)
+        comments = f"artifacts/strat-originals/{rfe}-comments.md"
+        if comments not in files and (root / comments).is_file():
+            content = (root / comments).read_bytes()
+            lines = [line.strip() for line in content.decode("utf-8").splitlines() if line.strip()]
+            # strategy-create writes this placeholder before Path A. The
+            # successful remote read confirmed no comments; retain exact bytes.
+            if lines == [f"# Comments: {rfe}", "No comments found."]:
+                saved = stage / "strat-originals" / f"{rfe}-comments.md"
+                saved.write_bytes(content)
+                files[comments] = saved
+        omitted = [name for name in sorted(allowed - set(files))
+                   if (root / name).exists() or (root / name).is_symlink()]
+        if omitted:
+            # Without a completed import we cannot tell a partial download from
+            # local review work. Preserve both and refuse a misleading receipt.
+            raise ValueError("import has local optional context absent from Jira; preserve work and reconcile: "
+                             + ", ".join(omitted))
         task = f"artifacts/strat-tasks/{key}.md"
         for name in sorted(files):
             if name == task:

@@ -422,6 +422,16 @@ a different run identity, or an incomplete import already bound to a review
 stops for reconciliation. Local publication uses individual atomic replacements;
 the completion record distinguishes an interrupted publication from success.
 
+If Jira omits an optional context file that still exists locally, recovery stops
+before publishing any files or recording completion. Preserve and reconcile the
+leftover; it may contain local review work. The importer does not delete it.
+`strat-import-v2` records include this absence check. Earlier completion records
+are preserved but refused, so they cannot silently reuse unreconciled context.
+Reviews created locally after a v2 import completed remain available on reuse.
+The create Skill's exact empty-comments placeholder is retained and recorded
+when the remote read confirms no RFE comments. Additional local text still
+requires reconciliation.
+
 Short completion/refinement hooks check saved local evidence without Jira
 network calls. Pre/PostToolUse hooks explicitly set `onFailure: block`, supported
 by the qualified runtime, so a timeout cannot silently permit the tool call.
