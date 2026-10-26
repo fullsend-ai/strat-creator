@@ -36,20 +36,43 @@ def versions(root=ROOT):
     )
 
 
+def operation(env):
+    """Infer a regular job from its selector; reject ambiguous requests."""
+    selectors = {name: mode for name, mode in (
+        ("RFE_KEY", "single"), ("CONFIG_FILE", "config"), ("STRAT_KEY", "reprocess")) if env.get(name)}
+    if len(selectors) > 1:
+        raise ValueError("set only one of RFE_KEY, CONFIG_FILE, or STRAT_KEY")
+    selected = next(iter(selectors.values()), "batch")
+    mode = env.get("FULLSEND_MODE") or selected
+    if mode not in {"single", "batch", "config", "reprocess"}:
+        raise ValueError("FULLSEND_MODE must be single, batch, config, or reprocess")
+    if mode != selected:
+        raise ValueError("FULLSEND_MODE disagrees with the ticket/config selector")
+    return mode
+
+
 def validate(env):
-    if env.get("CI_PIPELINE_SOURCE", "web") not in {"web", "api"}:
-        raise ValueError("select Fullsend only on a manual web/API pipeline; schedules keep the existing jobs")
-    mode = env.get("FULLSEND_MODE", "single")
-    if mode not in {"single", "batch"}:
-        raise ValueError("FULLSEND_MODE must be single or batch")
-    for name in ("CONFIG_FILE", "RFE_FILTER", "STRAT_KEY"):
-        if env.get(name):
-            raise ValueError(f"{name} is supported by the existing jobs, not the Fullsend trial")
+    pipeline_source = env.get("CI_PIPELINE_SOURCE", "web")
+    if pipeline_source not in {"web", "api", "schedule"}:
+        raise ValueError("Fullsend model jobs require a web, API, or scheduled pipeline")
+    mode = operation(env)
+    if pipeline_source == "schedule" and mode != "batch":
+        raise ValueError("scheduled pipelines require batch mode")
     key = env.get("RFE_KEY", "")
     if mode == "single" and not re.fullmatch(r"RHAIRFE-[1-9][0-9]*", key):
         raise ValueError("single mode requires RFE_KEY=RHAIRFE-N")
     if mode == "batch" and key:
         raise ValueError("batch mode discovers tickets; leave RFE_KEY empty")
+    if mode == "reprocess" and not re.fullmatch(r"RHAISTRAT-[1-9][0-9]*", env.get("STRAT_KEY", "")):
+        raise ValueError("reprocess mode requires STRAT_KEY=RHAISTRAT-N")
+    if mode == "config":
+        path = Path(env["CONFIG_FILE"])
+        if path.is_absolute() or ".." in path.parts or "\\" in str(path) or path.suffix not in {".yaml", ".yml"}:
+            raise ValueError("CONFIG_FILE must be a relative YAML path in strat-creator")
+        if env.get("RFE_FILTER", "") not in {"", "--baseline", "--no-baseline"}:
+            raise ValueError("RFE_FILTER must be empty, --baseline, or --no-baseline")
+    elif env.get("RFE_FILTER"):
+        raise ValueError("RFE_FILTER requires config mode")
     for name, default, minimum in (("BATCH_SIZE", "10", 1), ("BATCH_OFFSET", "0", 0)):
         value = env.get(name, default)
         if not re.fullmatch(r"[0-9]+", value) or int(value) < minimum:
@@ -92,8 +115,12 @@ def verify_consumer(consumer, env, source=ROOT):
             raise ValueError("STRAT_CREATOR_BRANCH must name a valid branch") from error
     config = yaml.safe_load((consumer / ".fullsend/config.yaml").read_text())
     entries = config.get("agents", [])
-    if len(entries) != 2 or {entry.get("name") for entry in entries} != {"strat-single", "strat-batch"}:
-        raise ValueError("register exactly strat-single and strat-batch")
+    names = [entry.get("name") for entry in entries]
+    if len(set(names)) != len(names) or set(names) not in (
+            {"strat-single", "strat-batch"}, {"strat-single", "strat-batch", "strat-resume"}):
+        raise ValueError("register strat-single and strat-batch, optionally strat-resume")
+    if env.get("STRAT_KEY") and "strat-resume" not in names:
+        raise ValueError("reprocess jobs require the strat-resume registration")
     hashes = {}
     for entry in entries:
         name = entry["name"]

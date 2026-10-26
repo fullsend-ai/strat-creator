@@ -79,6 +79,14 @@ before it was interrupted. It generates no new assessment and does not reopen
 create or refine. Those steps, and fresh review generation, retain their normal
 label gates. Do not extend the recovery exception to new work.
 
+An explicit CI `STRAT_KEY` reprocess is separate from resume. The host verifies
+pipeline provenance and human gates, imports exactly that STRAT, and records
+create before the Workflow starts. Refine/review may reassess an existing
+rubric pass only when `scripts/strat_reprocess.py KEY` verifies the exact
+prepared request and owned RFE. Needs-attention, human sign-off, active/completed
+states and ambiguous clones still block it. Ordinary discovery/resume keep
+their approval gates. No label is removed merely to force reprocessing.
+
 ## Jira Integration
 
 ### Read Operations

@@ -83,6 +83,8 @@ env:
     STRAT_CREATOR_REPO: ${STRAT_CREATOR_REPO}
     # Set by fullsend's dispatch from the commented Jira issue (the RHAISTRAT key).
     STRAT_RESUME_KEY: ${FULLSEND_WORK_ITEM_KEY}
+    # Set only by the explicit CI reprocess operation; ordinary resume keeps gates.
+    STRAT_REPROCESS_KEY: ${STRAT_REPROCESS_KEY}
     STRAT_RUN_ID: ${STRAT_RUN_ID}
     # Host-only run and lock record (prepare_run.py); never in the sandbox.
     # The CI cleanup releases locks from it (shared/release-locks.sh).

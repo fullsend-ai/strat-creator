@@ -80,7 +80,25 @@ def write_json(path, data):
 
 
 def discover(env):
-    args = [sys.executable, str(ROOT / "scripts" / "list-rfe-ids.py"), "--jql-default"]
+    args = [sys.executable, str(ROOT / "scripts" / "list-rfe-ids.py")]
+    configuration = env.get("CONFIG_FILE", "")
+    rfe_filter = env.get("RFE_FILTER", "")
+    if configuration:
+        path = Path(configuration)
+        resolved = (ROOT / path).resolve()
+        if (path.is_absolute() or ".." in path.parts or "\\" in configuration
+                or path.suffix not in {".yaml", ".yml"}
+                or not resolved.is_relative_to(ROOT) or not resolved.is_file()):
+            raise ValueError("CONFIG_FILE must name a YAML file inside the pinned strat-creator checkout")
+        if rfe_filter not in {"", "--baseline", "--no-baseline"}:
+            raise ValueError("RFE_FILTER must be empty, --baseline, or --no-baseline")
+        args += ["--config", str(resolved)]
+        if rfe_filter:
+            args.append(rfe_filter)
+    else:
+        if rfe_filter:
+            raise ValueError("RFE_FILTER requires CONFIG_FILE")
+        args.append("--jql-default")
     for name, flag in (("BATCH_SIZE", "--batch-size"), ("BATCH_OFFSET", "--batch-offset")):
         value = env.get(name, "")
         if value:
@@ -95,7 +113,7 @@ def discover(env):
     bad = [k for k in keys if not RFE_RE.match(k)]
     if bad:
         raise ValueError(f"discovery printed keys that are not RHAIRFE keys: {bad[:3]}")
-    return keys
+    return list(dict.fromkeys(keys))
 
 
 def labels_of(keys):
@@ -221,6 +239,10 @@ def main(argv, env):
         print("usage: prepare_run.py single|batch|resume", file=sys.stderr)
         return 1
     mode = argv[1]
+    reprocess = env.get("STRAT_REPROCESS_KEY", "")
+    if reprocess and (mode != "resume" or reprocess != env.get("STRAT_RESUME_KEY")):
+        print("prepare-run: reprocess must name the exact STRAT selected for resume", file=sys.stderr)
+        return 1
     dry_value = env.get("STRAT_DRY_RUN") or "1"
     if dry_value not in ("0", "1", "true"):
         print("prepare-run: STRAT_DRY_RUN must be 0 (live) or 1/true (dry run; default)", file=sys.stderr)
@@ -252,7 +274,10 @@ def main(argv, env):
     elif mode == "resume":
         key = env.get("STRAT_RESUME_KEY", "").strip()
         try:
-            if STRAT_RE.match(key):
+            if reprocess:
+                from strat_reprocess import inspect_strategy
+                key = inspect_strategy(reprocess)
+            elif STRAT_RE.match(key):
                 key = resolve_strat(key)
             elif not RFE_RE.match(key):
                 raise ValueError(f"STRAT_RESUME_KEY must be a RHAISTRAT or RHAIRFE key, got {key!r}")
@@ -281,6 +306,7 @@ def main(argv, env):
         run["lock_owner"] = run_id
     run["request"] = {name: env.get(name, "") for name in (
         "STRAT_MODE", "RFE_KEY", "STRAT_RESUME_KEY", "BATCH_SIZE", "BATCH_OFFSET", "BATCH_EXPECTED_KEYS",
+        "CONFIG_FILE", "RFE_FILTER", "STRAT_REPROCESS_KEY",
         "STRAT_DRY_RUN", "STRAT_ARCHITECTURE_CONTEXT_PATH")}
     if not candidates:
         write_json(state_dir / "run.json", run)
@@ -290,7 +316,7 @@ def main(argv, env):
     gated, points = {}, {}
     try:
         for key in candidates:
-            step, reason = resume_point(key, previous)
+            step, reason = ("refine", None) if reprocess else resume_point(key, previous)
             if step:
                 points[key] = step
             else:
@@ -303,7 +329,9 @@ def main(argv, env):
     # it cannot be computed, nothing is locked and the run fails.
     try:
         settings = yaml.safe_load(SETTINGS.read_text()) or {}
-        gate_skips = {k: r for k in lockable if (r := expected_create_skip(k, settings))}
+        # An explicit STRAT request imports that existing strategy directly;
+        # it does not rediscover an RFE or authorize a new clone.
+        gate_skips = {} if reprocess else {k: r for k in lockable if (r := expected_create_skip(k, settings))}
     except Exception as exc:
         print(f"prepare-run: could not compute expected create skips, no RFE was locked: {exc}",
               file=sys.stderr)
@@ -323,6 +351,8 @@ def main(argv, env):
         return 1
     run["acquired_keys"] = acquired
     run["resume_points"] = {k: points[k] for k in acquired}
+    if reprocess:
+        run["reprocess"] = {key: reprocess for key in acquired}
     run["expected_skips"] = [{"key": k, "reason": gate_skips[k]} for k in acquired if k in gate_skips]
     run["resume_from"] = min(run["resume_points"].values(), key=STEPS.index, default=None)
     run["skipped"] = [{"key": k, "reason": gated[k] if k in gated else skip_reason(labels[k])}
@@ -340,6 +370,11 @@ def main(argv, env):
     if not acquired:
         return request_skip(env, "every candidate is locked, done, or waiting for a human")
     write_json(target / "tmp" / "strat-input.json", run)
+    if reprocess:
+        proc = subprocess.run([sys.executable, str(ROOT / "scripts/strat_reprocess.py"), reprocess, "--prepare"],
+                              cwd=target, env=env)
+        if proc.returncode:
+            return proc.returncode
     points_text = " ".join(f"{k}:{v}" for k, v in run["resume_points"].items())
     print(f"prepare-run: {'selected (dry run)' if dry_run else 'locked'} {points_text}")
     return 0

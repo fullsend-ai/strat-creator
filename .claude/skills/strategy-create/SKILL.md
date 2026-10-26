@@ -185,6 +185,11 @@ From the script output, filter out any with status **Closed**, **Resolved**, **I
 
 If all STRAT candidates for this RFE are skipped by the label gate, move to the next RFE (do NOT fall through to Path B).
 
+Explicit CI STRAT reprocessing imports the selected existing strategy on the
+host and records create before this Workflow starts. It does not bypass this
+Skill's discovery gates or authorize a replacement clone. Only refine/review
+may use the exact prepared reprocess request to reassess a prior rubric pass.
+
 For a host-prepared run (`tmp/strat-input.json` exists), use the deterministic
 import helper instead of manually executing steps 1–3a below:
 

@@ -4,12 +4,22 @@ set +x
 set -Eeuo pipefail
 umask 077
 AGENT="${1:-}"
-case "$AGENT" in strat-single|strat-batch) ;; *) echo 'Expected strat-single or strat-batch' >&2; exit 2 ;; esac
+case "$AGENT" in strat-single|strat-batch|strat-resume) ;; *) echo 'Expected strat-single, strat-batch, or strat-resume' >&2; exit 2 ;; esac
 : "${CI_PROJECT_DIR:?}" "${CI_JOB_ID:?}"
 [[ "$CI_JOB_ID" =~ ^[0-9]+$ ]] || exit 2
 CI_SCRIPTS="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-export FULLSEND_MODE="${FULLSEND_MODE:-${AGENT#strat-}}"
-[[ "$AGENT" == "strat-$FULLSEND_MODE" ]] || { echo 'Agent and FULLSEND_MODE disagree' >&2; exit 2; }
+case "$AGENT" in
+  strat-single) expected_mode=single ;;
+  strat-batch) expected_mode="${CONFIG_FILE:+config}"; expected_mode="${expected_mode:-batch}" ;;
+  strat-resume) expected_mode=reprocess ;;
+esac
+export FULLSEND_MODE="${FULLSEND_MODE:-$expected_mode}"
+[[ "$FULLSEND_MODE" == "$expected_mode" ]] || { echo 'Agent and FULLSEND_MODE disagree' >&2; exit 2; }
+export CONFIG_FILE="${CONFIG_FILE:-}" RFE_FILTER="${RFE_FILTER:-}"
+export STRAT_REPROCESS_KEY= FULLSEND_WORK_ITEM_KEY=
+if [[ "$FULLSEND_MODE" == reprocess ]]; then
+  export STRAT_REPROCESS_KEY="${STRAT_KEY:-}" FULLSEND_WORK_ITEM_KEY="${STRAT_KEY:-}"
+fi
 export STRAT_DRY_RUN="${STRAT_DRY_RUN:-1}" FULLSEND_PUBLISH="${FULLSEND_PUBLISH:-0}"
 export BATCH_SIZE="${BATCH_SIZE:-10}" BATCH_OFFSET="${BATCH_OFFSET:-0}"
 python3 "$CI_SCRIPTS/fullsend-config.py" validate "$CI_PROJECT_DIR"

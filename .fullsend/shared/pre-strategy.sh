@@ -80,6 +80,9 @@ sys.exit(0)
 PY
   then
     echo "strat-${MODE} pre-script: reusing verified preparation; recovery data preserved"
+    if [[ -n "${STRAT_REPROCESS_KEY:-}" ]]; then
+      python3 "${CLONE}/scripts/strat_reprocess.py" "$STRAT_REPROCESS_KEY" --prepare
+    fi
     exit 0
   else
     rc=$?

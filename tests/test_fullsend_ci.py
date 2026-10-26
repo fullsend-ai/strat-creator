@@ -303,8 +303,14 @@ def test_binary_scrub_error_does_not_echo_filename_or_traceback(tmp_path):
      (0, 0, False, "none", 1), (23, 0, True, "file", 23),
      (23, 0, True, "directory", 23), (0, 0, True, "file", 1)],
 )
+@pytest.mark.parametrize("mode,agent,selectors", [
+    ("single", "strat-single", {"RFE_KEY": "RHAIRFE-19"}),
+    ("batch", "strat-batch", {}),
+    ("config", "strat-batch", {"CONFIG_FILE": "config/synthetic.yaml", "RFE_FILTER": "--baseline"}),
+    ("reprocess", "strat-resume", {"STRAT_KEY": "RHAISTRAT-19"}),
+])
 def test_actual_ci_wrapper_releases_claims_and_preserves_failure(
-    tmp_path, run_code, release_code, head_matches, recovery_case, expected
+    tmp_path, run_code, release_code, head_matches, recovery_case, expected, mode, agent, selectors
 ):
     """Run the real outer shell with fake external services and no credentials."""
     scripts = tmp_path / ".fullsend/ci"
@@ -347,6 +353,10 @@ def test_actual_ci_wrapper_releases_claims_and_preserves_failure(
     executable(tools / "git", '#!/bin/sh\nprintf "%s\\n" "$TEST_HEAD_SHA"\n')
     (scripts / "with-fullsend-gateway.sh").write_text("""#!/bin/bash
 set -e
+{
+  printf '%s\\n' "$FULLSEND_MODE" "$CONFIG_FILE" "$RFE_FILTER"
+  printf '%s\\n' "$STRAT_REPROCESS_KEY" "$FULLSEND_WORK_ITEM_KEY"
+} > "$CI_PROJECT_DIR/operation.txt"
 mkdir -p "$STRAT_STATE_DIR/strat-creator/.fullsend/shared"
 printf 'RHAIRFE-19\\n' > "$STRAT_STATE_DIR/owned-rfe-ids.txt"
 printf '{"owner":"synthetic-run"}\\n' > "$STRAT_STATE_DIR/owned-rfe-ids.txt.owner.json"
@@ -375,8 +385,7 @@ shift
         "PATH": str(tools) + ":" + os.environ["PATH"],
         "CI_PROJECT_DIR": str(tmp_path),
         "CI_JOB_ID": "123",
-        "RFE_KEY": "RHAIRFE-19",
-        "FULLSEND_MODE": "single",
+        "FULLSEND_MODE": mode,
         "STRAT_DRY_RUN": "1",
         "FULLSEND_PUBLISH": "0",
         "JIRA_SERVER": "https://jira.example.invalid",
@@ -390,12 +399,17 @@ shift
         "TEST_RELEASE_CODE": str(release_code),
         "TEST_RECOVERY_CASE": recovery_case,
     }
-    for name in ("CONFIG_FILE", "RFE_FILTER", "STRAT_KEY"):
+    for name in ("CONFIG_FILE", "RFE_FILTER", "STRAT_KEY", "RFE_KEY"):
         env.pop(name, None)
+    env.update(selectors)
     result = subprocess.run(
-        ["bash", str(scripts / "run-fullsend.sh"), "strat-single"], env=env, capture_output=True, text=True, timeout=30
+        ["bash", str(scripts / "run-fullsend.sh"), agent], env=env, capture_output=True, text=True, timeout=30
     )
     assert result.returncode == expected, result.stderr
+    assert (tmp_path / "operation.txt").read_text().splitlines() == [
+        mode, selectors.get("CONFIG_FILE", ""), selectors.get("RFE_FILTER", ""),
+        selectors.get("STRAT_KEY", ""), selectors.get("STRAT_KEY", ""),
+    ]
     assert (tmp_path / "released").exists() == head_matches
     assert "synthetic-jira-secret" not in result.stdout
     assert "synthetic-jira-secret" not in result.stderr

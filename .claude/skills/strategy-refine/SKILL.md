@@ -70,6 +70,18 @@ If the STRAT has either `strat-creator-rubric-pass` or `strat-creator-needs-atte
 - Do NOT refine it
 - Print `[SKIP] RHAISTRAT-NNNN — already has <label>, skipping refinement`
 
+For an explicit CI reprocess request only, an existing `rubric-pass` may be
+reviewed again if this command succeeds for the exact strategy:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/strat_reprocess.py RHAISTRAT-NNNN
+```
+
+It verifies the prepared request, acquired RFE, pipeline provenance and current
+human gates. A failure stops refinement. Never override `needs-attention`,
+human sign-off, or an active/completed STRAT state. Ordinary resume and discovery
+retain their normal approval gate. Do not remove approval labels to bypass it.
+
 ## Revision Mode
 
 Check if a prior review exists in `artifacts/strat-reviews/` for the strategy being refined. If one exists, this is a revision — the strategy has already been refined and reviewed. Read the review file.

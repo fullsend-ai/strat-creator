@@ -67,6 +67,8 @@ env:
     BATCH_SIZE: ${BATCH_SIZE}
     BATCH_OFFSET: ${BATCH_OFFSET}
     BATCH_EXPECTED_KEYS: ${BATCH_EXPECTED_KEYS}
+    CONFIG_FILE: ${CONFIG_FILE}
+    RFE_FILTER: ${RFE_FILTER}
     STRAT_RUN_ID: ${STRAT_RUN_ID}
     # Host-only run and lock record (prepare_run.py); never in the sandbox.
     # The CI cleanup releases locks from it (shared/release-locks.sh).

@@ -567,7 +567,7 @@ collapses into one `plugins:` entry.
 ## GitLab CI consumer setup
 
 The pipeline repository owns the GitLab jobs, operator inputs and one
-`.fullsend/config.yaml` with remote `strat-single` and `strat-batch`
+`.fullsend/config.yaml` with remote `strat-single`, `strat-batch`, and optionally `strat-resume`
 registrations. Reusable integration lives here under `.fullsend/ci/`: input and
 source checks, runtime preparation, the gateway launcher, dependency image,
 version pins and artifact redaction. Its model-free tests live in
@@ -577,11 +577,11 @@ CI follows `STRAT_CREATOR_BRANCH` in `STRAT_CREATOR_REPO`. Each job fetches the
 branch once, checks out its observed commit and exports that commit as the
 internal `STRAT_CREATOR_REF` before running this code. The consumer registrations
 name that same branch without maintained hashes. `fullsend-config.py validate
-<consumer>` checks manual inputs and verifies the repository, branch, checkout
+<consumer>` checks job inputs and verifies the repository, branch, checkout
 and harnesses. A source mismatch or an edited package stops preparation.
 Existing consumers with explicit commit/hash registrations remain supported.
 
-`run-fullsend.sh strat-single` or `strat-batch` then prepares a separate target
+`run-fullsend.sh strat-single`, `strat-batch`, or `strat-resume` then prepares a separate target
 checkout and a private runtime directory under `.fullsend-state/<job>/`. The
 runtime contains companions copied from the verified source. Branch registrations
 are resolved to that snapshot's commit and calculated hashes only in the private
@@ -598,6 +598,30 @@ Python dependencies; the existing plugin hooks check Claude inside the sandbox.
 Model defaults, concurrency ten and background wait ceilings belong to the
 source harnesses. The existing business validator, one-attempt limit, owned
 claim cleanup and publication gates remain in place.
+
+Regular GitLab jobs may use scheduled default-JQL batches or manual web/API
+single-ticket, config-file batch, and STRAT reprocess operations. Push/MR events
+are rejected by the reusable launcher. `FULLSEND_MODE` is inferred from exactly
+one of `RFE_KEY`, `CONFIG_FILE`, or `STRAT_KEY`, or defaults to batch with no
+selector. An explicit mode must agree. Schedules accept only default-JQL batch.
+Config mode uses a YAML file inside the pinned source checkout, with an optional
+`--baseline` or `--no-baseline` filter and the normal batch size/offset.
+
+Reprocess uses the registered `strat-resume` harness with a separate explicit
+prepared request. The host requires pipeline provenance, one unambiguous clone,
+and no human gate or active/completed STRAT state. It imports the exact selected
+STRAT and prior review and records create before model work, so the Workflow
+refines/reviews that strategy without discovering or creating a substitute.
+The refine/review Skills permit reassessment of an existing rubric pass only
+when `scripts/strat_reprocess.py KEY` verifies that request and owned RFE.
+No approval label is removed to bypass a gate. Ordinary resume still skips
+approved strategies. These paths are covered by model-free input tests and
+Jira emulator preparation/recovery tests in `test_fullsend_ci_cutover.py` and
+`test_fullsend_job_parity.py`.
+
+The reusable launcher's defaults remain dry-run/no-publication. A consumer
+cutover may explicitly choose live defaults in its CI config. Dry-run
+publication is rejected; model use still requires a separately authorized run.
 
 The shared sandbox policy allows the Jira API and api.media.atlassian.com:443
 for Python attachment verification. Jira Cloud redirects uploaded file downloads

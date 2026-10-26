@@ -72,6 +72,18 @@ If the STRAT has either `strat-creator-rubric-pass` or `strat-creator-needs-atte
 - Do NOT review it
 - Print `[SKIP] RHAISTRAT-NNNN — already has <label>, skipping review`
 
+For an explicit CI reprocess request only, an existing `rubric-pass` may be
+reviewed again if this command succeeds for the exact strategy:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/strat_reprocess.py RHAISTRAT-NNNN
+```
+
+It verifies the prepared request, acquired RFE, pipeline provenance and current
+human gates. A failure stops review. Never override `needs-attention`, human
+sign-off, or an active/completed STRAT state. Ordinary resume and discovery
+retain their normal approval gate. Do not remove approval labels to bypass it.
+
 ## Step 2: Fetch Architecture Context
 
 If `--architecture-context <path>` is in `$ARGUMENTS`, use the local path:
