@@ -1,12 +1,13 @@
 # This file is managed by 'fullsend repos': repos-config-v1
 # Committed onboarding configuration, extended with repository strategy agents.
 # Preserve those entries when updating the onboarding scaffold.
+version: "1"
 runtime: claude
 roles:
-    - fullsend
     - triage
     - coder
     - review
+    - fix
     - retro
     - prioritize
 agents:
@@ -46,8 +47,8 @@ allowed_remote_resources:
     - https://raw.githubusercontent.com/fullsend-ai/strat-creator/
 create_issues:
     allow_targets:
-        repos:
-            - fullsend-ai/fullsend
+        orgs:
+            - fullsend-ai
 status_notifications:
     reaction:
         start: enabled
