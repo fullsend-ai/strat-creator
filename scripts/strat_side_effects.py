@@ -19,6 +19,11 @@ from pathlib import Path
 
 CONTRACT = "strat-side-effects-v1"
 OWNER_PREFIX = "strat-creator-owner-"
+HUMAN_GATES = {"strat-creator-human-sign-off", "strat-creator-needs-attention"}
+
+
+class _StandaloneContext(dict):
+    """Only context() can select the explicit standalone journal, never JSON."""
 
 
 class UncertainWrite(RuntimeError):
@@ -30,7 +35,7 @@ def digest(value):
 
 
 def owner_label(owner):
-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", owner or ""):
+    if not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", owner):
         raise ValueError("invalid lock owner")
     return OWNER_PREFIX + digest(owner)[:32]
 
@@ -61,13 +66,16 @@ def atomic(path, value):
 def context():
     """Only S1 runs (or explicit isolated fixtures) use a persistent ledger."""
     path = Path("tmp/strat-input.json")
+    if path.is_symlink():
+        raise ValueError("symlinked S1 input")
     if path.exists():
-        if path.is_symlink():
-            raise ValueError("symlinked S1 input")
         data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("S1 input must be a JSON object with a valid lock owner")
         if data.get("dry_run"):
             raise ValueError("Jira writes are forbidden in a dry run")
         owner_label(data.get("run_id"))
+        owner_label(data.get("lock_owner"))
         return Path("tmp/strat-effects"), data
     if os.environ.get("STRAT_MANAGED_RUN") == "1":
         raise ValueError("managed run is missing tmp/strat-input.json; preserve state and stop")
@@ -75,7 +83,7 @@ def context():
     if directory:
         run = os.environ.get("STRAT_RUN_ID")
         owner_label(run)
-        return Path(directory), {"run_id": run}
+        return Path(directory), _StandaloneContext(run_id=run)
     return None, None
 
 
@@ -157,17 +165,46 @@ def perform(server, kind, target, payload, read, write, guard=None, slot=None):
         return found
 
 
+def check_human_gates(server, target, labels, data, *, root=None):
+    """Stop late human intervention; reconcile only our exact verdict intent.
+
+    Pending is needed when Jira committed a label before the process died.
+    This journal is recovery evidence, not a tamper-proof authority or Jira CAS.
+    """
+    gates = set(labels) & HUMAN_GATES
+    if gates == {"strat-creator-needs-attention"} and isinstance(data, dict) and data.get("run_id"):
+        identity = {"server_hash": digest(server.rstrip("/")), "kind": "add-labels", "target": target,
+                    "payload_hash": digest(["strat-creator-needs-attention"])}
+        path = (root or Path.cwd()) / "tmp/strat-effects" / (digest(identity) + ".json")
+        if path.is_file() and not path.is_symlink() and not any(p.is_symlink() for p in path.parents):
+            effect = json.loads(path.read_text())
+            if (isinstance(effect, dict) and effect.get("contract") == CONTRACT
+                    and effect.get("run_id") == data["run_id"] and effect.get("identity") == identity
+                    and effect.get("status") in ("pending", "verified")):
+                gates.clear()
+    if gates:
+        raise ValueError(f"freshness: human gate stops strategy writes: {target}: {', '.join(sorted(gates))}")
+
+
 def check_owner(server, user, token, target, data):
     """Recheck S1 ownership at each write; never adopt a foreign/orphaned claim.
 
     Jira labels do not provide compare-and-swap. This is conflict detection and
     recovery ownership, not a distributed lease or a cross-run exclusivity proof.
     """
-    if not data or not data.get("lock_owner"):
+    if data is None or isinstance(data, _StandaloneContext):
+        path = Path("tmp/strat-input.json")
+        if path.exists() or path.is_symlink() or os.environ.get("STRAT_MANAGED_RUN") == "1":
+            raise ValueError("managed write requires a valid lock owner")
         return
+    if not isinstance(data, dict):
+        raise ValueError("managed write requires a valid lock owner")
+    owner_label(data.get("lock_owner"))
     from jira_utils import get_issue
     if target.startswith("RHAISTRAT-"):
-        links = get_issue(server, user, token, target, fields=["issuelinks"])["fields"].get("issuelinks", [])
+        fields = get_issue(server, user, token, target, fields=["issuelinks", "labels"])["fields"]
+        check_human_gates(server, target, fields.get("labels", []), data)
+        links = fields.get("issuelinks", [])
         rfes = {link.get(side, {}).get("key") for link in links if link.get("type", {}).get("name") == "Cloners"
                 for side in ("inwardIssue", "outwardIssue")
                 if link.get(side, {}).get("key", "").startswith("RHAIRFE-")}

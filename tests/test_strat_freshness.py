@@ -92,7 +92,7 @@ def seed(repo, live=False, dry_run=False):
         path = repo / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
-    data = {"run_id": "freshness-run", "mode": "single", "dry_run": dry_run,
+    data = {"run_id": "freshness-run", "lock_owner": "freshness-run", "mode": "single", "dry_run": dry_run,
             "input_keys": ["RHAIRFE-8801"], "acquired_keys": ["RHAIRFE-8801"], "expected_skips": [],
             "resume_points": {}, "skipped": [], "architecture_context": "available"}
     initialize(repo, data, live=live, trusted_source=ROOT)
@@ -258,9 +258,11 @@ def test_native_replay_is_rejected_but_fresh_launch_checks_inputs(ready):
 
 @pytest.fixture
 def live(tmp_path, jira, monkeypatch):
+    from strat_side_effects import owner_label
     for name, value in {"JIRA_SERVER": jira.url, "JIRA_USER": "admin", "JIRA_TOKEN": "admin"}.items():
         monkeypatch.setenv(name, value)
-    jira.create("RHAIRFE-8801", "Timeout ownership", "Users need bounded latency.")
+    jira.create("RHAIRFE-8801", "Timeout ownership", "Users need bounded latency.",
+                labels=["strat-creator-processing", owner_label("freshness-run")])
     jira.create("RHAISTRAT-8801", "Timeout ownership", "Original business need.", issue_type="Feature")
     jira.request("POST", "/rest/api/3/issueLink", {"type": {"name": "Cloners"},
                  "inwardIssue": {"key": "RHAISTRAT-8801"}, "outwardIssue": {"key": "RHAIRFE-8801"}})
@@ -268,6 +270,112 @@ def live(tmp_path, jira, monkeypatch):
     assert command(tmp_path, "record-create").returncode == 0
     assert command(tmp_path, "mark", "refine", "RHAISTRAT-8801").returncode == 0
     return tmp_path, data, jira
+
+
+@pytest.mark.parametrize("label", ["strat-creator-human-sign-off", "strat-creator-needs-attention"])
+@pytest.mark.parametrize("bound", [True, False])
+@pytest.mark.parametrize("operation", ["comment", "description", "attachment"])
+def test_late_human_gate_blocks_real_writes_even_before_target_binding(live, monkeypatch, label, bound, operation):
+    from jira_utils import add_attachment, set_fields_verified
+    repo, _, jira = live
+    progress = repo / "tmp/strat-progress.json"
+    if not bound:
+        progress.unlink()
+    jira.request("PUT", "/rest/api/3/issue/RHAISTRAT-8801", {"update": {"labels": [{"add": label}]}})
+    before = jira.get("RHAISTRAT-8801")
+    state = progress.read_bytes() if bound else None
+    monkeypatch.chdir(repo)
+    with pytest.raises(ValueError, match="human gate"):
+        if operation == "comment":
+            add_comment(jira.url, "admin", "admin", "RHAISTRAT-8801", markdown_to_adf("Do not publish."))
+        elif operation == "description":
+            set_fields_verified(jira.url, "admin", "admin", "RHAISTRAT-8801",
+                                {"description": markdown_to_adf("Do not overwrite.")})
+        else:
+            add_attachment(jira.url, "admin", "admin", "RHAISTRAT-8801",
+                           str(repo / "artifacts/strat-tasks/RHAISTRAT-8801.md"))
+    assert jira.get("RHAISTRAT-8801") == before
+    assert not get_comments(jira.url, "admin", "admin", "RHAISTRAT-8801")
+    assert (progress.read_bytes() if bound else None) == state
+    assert not list((repo / "tmp/strat-effects").glob("*.json"))
+    if not bound:
+        result = command(repo, "record-create")
+        assert result.returncode != 0 and "human gate" in result.stderr
+        assert not progress.exists()
+
+
+def test_ordinary_bookkeeping_labels_do_not_invalidate_human_snapshot(live):
+    repo, data, jira = live
+    jira.request("PUT", "/rest/api/3/issue/RHAISTRAT-8801", {"update": {"labels": [
+        {"add": "strat-creator-auto-refined"}, {"add": "unrelated-team-label"}]}})
+    verify_progress(repo, data, json.loads((repo / "tmp/strat-progress.json").read_text()))
+
+
+@pytest.mark.parametrize("mismatch", ["none", "run", "server", "rejected", "payload", "target", "signoff"])
+def test_only_exact_current_run_label_intent_can_explain_needs_attention(live, monkeypatch, mismatch):
+    from strat_side_effects import CONTRACT as EFFECT_CONTRACT
+    from strat_side_effects import digest
+    repo, data, jira = live
+    label = "strat-creator-human-sign-off" if mismatch == "signoff" else "strat-creator-needs-attention"
+    identity = {"server_hash": digest(jira.url.rstrip("/")), "kind": "add-labels", "target": "RHAISTRAT-8801",
+                "payload_hash": digest([label])}
+    if mismatch == "server":
+        identity["server_hash"] = digest("https://other.invalid")
+    if mismatch == "payload":
+        identity["payload_hash"] = digest([label, "other-label"])
+    if mismatch == "target":
+        identity["target"] = "RHAISTRAT-9999"
+    effects = repo / "tmp/strat-effects"
+    effects.mkdir()
+    if mismatch != "none":
+        (effects / (digest(identity) + ".json")).write_text(json.dumps({
+            "contract": EFFECT_CONTRACT, "run_id": "another-run" if mismatch == "run" else data["run_id"],
+            "identity": identity, "status": "rejected" if mismatch == "rejected" else "verified"}))
+    jira.request("PUT", "/rest/api/3/issue/RHAISTRAT-8801", {"update": {"labels": [{"add": label}]}})
+    monkeypatch.chdir(repo)
+    with pytest.raises(ValueError, match="human gate"):
+        add_comment(jira.url, "admin", "admin", "RHAISTRAT-8801", markdown_to_adf("Do not publish."))
+    assert not get_comments(jira.url, "admin", "admin", "RHAISTRAT-8801")
+
+
+@pytest.mark.parametrize("lost_ack", [True, False])
+def test_pipeline_needs_attention_verdict_and_lost_ack_recover_without_duplicates(live, monkeypatch, lost_ack):
+    import strat_side_effects
+    from publish_review import publish
+    from review_composition_support import prepare
+
+    repo, data, _ = live
+    monkeypatch.chdir(repo)
+    prepare(repo, "RHAISTRAT-8801", "RHAIRFE-8801", (1, 1, 1, 1))
+    # Bind the composition helper's authored RFE snapshot before publishing.
+    progress = repo / "tmp/strat-progress.json"
+    progress.unlink()
+    assert command(repo, "record-create").returncode == 0
+    assert command(repo, "mark", "refine", "RHAISTRAT-8801").returncode == 0
+    push(live)
+    real_atomic = strat_side_effects.atomic
+    interrupted = []
+
+    def lose_label_ack(path, value):
+        if (lost_ack and not interrupted and value.get("status") == "verified"
+                and value.get("identity", {}).get("kind") == "add-labels"):
+            interrupted.append(True)
+            raise OSError("authored death before label acknowledgement")
+        real_atomic(path, value)
+
+    monkeypatch.setattr(strat_side_effects, "atomic", lose_label_ack)
+    if lost_ack:
+        with pytest.raises(OSError, match="label acknowledgement"):
+            publish(repo, "RHAISTRAT-8801")
+    for _ in range(2):
+        assert publish(repo, "RHAISTRAT-8801")["needs_attention"] is True
+        result = command(repo, "record-review", "RHAISTRAT-8801")
+        assert result.returncode == 0, result.stderr
+    jira = live[2]
+    assert len(get_comments(jira.url, "admin", "admin", "RHAISTRAT-8801")) == 1
+    assert [a["filename"] for a in jira.get("RHAISTRAT-8801")["fields"]["attachment"]] == [
+        "RHAISTRAT-8801-review.md"]
+    verify_progress(repo, data, json.loads(progress.read_text()))
 
 
 @pytest.mark.parametrize("change", ["rfe_description", "rfe_comment", "rfe_gate", "staff"])

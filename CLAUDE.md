@@ -120,6 +120,14 @@ or stop on uncertainty. Standalone human use without prepared pipeline state
 requires no pipeline owner. Clones carry a `strat-creator-clone-<digest>` label
 for recovery; it is not a verdict or a discovery/approval gate.
 
+Prepared live input requires both a valid run ID and lock owner before effect
+reads, intent or writes. Missing ownership cannot select standalone behavior.
+Helpers recheck STRAT human gates at every owned write, including before the
+target has a saved freshness snapshot. Human sign-off always stops writes.
+Needs-attention stops writes unless the exact current-run pending or verified
+label intent proves it is this run's recoverable review verdict. This exception
+does not authorize a new assessment or reopen create/refine.
+
 Fullsend harnesses set `STRAT_MANAGED_RUN=1`: a missing `tmp/strat-input.json`
 then stops helper writes and launches instead of falling back to local mode.
 Keep that flag and prepared state intact. Direct harness preparation defaults
@@ -130,8 +138,8 @@ catch mistakes, not a compromised agent that can edit its code or credentials.
 
 The S1 host records `strat-freshness-v1` before agent work. Same-run reuse and
 writes require unchanged code/Skills/instructions, pinned architecture files,
-prepared parameters, live RFE fields/comments, staff input and recorded artifact
-identity. Changed or unverifiable inputs stop the run and preserve its work and
+prepared parameters, live RFE fields/comments, staff input, human-gate labels
+and recorded artifact identity. Changed or unverifiable inputs stop the run and preserve its work and
 mutation intent. Do not rewrite the baseline or clear progress to bypass this.
 A later run may skip refinement/push only with matching prior provenance and
 live published-strategy read-back. Legacy progress requires refinement again.

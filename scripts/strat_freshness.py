@@ -116,11 +116,18 @@ def jira_rfe(key):
     return digest({"fields": fields, "comments": comments})
 
 
-def jira_human(key):
+def jira_human(key, *, root=None, data=None):
     from jira_utils import adf_to_markdown, get_issue, require_env
-    fields = get_issue(*require_env(), key, fields=["description", "summary", "priority", "status"])["fields"]
+    from strat_side_effects import HUMAN_GATES, check_human_gates
+    env = require_env()
+    fields = get_issue(*env, key, fields=["description", "summary", "priority", "status", "labels"])["fields"]
+    gates = sorted(set(fields.get("labels", [])) & HUMAN_GATES)
+    if data is not None:
+        check_human_gates(env[0], key, gates, data, root=root)
+        gates = []  # Only our exact current-run verdict can pass a present gate.
     return {"staff": staff(adf_to_markdown(fields.get("description"))),
-            "summary": fields.get("summary"), "priority": fields.get("priority"), "status": fields.get("status")}
+            "summary": fields.get("summary"), "priority": fields.get("priority"), "status": fields.get("status"),
+            "gate_labels": gates}
 
 
 def jira_published(key):
@@ -269,11 +276,11 @@ def record(root, data, progress, phase, key, rfe):
     value = {"strategy": strategy(root, key), "originals": originals(root, rfe)}
     jira_key = strategy_jira_key(root, data, key) if data["freshness"]["live"] else None
     if phase == "create":
-        saved["targets"][key] = {"rfe": rfe, "human": jira_human(jira_key) if jira_key else None}
+        saved["targets"][key] = {"rfe": rfe, "human": jira_human(jira_key, root=root, data=data) if jira_key else None}
     else:
         if phase == "push":
             value["published"] = jira_published(jira_key) if jira_key else None
-            value["human"] = jira_human(jira_key) if jira_key else None
+            value["human"] = jira_human(jira_key, root=root, data=data) if jira_key else None
         if phase == "review":
             value["review"] = hashed(root / f"artifacts/strat-reviews/{key}-review.md")
         saved[{"refine": "refined", "push": "pushed", "review": "reviewed"}[phase]][key] = value
@@ -323,7 +330,7 @@ def verify_progress(root, data, progress, *, live=True):
                 if target["human"] is not None:
                     raise ValueError(f"freshness: local strategy has a remote snapshot: {key}")
                 continue
-            expected, current = dict(target["human"]), jira_human(jira_keys[key])
+            expected, current = dict(target["human"]), jira_human(jira_keys[key], root=root, data=data)
             if expected.get("summary") != current.get("summary") and own_summary_change(root, key, current["summary"]):
                 expected["summary"] = current["summary"]
             if expected != current:

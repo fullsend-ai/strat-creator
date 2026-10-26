@@ -601,15 +601,18 @@ def _validate(repo, run_path, env):
 
 @pytest.fixture
 def validated_run(tmp_path, jira, monkeypatch):
+    from strat_side_effects import owner_label
     for name, value in {"JIRA_SERVER": jira.url, "JIRA_USER": "admin", "JIRA_TOKEN": "admin"}.items():
         monkeypatch.setenv(name, value)
-    jira.create("RHAIRFE-7101", "RFE one", "Need.")
-    jira.create("RHAIRFE-7102", "RFE two", "Need.")
+    claimed = [PROCESSING, owner_label("run-2")]
+    jira.create("RHAIRFE-7101", "RFE one", "Need.", labels=claimed)
+    jira.create("RHAIRFE-7102", "RFE two", "Need.", labels=claimed)
+    # The real publisher below supplies the verdict labels and their intent.
     _strat(jira, "RHAISTRAT-8101", "RHAIRFE-7101", ["strat-creator-auto-created",
-                                                    "strat-creator-auto-refined", "strat-creator-rubric-pass"])
+                                                    "strat-creator-auto-refined"])
     _strat(jira, "RHAISTRAT-8102", "RHAIRFE-7102", ["strat-creator-auto-created",
-                                                    "strat-creator-auto-refined", "strat-creator-needs-attention"])
-    run = {"run_id": "run-2", "mode": "batch", "dry_run": False,
+                                                    "strat-creator-auto-refined"])
+    run = {"run_id": "run-2", "lock_owner": "run-2", "mode": "batch", "dry_run": False,
            "input_keys": ["RHAIRFE-7101", "RHAIRFE-7102", "RHAIRFE-7103"],
            "acquired_keys": ["RHAIRFE-7101", "RHAIRFE-7102"],
            "skipped": [{"key": "RHAIRFE-7103", "reason": "blocked by label(s): strat-creator-processing"}],

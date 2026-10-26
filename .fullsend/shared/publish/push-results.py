@@ -25,6 +25,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -106,6 +107,29 @@ def file_hash(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def publish_copy(src, dest, expected, results_dir):
+    """Verify and fsync private bytes before exposing the complete artifact.
+
+    A killed process can leave a temporary file. Keep it inside .git so it
+    cannot poison the strict run inventory or be committed as a result.
+    """
+    fd, name = tempfile.mkstemp(dir=results_dir / ".git", prefix=".strat-copy-")
+    try:
+        with os.fdopen(fd, "rb") as stream:
+            shutil.copyfile(src, name)
+            os.fsync(stream.fileno())
+            if file_hash(Path(name)) != expected:
+                raise ValueError("publication copied content changed")
+        os.replace(name, dest)
+        directory = os.open(dest.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
 def organize_identified_run(results_dir, run_id):
     """Immutable directory per run; recover partial copying and a lost push ack."""
     import re
@@ -149,10 +173,12 @@ def organize_identified_run(results_dir, run_id):
         if src.exists():
             if file_hash(src) != expected:
                 raise ValueError("publication source changed")
-            if dest.exists() and file_hash(dest) != expected:
-                raise ValueError("conflicting partial publication")
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, dest)
+            if dest.exists():
+                if file_hash(dest) != expected:
+                    raise ValueError("conflicting partial publication")
+            else:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                publish_copy(src, dest, expected, results_dir)
         if file_hash(dest) != expected:
             raise ValueError("publication recovery lacks required content")
     actual = {str(p.relative_to(run_dir)) for p in run_dir.rglob("*") if p.is_file()

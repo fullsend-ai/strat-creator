@@ -1,5 +1,6 @@
 """Missing managed-run input stops helpers; standalone human use still works."""
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -9,6 +10,43 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from strat_freshness import verify  # noqa: E402
 from strat_side_effects import check_owner, perform  # noqa: E402
+
+
+@pytest.mark.parametrize("owner", [None, "", 42, ["run"], "bad/owner"])
+def test_prepared_input_requires_owner_before_reads_writes_or_intent(tmp_path, monkeypatch, owner):
+    monkeypatch.chdir(tmp_path)
+    # Explicit standalone settings must not let a prepared run opt out.
+    monkeypatch.setenv("STRAT_EFFECTS_DIR", str(tmp_path / "standalone"))
+    monkeypatch.setenv("STRAT_RUN_ID", "run")
+    (tmp_path / "tmp").mkdir()
+    data = {"run_id": "run", "acquired_keys": ["RHAIRFE-999"]}
+    if owner is not None:
+        data["lock_owner"] = owner
+    (tmp_path / "tmp/strat-input.json").write_text(json.dumps(data))
+    events = []
+    with pytest.raises(ValueError, match="lock owner"):
+        perform("local", "comment", "RHAIRFE-999", "body",
+                lambda: events.append("read"), lambda: events.append("write"))
+    assert events == []
+    assert not (tmp_path / "tmp/strat-effects").exists()
+    assert not (tmp_path / "standalone").exists()
+    with pytest.raises(ValueError, match="lock owner"):
+        check_owner("local", None, None, "RHAIRFE-999", data)
+
+
+def test_explicit_standalone_journal_keeps_human_helper_behavior(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("STRAT_MANAGED_RUN", raising=False)
+    monkeypatch.setenv("STRAT_EFFECTS_DIR", str(tmp_path / "effects"))
+    monkeypatch.setenv("STRAT_RUN_ID", "human-run")
+    events = []
+    for _ in range(2):
+        assert perform("local", "comment", "RHAIRFE-999", "body",
+                       lambda: events[-1] if events else None,
+                       lambda: events.append("published"),
+                       guard=lambda data: check_owner("local", None, None, "RHAIRFE-999", data)) == "published"
+    assert events == ["published"]
+    assert len(list((tmp_path / "effects").glob("*.json"))) == 1
 
 
 @pytest.mark.parametrize("managed", [True, False])
