@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from datetime import datetime, timezone
@@ -17,6 +18,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTEXT_REPO = "https://github.com/opendatahub-io/architecture-context.git"
+sys.path.insert(0, str(ROOT / "scripts"))
+from architecture_release import latest_release  # noqa: E402
 
 
 def git(*args, cwd=None, binary=False):
@@ -199,14 +202,14 @@ def fetch_context(destination, receipt, repository=CONTEXT_REPO):
         # HEAD is intentional. There is no context revision input or fixed SHA.
         git("fetch", "--quiet", "--depth=1", "--filter=blob:none", repository, "HEAD", cwd=bare)
         commit = git("rev-parse", "FETCH_HEAD", cwd=bare).strip()
-        releases = sorted(
+        releases = [
             name
             for mode, kind, name in tree_entries(bare, commit + ":architecture")
             if mode == "040000" and kind == "tree" and re.fullmatch(r"rhoai-[A-Za-z0-9._-]+", name)
-        )
+        ]
         if not releases:
             raise ValueError("current architecture repository contains no RHOAI release directory")
-        release = releases[-1]
+        release = latest_release(releases)
         paths = [name for mode, kind, name in tree_entries(bare, commit) if kind == "blob" and mode != "120000"]
         paths.append(f"architecture/{release}")
         if any(name == "overlays" and kind == "tree" for _, kind, name in tree_entries(bare, commit)):

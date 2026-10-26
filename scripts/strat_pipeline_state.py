@@ -437,9 +437,12 @@ def cmd_record_review(args):
                "done_at": now()}
     with progress_lock():
         progress = load_progress(data["run_id"])
+        pairs = [pair for pair in (progress.get("create") or {}).get("strategies", []) if pair["strat"] == key]
+        if len(pairs) != 1:
+            die(f"cannot record review {key}: not in this run's create inventory as one unique target")
+        pair = pairs[0]
         progress["review"][key] = verdict
         from strat_freshness import record
-        pair = next(p for p in progress["create"]["strategies"] if p["strat"] == key)
         record(Path.cwd(), data, progress, "review", key, pair["rfe"])
         save_progress(progress)
     print(json.dumps({"key": key, "recommendation": recommendation,

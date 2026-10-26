@@ -131,13 +131,20 @@ def test_pre_script_refuses_an_unpinned_or_wrong_ref(host, jira):
     assert PROCESSING not in _labels(jira, "RHAIRFE-7002")
 
 
-def test_missing_context_fails_before_any_lock(host, jira, tmp_path):
+@pytest.mark.parametrize("missing", ["release", "platform"])
+def test_missing_context_fails_before_any_lock(host, jira, tmp_path, missing):
     jira.create("RHAIRFE-7003", "RFE", "Need.")
     empty = tmp_path / "no-context"
     (empty / "architecture").mkdir(parents=True)
+    if missing == "platform":
+        (empty / "architecture/rhoai-9.9").mkdir()
     result = _pre(host, "single", RFE_KEY="RHAIRFE-7003", STRAT_ARCHITECTURE_CONTEXT_PATH=str(empty))
     assert result.returncode == 1
-    assert "architecture context incomplete; no RFE was locked" in result.stderr
+    if missing == "release":
+        assert "no numbered RHOAI release directories" in result.stderr
+        assert "architecture context fetch failed; no RFE was locked" in result.stderr
+    else:
+        assert "architecture context incomplete; no RFE was locked" in result.stderr
     assert PROCESSING not in _labels(jira, "RHAIRFE-7003")
     assert not (host["state"] / "owned-rfe-ids.txt").exists()
 

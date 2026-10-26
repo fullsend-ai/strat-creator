@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -61,7 +62,8 @@ def prepare(handoff, bundle, result_file, label):
                    "--output", str(bundle / "pipeline-data.json"), "--config", label, "--allow-empty"]
         if result.get("dry_run") is True:
             command.append("--dry-run")
-        subprocess.run(command, check=True)
+        environment = {name: value for name, value in os.environ.items() if name != "DRY_RUN"}
+        subprocess.run(command, check=True, env=environment)
         check(bundle)
         atomic(state, {"source": source, "ready": True, "files": inventory(bundle)})
 

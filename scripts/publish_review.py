@@ -3,7 +3,9 @@
 
 import argparse
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 
 from artifact_utils import read_frontmatter_validated
@@ -19,6 +21,20 @@ from jira_utils import (
     require_env,
 )
 from review_composition import regular, verify_review
+
+
+def write_summary(path, content):
+    """Publish a complete derived file while keeping interrupted writes private."""
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".review-comment-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def publish(root, key, check_only=False, dry_run=False):
@@ -67,7 +83,8 @@ def publish(root, key, check_only=False, dry_run=False):
     comment_path = path.with_name(f"{key}-review-comment.md")
     if comment_path.exists() and comment_path.read_text() != comment:
         raise ValueError("saved review summary differs; reconcile before publication")
-    comment_path.write_text(comment)
+    if not comment_path.exists():
+        write_summary(comment_path, comment)
     if dry_run or data.get("dry_run") or not key.startswith("RHAISTRAT-") or not all(require_env()):
         return verdict
     server, user, token = require_env()

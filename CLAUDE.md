@@ -26,6 +26,13 @@ local/                          # Human review workspace (gitignored, mirrors ar
 
 ### Frontmatter
 
+Scoring writes `reviewers.*: pending` until the actual specialist reports have
+been delivered and composed. `pending` is a provisional value, never an inferred
+specialist approval. The extractor retains it in JSON; report/dashboard render
+it as a neutral `pending` value. The numeric recommendation remains separate.
+Strict completion requires the composed reports, and Org Pulse excludes
+provisional reviews from its completed-review export.
+
 All task and review files use YAML frontmatter for structured metadata. Skills must use `scripts/frontmatter.py` to read schemas, set fields, and read validated data — never write YAML by hand.
 
 ```bash
