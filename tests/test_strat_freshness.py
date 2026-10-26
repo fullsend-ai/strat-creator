@@ -311,6 +311,45 @@ def test_ordinary_bookkeeping_labels_do_not_invalidate_human_snapshot(live):
     verify_progress(repo, data, json.loads((repo / "tmp/strat-progress.json").read_text()))
 
 
+@pytest.mark.parametrize("malformed", ["missing", None, "strat-creator-human-sign-off",
+                                     ["unrelated", 17], {"strat-creator-human-sign-off": True}])
+@pytest.mark.parametrize("bound", [True, False])
+def test_malformed_strategy_labels_stop_publication_and_snapshot_capture(live, monkeypatch, malformed, bound):
+    import jira_utils
+    from strat_freshness import jira_human, record
+
+    repo, data, jira = live
+    key = "RHAISTRAT-8801"
+    progress = repo / "tmp/strat-progress.json"
+    if not bound:
+        progress.unlink()
+    before = jira.get(key)
+    state = progress.read_bytes() if bound else None
+    original = jira_utils.get_issue
+
+    def invalid_labels(server, user, token, target, *args, **kwargs):
+        issue = original(server, user, token, target, *args, **kwargs)
+        if target == key:
+            if malformed == "missing":
+                issue["fields"].pop("labels", None)
+            else:
+                issue["fields"]["labels"] = malformed
+        return issue
+
+    monkeypatch.setattr(jira_utils, "get_issue", invalid_labels)
+    monkeypatch.chdir(repo)
+    with pytest.raises(ValueError, match="labels.*list of strings"):
+        add_comment(jira.url, "admin", "admin", key, markdown_to_adf("Do not publish."))
+    with pytest.raises(ValueError, match="labels.*list of strings"):
+        jira_human(key)  # Capture must reject it even without an active gate check.
+    with pytest.raises(ValueError, match="labels.*list of strings"):
+        record(repo, data, {}, "create", key, "RHAIRFE-8801")
+    assert jira.get(key) == before
+    assert not get_comments(jira.url, "admin", "admin", key)
+    assert (progress.read_bytes() if bound else None) == state
+    assert not list((repo / "tmp/strat-effects").glob("*.json"))
+
+
 @pytest.mark.parametrize("mismatch", ["none", "run", "server", "rejected", "payload", "target", "signoff"])
 def test_only_exact_current_run_label_intent_can_explain_needs_attention(live, monkeypatch, mismatch):
     from strat_side_effects import CONTRACT as EFFECT_CONTRACT

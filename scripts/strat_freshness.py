@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 from artifact_utils import read_frontmatter
-from strat_side_effects import digest
+from strat_side_effects import checked_labels, digest
 
 CONTRACT = "strat-freshness-v1"
 SOURCE_TREES = ("scripts", "config", "workflows", ".claude/skills", ".claude/agents",
@@ -110,7 +110,7 @@ def jira_rfe(key):
     if not all((server, user, token)):
         raise ValueError("freshness needs Jira credentials to recheck live inputs")
     fields = get_issue(server, user, token, key, fields=list(RFE_FIELDS))["fields"]
-    fields["labels"] = sorted(x for x in fields.get("labels", [])
+    fields["labels"] = sorted(x for x in checked_labels(fields.get("labels"))
                               if x != "strat-creator-processing" and not x.startswith("strat-creator-owner-"))
     comments = [{"id": str(c["id"]), "body": c["body"]} for c in get_comments(server, user, token, key)]
     return digest({"fields": fields, "comments": comments})
@@ -121,7 +121,7 @@ def jira_human(key, *, root=None, data=None):
     from strat_side_effects import HUMAN_GATES, check_human_gates
     env = require_env()
     fields = get_issue(*env, key, fields=["description", "summary", "priority", "status", "labels"])["fields"]
-    gates = sorted(set(fields.get("labels", [])) & HUMAN_GATES)
+    gates = sorted(set(checked_labels(fields.get("labels"))) & HUMAN_GATES)
     if data is not None:
         check_human_gates(env[0], key, gates, data, root=root)
         gates = []  # Only our exact current-run verdict can pass a present gate.

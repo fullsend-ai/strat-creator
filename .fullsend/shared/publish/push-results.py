@@ -107,6 +107,20 @@ def file_hash(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def publication_path(root, relative):
+    """Reject traversal and symlinks below the chosen results checkout root."""
+    relative = Path(relative)
+    if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+        raise ValueError("publication path must stay inside its checkout")
+    for length in range(1, len(relative.parts) + 1):
+        if (root / Path(*relative.parts[:length])).is_symlink():
+            raise ValueError("symlink in publication path")
+    path = root / relative
+    if not path.resolve().is_relative_to(root):
+        raise ValueError("publication path escapes its checkout")
+    return path
+
+
 def publish_copy(src, dest, expected, results_dir):
     """Verify and fsync private bytes before exposing the complete artifact.
 
@@ -120,6 +134,7 @@ def publish_copy(src, dest, expected, results_dir):
             os.fsync(stream.fileno())
             if file_hash(Path(name)) != expected:
                 raise ValueError("publication copied content changed")
+        publication_path(results_dir, dest.relative_to(results_dir))
         os.replace(name, dest)
         directory = os.open(dest.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -135,18 +150,20 @@ def organize_identified_run(results_dir, run_id):
     import re
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", run_id):
         raise ValueError("invalid publication run ID")
-    state = results_dir / ".git/strat-publication.json"
-    run_dir = results_dir / "RHAISTRAT" / ("run-" + run_id)
-    manifest_path = run_dir / ".publication.json"
+    results_dir = results_dir.resolve(strict=True)
+    state = publication_path(results_dir, ".git/strat-publication.json")
+    run_relative = Path("RHAISTRAT") / ("run-" + run_id)
+    run_dir = publication_path(results_dir, run_relative)
+    manifest_path = publication_path(results_dir, run_relative / ".publication.json")
     files = {}
     for directory in ARTIFACT_DIRS:
-        for path in sorted((results_dir / directory).rglob("*")):
+        for path in sorted(publication_path(results_dir, directory).rglob("*")):
             if path.is_symlink():
                 raise ValueError("symlink in publication inputs")
             if path.is_file():
                 files[str(path.relative_to(results_dir))] = file_hash(path)
     for name in LOOSE:
-        path = results_dir / name
+        path = publication_path(results_dir, name)
         if path.exists():
             files[name] = file_hash(path)
     desired = {"contract": "strat-publication-v1", "run_id": run_id, "files": files}
@@ -166,10 +183,16 @@ def organize_identified_run(results_dir, run_id):
             return None
     if existing and desired != existing:
         raise ValueError("immutable run already published with different content")
+    copies = []
+    for relative, expected in desired["files"].items():
+        src = publication_path(results_dir, relative)
+        dest = publication_path(results_dir, run_relative / relative)
+        if not dest.resolve().is_relative_to(run_dir):
+            raise ValueError("publication destination escapes its run directory")
+        copies.append((src, dest, expected))
     atomic(state, desired)  # Survives death before copies, commit or push.
     run_dir.mkdir(parents=True, exist_ok=True)
-    for relative, expected in desired["files"].items():
-        src, dest = results_dir / relative, run_dir / relative
+    for src, dest, expected in copies:
         if src.exists():
             if file_hash(src) != expected:
                 raise ValueError("publication source changed")

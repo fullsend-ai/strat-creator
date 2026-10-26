@@ -165,13 +165,20 @@ def perform(server, kind, target, payload, read, write, guard=None, slot=None):
         return found
 
 
+def checked_labels(labels):
+    """A missing or malformed requested Jira field is not an empty label set."""
+    if not isinstance(labels, list) or any(not isinstance(label, str) for label in labels):
+        raise ValueError("Jira response labels must be present as a list of strings")
+    return labels
+
+
 def check_human_gates(server, target, labels, data, *, root=None):
     """Stop late human intervention; reconcile only our exact verdict intent.
 
     Pending is needed when Jira committed a label before the process died.
     This journal is recovery evidence, not a tamper-proof authority or Jira CAS.
     """
-    gates = set(labels) & HUMAN_GATES
+    gates = set(checked_labels(labels)) & HUMAN_GATES
     if gates == {"strat-creator-needs-attention"} and isinstance(data, dict) and data.get("run_id"):
         identity = {"server_hash": digest(server.rstrip("/")), "kind": "add-labels", "target": target,
                     "payload_hash": digest(["strat-creator-needs-attention"])}
@@ -203,7 +210,7 @@ def check_owner(server, user, token, target, data):
     from jira_utils import get_issue
     if target.startswith("RHAISTRAT-"):
         fields = get_issue(server, user, token, target, fields=["issuelinks", "labels"])["fields"]
-        check_human_gates(server, target, fields.get("labels", []), data)
+        check_human_gates(server, target, fields.get("labels"), data)
         links = fields.get("issuelinks", [])
         rfes = {link.get(side, {}).get("key") for link in links if link.get("type", {}).get("name") == "Cloners"
                 for side in ("inwardIssue", "outwardIssue")
@@ -213,7 +220,7 @@ def check_owner(server, user, token, target, data):
         target = rfes.pop()
     if target not in data.get("acquired_keys", []):
         raise UncertainWrite("write target is outside acquired RFEs")
-    labels = set(get_issue(server, user, token, target, fields=["labels"])["fields"].get("labels", []))
+    labels = set(checked_labels(get_issue(server, user, token, target, fields=["labels"])["fields"].get("labels")))
     owners = {x for x in labels if x.startswith(OWNER_PREFIX)}
     if owners != {owner_label(data["lock_owner"])} or "strat-creator-processing" not in labels:
         raise UncertainWrite("missing or conflicting Jira lock ownership")
