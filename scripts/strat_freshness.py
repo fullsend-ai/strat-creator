@@ -98,9 +98,11 @@ def parameters(data):
 def staff(markdown):
     from push_strategy import STAFF_INPUT_TEMPLATE, extract_staff_input_section
     value = extract_staff_input_section(markdown) or ""
-    if value.strip() == STAFF_INPUT_TEMPLATE.strip():
-        return ""
     value = re.sub(r"<!--.*?-->", "", value, flags=re.S).strip()
+    # Recognize only the empty template's alternate dash spelling. Preserve
+    # genuine input verbatim rather than applying broad text normalization.
+    if value.replace("\u2014", "---") == STAFF_INPUT_TEMPLATE.strip().replace("\u2014", "---"):
+        return ""
     return value
 
 
