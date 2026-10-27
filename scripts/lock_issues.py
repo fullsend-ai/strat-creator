@@ -48,7 +48,7 @@ from jira_utils import (
     remove_labels,
     require_env,
 )
-from strat_side_effects import OWNER_PREFIX, atomic, locked, owner_label
+from strat_side_effects import OWNER_PREFIX, atomic, checked_labels, locked, owner_label
 
 PROCESSING_LABEL = "strat-creator-processing"
 
@@ -78,7 +78,7 @@ def _init_locked_keys_file(path):
 def _get_labels(server, user, token, key):
     """Fetch the labels for a Jira issue."""
     data = get_issue(server, user, token, key, fields=["labels"])
-    return set(data.get("fields", {}).get("labels", []))
+    return set(checked_labels(data.get("fields", {}).get("labels")))
 
 
 def _resolve_strat_to_rfe(server, user, token, strat_key):
@@ -174,11 +174,21 @@ def lock_owned(server, user, token, keys, record, owner):
             raise RuntimeError("lock record belongs to another run")
         atomic(owner_path, {"owner": owner})
         recorded = record.read_text().split() if record.exists() else []
+
+        def remember(key):
+            if key not in recorded:
+                with record.open("a") as stream:
+                    stream.write(key + "\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                recorded.append(key)
+
         acquired = []
         for key in keys:
             labels = _get_labels(server, user, token, key)
             owners = {x for x in labels if x.startswith(OWNER_PREFIX)}
             if owners == {label} and PROCESSING_LABEL in labels:
+                remember(key)  # Rebuilt records must also retain gated claims for cleanup.
                 if labels & (BLOCKING_LABELS - {PROCESSING_LABEL}):
                     raise RuntimeError("owned RFE moved to a human gate")
             elif owners or labels & BLOCKING_LABELS:
@@ -187,22 +197,13 @@ def lock_owned(server, user, token, keys, record, owner):
             else:
                 # The record is intent, not proof of acquisition. Cleanup reads
                 # the matching remote owner, including death before response.
-                if key not in recorded:
-                    with record.open("a") as stream:
-                        stream.write(key + "\n")
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                    recorded.append(key)
+                remember(key)
                 add_labels(server, user, token, key, [PROCESSING_LABEL, label])
             current = _get_labels(server, user, token, key)
             if {x for x in current if x.startswith(OWNER_PREFIX)} != {label} or PROCESSING_LABEL not in current:
                 raise RuntimeError("conflicting ownership after lock request; no work is authorized")
-            if key not in recorded:
-                with record.open("a") as stream:
-                    stream.write(key + "\n")
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                recorded.append(key)
+            if current & (BLOCKING_LABELS - {PROCESSING_LABEL}):
+                raise RuntimeError("owned RFE moved to a human gate")
             acquired.append(key)
             print(f"LOCKED {key} owner={owner}", file=sys.stderr)
         print(" ".join(acquired))

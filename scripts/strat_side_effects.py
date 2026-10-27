@@ -224,3 +224,5 @@ def check_owner(server, user, token, target, data):
     owners = {x for x in labels if x.startswith(OWNER_PREFIX)}
     if owners != {owner_label(data["lock_owner"])} or "strat-creator-processing" not in labels:
         raise UncertainWrite("missing or conflicting Jira lock ownership")
+    if labels & HUMAN_GATES:
+        raise ValueError(f"human gate stops source RFE writes: {target}")
