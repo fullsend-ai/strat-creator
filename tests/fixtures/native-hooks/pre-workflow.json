@@ -1,0 +1,16 @@
+{
+  "session_id": "3d75d356-b3cf-4d09-b265-a2d80348e543",
+  "transcript_path": "/native-control/config/projects/-home-jtanner-workspace-github-jctanner-redhat-breadboard-var-tmp-pr85-native-controls-outcome-fixture/3d75d356-b3cf-4d09-b265-a2d80348e543.jsonl",
+  "cwd": "/native-control/fixture",
+  "prompt_id": "5694d248-46a1-4bfc-bba0-40bdbfeb5963",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Workflow",
+  "tool_input": {
+    "name": "outcome:outcome"
+  },
+  "tool_use_id": "workflow"
+}

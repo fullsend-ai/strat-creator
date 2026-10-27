@@ -119,6 +119,7 @@ python3 scripts/list-rfe-ids.py --config config/road-to-production/batch-07.yaml
 | `assess-strat` | Skill | Score a single strategy or directory against the in-repository quality rubric |
 | `export-rubric` | Skill | Export scoring rubric to `artifacts/strat-rubric.md` |
 | `strat-scorer` | Agent | Restricted agent (Read/Write/Glob/Grep only) for scoring strategies |
+| `strat-reviewer` | Agent | Isolated reviewer used by the four forked review skills, scoped to one strategy |
 | `generate-report.py` | Script | HTML report with summary table and drill-down details |
 | `generate-dashboard.py` | Script | Dashboard with aggregate stats across batch runs |
 
@@ -142,7 +143,8 @@ strat-creator/
 ├── .claude/
 │   ├── skills/                 # Claude Code skills (pipeline steps + reviewers)
 │   └── agents/                 # Agent definitions
-│       └── strat-scorer.md         # Restricted scorer agent
+│       ├── strat-scorer.md         # Restricted scorer agent
+│       └── strat-reviewer.md       # Isolated reviewer for the four review skills
 ├── config/                 # Pipeline config and batch files
 │   ├── pipeline-settings.yaml  # JQL filters, batch size, skip labels, excluded statuses
 │   ├── road-to-production/     # Road-to-production batch YAML files
@@ -166,6 +168,7 @@ strat-creator/
 ## Documentation
 
 - [Human Review Guide](docs/human-review-guide.md) — How staff engineers and architects handle strategies flagged by the pipeline
+- [strat-creator on fullsend](.fullsend/README.md) — The `strat-single`, `strat-batch` and `strat-resume` agents, the `strat-pipeline` Workflow, and how to run or install them
 - [Dashboard](https://strat-dashboard-0f1209.gitlab.io/) — Live dashboard with aggregate stats, per-run trends, and pipeline diagram
 - [JSON API](https://strat-dashboard-0f1209.gitlab.io/summary.json) — Aggregated pipeline data for external consumers
   - Per-run data: `https://strat-dashboard-0f1209.gitlab.io/runs/<timestamp>.json` (e.g. `runs/20260419-093253.json`)
@@ -185,10 +188,11 @@ uv sync
 make test
 
 # By category
-make test-unit          # Unit tests (schemas, frontmatter, scores, JQL, state)
+make test-unit          # All offline checks, including emulator integration and E2E
 make test-integration   # Integration tests (jira-emulator)
 make test-e2e           # E2E pipeline replay (two scenarios)
 make test-mermaid       # Mermaid workflow diagram validation
+make test-workflow-smoke # Explicit opt-in: calls the model, requires paid-run authorization
 
 # Or directly via pytest
 uv run pytest tests/ -v --tb=short

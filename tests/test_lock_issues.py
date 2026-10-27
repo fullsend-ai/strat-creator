@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+
 SCRIPT = os.path.join(
     os.path.dirname(__file__), "..", "scripts", "lock_issues.py")
 
@@ -113,6 +115,22 @@ class TestLock:
 
 
 class TestUnlock:
+
+    def test_unowned_cleanup_reports_error_without_clearing_claim(self, jira):
+        from strat_side_effects import owner_label
+        labels = {"strat-creator-processing", owner_label("other-run")}
+        jira.create("RHAIRFE-5109", "Owned RFE", "Description.", labels=sorted(labels))
+        result = _run(jira, ["unlock", "RHAIRFE-5109"])
+        assert result.returncode == 2
+        assert "matching --owner" in result.stderr and "Traceback" not in result.stderr
+        assert _get_labels(jira, "RHAIRFE-5109") == labels
+
+    def test_owner_requires_a_lock_record_without_traceback(self, jira):
+        jira.create("RHAIRFE-5110", "New RFE", "Description.")
+        result = _run(jira, ["lock", "--owner", "run-1", "RHAIRFE-5110"])
+        assert result.returncode == 2
+        assert "requires --locked-keys-file" in result.stderr and "Traceback" not in result.stderr
+        assert _get_labels(jira, "RHAIRFE-5110") == set()
 
     def test_unlock_removes_processing_label(self, jira):
         jira.create("RHAIRFE-5100", "Locked RFE",

@@ -1,0 +1,27 @@
+{
+  "session_id": "780ce7e3-fef5-4b8e-aa78-b3d210fcccd5",
+  "transcript_path": "/native-control/config/projects/-home-jtanner-workspace-github-jctanner-redhat-breadboard-var-tmp-pr85-native-controls-composition-qualified-fixture/780ce7e3-fef5-4b8e-aa78-b3d210fcccd5.jsonl",
+  "cwd": "/native-control/fixture",
+  "prompt_id": "753389bd-c22d-4b63-9baf-8a72728a9505",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "a6195d45fab175cff",
+  "agent_type": "workflow-subagent",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Skill",
+  "tool_input": {
+    "skill": "strategy-feasibility-review",
+    "args": "STRAT-9502"
+  },
+  "tool_response": {
+    "success": true,
+    "commandName": "strategy-feasibility-review",
+    "status": "forked",
+    "agentId": "a4b3c1394677bcdd6",
+    "result": "### STRAT-9502: Dataset retention holds\n**Feasibility assessment**: authored fixture\nFEASIBILITY_9502: Expiry can use the existing storage listing and deletion APIs.\n**Recommendation**: approve"
+  },
+  "tool_use_id": "STRAT-9502_skill_feasibility",
+  "duration_ms": 223
+}

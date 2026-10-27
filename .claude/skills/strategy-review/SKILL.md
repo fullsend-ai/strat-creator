@@ -15,6 +15,11 @@ If `--dry-run` is in `$ARGUMENTS`, skip ALL external writes:
 - DO still read from Jira and local artifacts (reads are safe)
 - DO still create local review files in `artifacts/strat-reviews/`
 
+For a prepared pipeline run, `tmp/strat-input.json` determines the mode.
+Never add `--dry-run` to work around a live publication error. A prepared live
+run rejects that override and requires successful publication before review
+completion can be recorded.
+
 ## Local Mode
 
 Check if strategy files exist in `local/strat-tasks/`. If they do, this is a local human review session pulled via `/strategy-pull`.
@@ -30,6 +35,22 @@ In local mode:
 Local mode is also active if any strategy file's frontmatter contains `workflow: local`.
 
 If both `local/strat-tasks/` and `artifacts/strat-tasks/` have files, prefer `local/strat-tasks/`.
+
+## Recovery Before Generation
+
+For a pipeline invocation with `tmp/strat-input.json`, first run:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/publish_review.py RHAISTRAT-NNNN --check-only
+```
+
+Exit 0 means a current-run composed review and all its source hashes verify.
+Run the same command without `--check-only` to finish/reconcile publication,
+then return its numeric verdict. Skip scoring, specialist calls and the label
+gate in this recovery path. Exit 3 means no review exists; continue below.
+Any other failure stops recovery; do not overwrite invalid or changed evidence.
+This preserves a review completed before a crash even if its verdict label is
+already present. Local mode remains separate and does not publish to Jira.
 
 ## Step 1: Verify Artifacts Exist
 
@@ -50,6 +71,18 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_issue.py RHAISTRAT-NNNN --fields label
 If the STRAT has either `strat-creator-rubric-pass` or `strat-creator-needs-attention` in its labels, **stop** — it has already been processed by the pipeline:
 - Do NOT review it
 - Print `[SKIP] RHAISTRAT-NNNN — already has <label>, skipping review`
+
+For an explicit CI reprocess request only, an existing `rubric-pass` may be
+reviewed again if this command succeeds for the exact strategy:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/strat_reprocess.py RHAISTRAT-NNNN
+```
+
+It verifies the prepared request, acquired RFE, pipeline provenance and current
+human gates. A failure stops review. Never override `needs-attention`, human
+sign-off, or an active/completed STRAT state. Ordinary resume and discovery
+retain their normal approval gate. Do not remove approval labels to bypass it.
 
 ## Step 2: Fetch Architecture Context
 
@@ -74,6 +107,24 @@ runtime clone is required.
 
 ## Step 4: Score Strategy
 
+### Scores from a caller (`--scores-from <dir>`)
+
+If `--scores-from <dir>` is in `$ARGUMENTS`, the caller has already run the
+strat-scorer for this strategy and wrote `<dir>/<KEY>.result.md`. A Workflow
+script does this: its agents have no Agent tool, so it launches the scorer as a
+workflow agent of its own and passes the result directory here.
+
+In this mode:
+- Do NOT launch a scorer agent and do NOT delete or recreate `<dir>`.
+- Check that `<dir>/<KEY>.result.md` exists. If it does not, **stop with an
+  error**: "No scorer result at <dir>/<KEY>.result.md".
+- Use `<dir>` as the run directory everywhere Step 5 says
+  `tmp/strat-assess/review`.
+
+Then continue with Step 5. Without the flag, follow the rest of this step.
+
+### Launch the scorer
+
 Launch a strat-scorer agent to produce numeric scores for the strategy. The
 in-repository assess-strat implementation provides the rubric and agent
 definition.
@@ -81,8 +132,8 @@ definition.
 Create a clean run directory (removes stale result files from prior reviews in the same CI job):
 
 ```bash
-rm -rf /tmp/strat-assess/review
-mkdir -p /tmp/strat-assess/review
+rm -rf tmp/strat-assess/review
+mkdir -p tmp/strat-assess/review
 ```
 
 Spawn one agent (model: opus, run_in_background: true, subagent_type: strat-scorer) with this prompt:
@@ -101,25 +152,25 @@ Substitute all placeholders:
 - `{PROMPT_PATH}` → absolute path of `scripts/assess-strat/agent_prompt.md`
 - `{DATA_FILE}` → the strategy file path (e.g., `artifacts/strat-tasks/RHAISTRAT-1469.md`)
 - `{KEY}` → the strategy key (e.g., `RHAISTRAT-1469`)
-- `{RUN_DIR}` → `/tmp/strat-assess/review`
+- `{RUN_DIR}` → `tmp/strat-assess/review`
 
 Wait for the scorer agent to complete.
 
 ## Step 5: Parse Scores and Apply Verdicts (AUTOMATED — no LLM judgment)
 
-After the scorer agent has completed, run the scoring scripts to deterministically compute the verdict and apply it to the review file:
+After the scorer agent has completed, run the scoring scripts to deterministically compute the verdict and apply it to the review file. With `--scores-from <dir>`, replace `tmp/strat-assess/review` with `<dir>` in all three commands:
 
 ```bash
 # Parse .result.md files → scores.csv with deterministic verdicts
-python3 scripts/assess-strat/parse_results.py /tmp/strat-assess/review/
+python3 scripts/assess-strat/parse_results.py tmp/strat-assess/review/
 
 # Apply scores and verdicts to review file frontmatter
-python3 ${CLAUDE_SKILL_DIR}/scripts/apply_scores.py /tmp/strat-assess/review/scores.csv \
+python3 ${CLAUDE_SKILL_DIR}/scripts/apply_scores.py tmp/strat-assess/review/scores.csv \
     --review-dir artifacts/strat-reviews \
-    --result-dir /tmp/strat-assess/review
+    --result-dir tmp/strat-assess/review
 
 # Print summary statistics
-python3 scripts/assess-strat/summarize_run.py /tmp/strat-assess/review/
+python3 scripts/assess-strat/summarize_run.py tmp/strat-assess/review/
 ```
 
 **Do NOT manually extract scores, compute verdicts, or set frontmatter.** The scripts handle this deterministically. The verdict rules are:
@@ -130,6 +181,21 @@ REJECT:   total < 3   OR   2+ zeros       → needs_attention=true
 ```
 
 ## Step 6: Run Prose Reviews
+
+Before invoking any reviewer, begin a fresh, target-specific capture session:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/review_composition.py begin {KEY} \
+    --scorer-result tmp/strat-assess/review/{KEY}.result.md
+```
+
+With --scores-from, substitute the supplied directory here too. This command
+checks the score source and prepared review. Loaded plugin PostToolUse hooks bind
+this session to the actual caller and save each delivered Skill result. Hook
+capture is required; standalone Skill text without the plugin is insufficient.
+Run begin in its own Bash call; do not launch two begin sessions in one call.
+Do not substitute transcripts, earlier scorer feedback or invented reports.
+
 
 Use the **Skill tool** to invoke all four reviewer skills in parallel. Each runs in its own isolated `context: fork` — no reviewer sees another's output. Pass the strategy key to each:
 
@@ -147,144 +213,67 @@ Do NOT use the Agent tool for reviews. Use the Skill tool — the reviewer skill
 - **`strategy-scope-review`**: Is the strategy right-sized? Does the effort match the scope?
 - **`strategy-architecture-review`** (if architecture context available): Are dependencies correctly identified? Are integration patterns correct?
 
-Each reviewer auto-detects local mode (`local/strat-tasks/` vs `artifacts/strat-tasks/`) and reads the appropriate directories.
+Each reviewer resolves only the exact assigned strategy file and its
+`source_rfe`. A local file for a different ticket does not change its mode.
+The loaded strat-creator/strat-pipeline plugin blocks other ticket reads and
+checks each completed assessment's target. If any return begins with
+`REVIEW_SCOPE_ERROR:`, lacks the assigned heading, or includes another strategy
+key, stop with an error before composition or Jira publication. Do not treat
+that result as a review, rewrite it into a valid report, or rerun the reviewer.
 
-## Step 7: Write Prose to Review Files
+## Step 7: Compose the captured reviews (AUTOMATED)
 
-Update the review file body in `artifacts/strat-reviews/{id}-review.md` with the prose from all four reviewers. The scores table was already written by `apply_scores.py` in Step 5 — add the prose sections after it.
-
-The review file body should contain:
-
-```markdown
-## Scores
-[already written by apply_scores.py — do not overwrite]
-
-## Feasibility Review: {STRAT_ID} — {title}
-<assessment from feasibility reviewer>
-
-## Testability Review: {STRAT_ID} — {title}
-<assessment from testability reviewer>
-
-## Scope Review: {STRAT_ID} — {title}
-<assessment from scope reviewer>
-
-## Architecture Review: {STRAT_ID} — {title}
-<assessment from architecture reviewer, or "skipped — no context">
-
-## Agreements
-<where reviewers aligned>
-
-## Disagreements
-<where reviewers diverged — preserve both views>
-```
-
-After writing prose, update the `reviewers.*` frontmatter fields with each prose reviewer's individual verdict:
+Run the deterministic composer once:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-reviews/<id>-review.md \
-    reviewers.feasibility=<prose_verdict> \
-    reviewers.testability=<prose_verdict> \
-    reviewers.scope=<prose_verdict> \
-    reviewers.architecture=<prose_verdict>
+python3 ${CLAUDE_SKILL_DIR}/scripts/review_composition.py compose {KEY}
+python3 ${CLAUDE_SKILL_DIR}/scripts/review_composition.py verify {KEY}
 ```
 
-**Important:** The `recommendation` field is NEVER changed by prose reviewers. It comes from the numeric scores only. Prose reviewers set their own `reviewers.*` verdicts for informational purposes — these do NOT affect the gate decision.
+It writes the final review from the four actual delivered Skill results, preserving
+all report text unchanged with role, caller/tool and source-hash attribution. It
+exports each role report, the separate scorer assessment and a provenance manifest
+beside the final file. Do not rewrite, summarize, harmonize or replace these
+sections. Scorer feedback is labeled separately and cannot stand in for a missing
+specialist. Missing or invalid required reports stop composition and publication.
 
-**Preserve disagreements.** If the feasibility reviewer says "this is fine" but the scope reviewer says "this is too big," report both views. Do not average or harmonize.
+The **numeric scores remain the sole approval gate**. The composer derives both
+recommendation and needs_attention from those scores. Reviewer recommendations
+populate reviewers.* from their own reports, remain informational and do not
+change the numeric gate. Disagreements with that gate are explicitly listed and
+all opposing findings remain in the full reports. Do not change either gate field
+or reviewer frontmatter yourself. An architecture skip is recorded as skipped,
+never as an invented approval.
 
-## Step 7a: Post Review Summary to Jira
+A passing numeric gate can coexist with specialist dissent. State both facts to
+the human reader; do not describe the review as unanimous or concerns as resolved.
 
-Compose a review summary comment and post it to the RHAISTRAT issue (or save to file in dry-run mode).
+## Step 8: Publish the Verified Review
 
-Read the review file frontmatter to get scores and recommendation:
+Use the deterministic publisher. It builds a stable numeric summary with
+specialist dissent, saves `{id}-review-comment.md`, reconciles an existing
+comment and matching attachment, and applies the numeric verdict label.
+Do not post through MCP, curl, inline Python, or another write path.
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py read artifacts/strat-reviews/{id}-review.md
+python3 ${CLAUDE_SKILL_DIR}/scripts/publish_review.py RHAISTRAT-NNNN
 ```
 
-Compose the comment in markdown using this format:
+In dry-run mode use `--dry-run`; it saves the summary and skips external writes.
+Standalone use without credentials also saves locally. A prepared live run
+requires credentials and verified publication. `record-review` reads back the
+exact summary, review attachment and numeric verdict label before recording
+completion. A network error must remain a failed publication; do not substitute
+dry-run or record it complete. For local human review, skip this step.
 
-```markdown
-*[Strat Creator]* Strategy Review — {VERDICT} (Score: {total}/8)
+A pending or conflicting write stops publication. Preserve `tmp/strat-effects/`
+and the verified review. Do not regenerate reports, change the summary, delete
+write intent or repeat an uncertain POST to make recovery appear successful.
 
-| Criterion | Score | Status |
-|-----------|-------|--------|
-| Feasibility | {F}/2 | {✓ if 2, ⚠ if 1, ✗ if 0} |
-| Testability | {T}/2 | {✓ if 2, ⚠ if 1, ✗ if 0} |
-| Scope | {S}/2 | {✓ if 2, ⚠ if 1, ✗ if 0} |
-| Architecture | {A}/2 | {✓ if 2, ⚠ if 1, ✗ if 0} |
-
-{For each dimension scored < 2, one sentence summarizing the issue from the prose review.}
-
-**Action:** {verdict-specific guidance}
-```
-
-Action text by verdict:
-- **APPROVE**: "No action needed — strategy passed quality review."
-- **REVISE**: "Edit the strategy to address flagged issues, then remove the `needs-attention` label. The pipeline will re-evaluate automatically."
-- **REJECT**: "This strategy has fundamental problems. Consider revisiting the source RFE or re-running `/strategy-refine` with different constraints."
-
-**Posting:**
-
-Save the composed markdown to a temp file, then post:
-
-```bash
-python3 -c "
-import sys; sys.path.insert(0, '${CLAUDE_SKILL_DIR}/scripts')
-from jira_utils import add_comment, markdown_to_adf
-import os
-comment_md = open(sys.argv[1]).read()
-add_comment(os.environ['JIRA_SERVER'], os.environ['JIRA_USER'],
-            os.environ['JIRA_TOKEN'], sys.argv[2], markdown_to_adf(comment_md))
-" /tmp/strat-review-comment-{KEY}.md RHAISTRAT-NNNN
-```
-
-- **Dry-run mode**: Write the comment markdown to `artifacts/strat-reviews/{id}-review-comment.md` instead. Print `[DRY RUN] Review comment saved to artifacts/strat-reviews/{id}-review-comment.md`.
-- **Jira credentials unavailable**: Save to file (same as dry-run) and notify the user.
-
-## Step 7b: Attach Full Review File to Jira
-
-If NOT in dry-run mode and `jira_key` is not null, attach the full review file to the RHAISTRAT issue as a Jira attachment. This gives reviewers access to the complete prose reviews alongside the summary comment.
-
-```bash
-python3 -c "
-import sys; sys.path.insert(0, 'scripts')
-from jira_utils import add_attachment, require_env
-s, u, t = require_env()
-add_attachment(s, u, t, sys.argv[1], sys.argv[2])
-" RHAISTRAT-NNNN artifacts/strat-reviews/{id}-review.md
-```
-
-Print `[ATTACHMENT] Review file attached to RHAISTRAT-NNNN`.
-
-In dry-run mode, skip and print `[DRY RUN] Skipping attachment for RHAISTRAT-NNNN`.
-
-## Step 7c: Apply Verdict Labels
-
-If NOT in dry-run mode and `jira_key` is not null, add the appropriate label based on the verdict:
-
-```bash
-python3 -c "
-import sys; sys.path.insert(0, 'scripts')
-from jira_utils import add_labels, require_env
-s, u, t = require_env()
-add_labels(s, u, t, sys.argv[1], sys.argv[2:])
-" RHAISTRAT-NNNN <labels>
-```
-
-Labels by verdict:
-- **APPROVE**: add `strat-creator-rubric-pass`
-- **REVISE**: add `strat-creator-needs-attention`
-- **REJECT**: add `strat-creator-needs-attention`
-
-Print `[LABEL] <label> added to RHAISTRAT-NNNN`.
-
-In dry-run mode, skip and print `[DRY RUN] Skipping labels for RHAISTRAT-NNNN`.
-
-## Step 8: Advise the User
+## Step 9: Advise the User
 
 Based on the result:
-- **Approved** (`needs_attention=false`): Tell the user the strategy is ready for sign-off.
+- **Approved** (`needs_attention=false`): Tell the user the numeric gate passed and the strategy is ready for sign-off. Also identify any specialist dissent or skipped architecture assessment, which remains for the human reader.
 - **Needs revision** (`needs_attention=true`, verdict=REVISE): List specific issues by dimension. Tell the user to edit the strategy, remove `needs-attention`, and re-run `/strategy-review`.
 - **Fundamental problems** (`needs_attention=true`, verdict=REJECT): Recommend revisiting the RFE or re-running `/strategy-refine` with different constraints.
 

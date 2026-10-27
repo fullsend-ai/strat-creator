@@ -1,0 +1,28 @@
+{
+  "claude_version": "2.1.296",
+  "binary_sha256": "24972e3bc859fab2b46ed4c1e51f7d6130f06d3bd550811a114640de3370d0de",
+  "source": "native Claude binary against isolated authored loopback API, 2026-10-16",
+  "sanitization": "Only absolute workspace/control-directory prefixes replaced. Authored report text and payload field names preserved. No provider credentials inherited.",
+  "events": {
+    "pre-workflow": {
+      "source_case": "outcome",
+      "sha256": "afbc5b44534d0e3cee0d2f32cef7dcc1f9320594dde32a5128094b7893b937fc"
+    },
+    "completion-structured-output": {
+      "source_case": "outcome",
+      "sha256": "97158b5b3fe4d85be6740b034bf29ab2dde468975402d2dc9548d1bfc8306dff"
+    },
+    "refinement-structured-output": {
+      "source_case": "refine_receipt-fixed",
+      "sha256": "280134f91ca4d6a0ebe46045e1008ef6662d97d94c7f5dc03d8f00478f1ce40a"
+    },
+    "subagent-stop": {
+      "source_case": "composition-qualified",
+      "sha256": "f348cbcbd94c49b879d1033c32d9d57bbce1c950b902c89178d2fda4dc2089cf"
+    },
+    "post-forked-skill": {
+      "source_case": "composition-qualified",
+      "sha256": "887c922de0f12933a59d68a55cd7c908b9f6cb0f4c297272bc3e923e4ce0ed26"
+    }
+  }
+}

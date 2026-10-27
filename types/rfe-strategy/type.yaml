@@ -104,16 +104,19 @@ schema:
   review:
     score_fields: [feasibility, testability, scope, architecture]   # artifact_utils.py:211-214 (scores); generate-report.py:376 dimensions (order verbatim); eval/strat-refine.yaml:8
     total_field: total                                  # artifact_utils.py:215 scores.total; strategy-review/SKILL.md:208 "Score: {total}/8"
-    recommendation_enum: [approve, revise, reject]      # artifact_utils.py:197-201 (strat-review.recommendation); :222-241 (reviewers.*)
+    recommendation_enum: [approve, revise, reject]      # Numeric recommendation; separate from provisional specialist values.
     extra_fields:
-      reviewers:                                        # artifact_utils.py:218-243 — one prose verdict per dimension, same enum as recommendation
+      reviewers:                                        # artifact_utils.py:218-243 — specialist verdicts, not scorer-derived approval.
+        # pending: provisional until that specialist report is delivered/composed.
+        # Architecture may also be skipped when its required context is unavailable.
+        # Neither value is an inferred approval; numeric scores remain the sole gate.
         type: dict
         required: true
         fields:
-          feasibility: { type: string, required: true, enum: [approve, revise, reject] }
-          testability: { type: string, required: true, enum: [approve, revise, reject] }
-          scope: { type: string, required: true, enum: [approve, revise, reject] }
-          architecture: { type: string, required: true, enum: [approve, revise, reject] }
+          feasibility: { type: string, required: true, enum: [approve, revise, reject, pending] }
+          testability: { type: string, required: true, enum: [approve, revise, reject, pending] }
+          scope: { type: string, required: true, enum: [approve, revise, reject, pending] }
+          architecture: { type: string, required: true, enum: [approve, revise, reject, skipped, pending] }
     verdict_rules:                                      # strategy-review/SKILL.md:127-129 (APPROVE total>=6 and no zeros; REVISE total>=3 and <=1 zero; else REJECT) — a rule the review skill applies in prose; unpinned by code
       approve: { total_min: 6, zeros_max: 0 }
       revise: { total_min: 3, zeros_max: 1 }

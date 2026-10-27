@@ -222,22 +222,22 @@ SCHEMAS = {
                 "feasibility": {
                     "type": "string",
                     "required": True,
-                    "enum": ["approve", "revise", "reject"],
+                    "enum": ["approve", "revise", "reject", "pending"],
                 },
                 "testability": {
                     "type": "string",
                     "required": True,
-                    "enum": ["approve", "revise", "reject"],
+                    "enum": ["approve", "revise", "reject", "pending"],
                 },
                 "scope": {
                     "type": "string",
                     "required": True,
-                    "enum": ["approve", "revise", "reject"],
+                    "enum": ["approve", "revise", "reject", "pending"],
                 },
                 "architecture": {
                     "type": "string",
                     "required": True,
-                    "enum": ["approve", "revise", "reject"],
+                    "enum": ["approve", "revise", "reject", "skipped", "pending"],
                 },
             },
         },

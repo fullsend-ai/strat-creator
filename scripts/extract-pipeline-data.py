@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract strategy pipeline data as JSON.
 
-Scans timestamped run directories in a RHAISTRAT/ data directory and produces
+Scans timestamped and identified runs in a RHAISTRAT/ data directory and produces
 JSON files that other tools can consume. Outputs two files:
 
   - runs.json:    per-run data (each run with its strategies, scores, verdicts)
@@ -20,11 +20,12 @@ Usage:
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
@@ -95,17 +96,23 @@ def load_run_artifacts(run_dir):
     skipped_path = os.path.join(run_dir, "strat-skipped.md")
     if os.path.exists(skipped_path):
         with open(skipped_path, encoding="utf-8") as f:
+            header = {}
             for line in f:
                 line = line.strip()
-                if line.startswith("|") and not line.startswith("| RFE") and not line.startswith("|--"):
-                    cols = [c.strip() for c in line.split("|")[1:-1]]
-                    if len(cols) >= 4:
-                        skipped.append({
-                            "rfe_key": cols[0],
-                            "title": cols[1],
-                            "labels": cols[2],
-                            "missing": cols[3],
-                        })
+                if not line.startswith("|"):
+                    continue
+                cols = [c.strip() for c in line.split("|")[1:-1]]
+                if cols and cols[0].casefold() in {"rfe", "rfe key"}:
+                    header = {name.lower(): index for index, name in enumerate(cols)}
+                if len(cols) < 3 or not re.fullmatch(r"(?:RHAIRFE|RFE)-[0-9]+", cols[0]):
+                    continue
+                reason = header.get("reason", header.get("missing", 3 if len(cols) >= 4 else 2))
+                labels = header.get("labels", 2 if not header and len(cols) >= 4 else None)
+                skipped.append({
+                    "rfe_key": cols[0], "title": cols[1],
+                    "labels": cols[labels] if labels is not None and labels < len(cols) else "",
+                    "missing": cols[reason] if reason < len(cols) else "",
+                })
 
     return tasks, reviews, review_comments, skipped
 
@@ -213,10 +220,10 @@ def extract_strategy(strat_id, task, review, review_comment):
     }
 
 
-def extract_run(run_dir):
+def extract_run(run_dir, *, allow_empty=False):
     """Extract all data from a single run directory."""
     tasks, reviews, review_comments, skipped = load_run_artifacts(run_dir)
-    if not tasks:
+    if not tasks and not allow_empty:
         return None
 
     strategies = []
@@ -227,7 +234,7 @@ def extract_run(run_dir):
         strategies.append(extract_strategy(strat_id, task, review, comment))
 
     reviewed = [s for s in strategies if s["recommendation"] not in ("", None)]
-    if not reviewed:
+    if not reviewed and not allow_empty:
         return None
 
     total = len(strategies)
@@ -298,8 +305,54 @@ def get_run_cost(run_id, pdata, cost_backfill):
     return None
 
 
+def discover_runs(data_dir):
+    """Shared reader for legacy timestamps and strat-publication-v1 identities.
+
+    Names identify runs; recorded generation time orders them. Legacy naive
+    timestamps are UTC, as in the CI jobs that produced them. Normalize any
+    explicit offset to UTC too, so both layouts have the same ordering.
+    """
+    for entry in sorted(os.listdir(data_dir)):
+        entry_path = os.path.join(data_dir, entry)
+        if not os.path.isdir(entry_path) or os.path.islink(entry_path):
+            continue
+        try:
+            ts = datetime.strptime(entry, "%Y%m%d-%H%M%S")
+        except ValueError:
+            manifest = Path(entry_path) / ".publication.json"
+            pdata_path = Path(entry_path) / "pipeline-data.json"
+            if not entry.startswith("run-") or not manifest.is_file() or not pdata_path.is_file():
+                continue
+            if manifest.is_symlink() or pdata_path.is_symlink():
+                raise ValueError("published run metadata must be regular files")
+            identity = json.loads(manifest.read_text())
+            if (not isinstance(identity, dict) or identity.get("contract") != "strat-publication-v1"
+                    or not isinstance(identity.get("run_id"), str) or entry != "run-" + identity["run_id"]):
+                raise ValueError("published run identity mismatch")
+            ts = datetime.fromisoformat(json.loads(pdata_path.read_text())["timestamp"])
+            if ts.tzinfo is not None:
+                ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+        yield entry, entry_path, ts
+
+
+def sealed_empty_publication(entry_path, pdata):
+    """Adopt intentionally empty publications, never incomplete artifact trees."""
+    if not (Path(entry_path).name.startswith("run-") and isinstance(pdata, dict)
+            and type((pdata.get("stats") or {}).get("total")) is int
+            and pdata["stats"]["total"] == 0 and pdata.get("strategies") == []):
+        return False
+    identity = json.loads((Path(entry_path) / ".publication.json").read_text())
+    expected = (identity.get("files") or {}).get("pipeline-data.json")
+    if not expected:
+        return False
+    actual = hashlib.sha256((Path(entry_path) / "pipeline-data.json").read_bytes()).hexdigest()
+    if expected != actual:
+        raise ValueError("published run metadata disagrees with its seal")
+    return True
+
+
 def scan_runs(data_dir, max_runs=None):
-    """Discover all timestamped run directories and extract data."""
+    """Discover published runs and extract data."""
     runs = []
     current_target = None
 
@@ -309,17 +362,14 @@ def scan_runs(data_dir, max_runs=None):
 
     cost_backfill = load_cost_backfill(data_dir)
 
-    for entry in sorted(os.listdir(data_dir)):
-        entry_path = os.path.join(data_dir, entry)
-        if not os.path.isdir(entry_path) or os.path.islink(entry_path):
-            continue
-        try:
-            ts = datetime.strptime(entry, "%Y%m%d-%H%M%S")
-        except ValueError:
-            continue
-
+    for entry, entry_path, ts in discover_runs(data_dir):
         print(f"  Scanning run {entry}...", file=sys.stderr)
-        run_data = extract_run(entry_path)
+        pdata = None
+        json_path = os.path.join(entry_path, "pipeline-data.json")
+        if os.path.exists(json_path):
+            with open(json_path, encoding="utf-8") as f:
+                pdata = json.load(f)
+        run_data = extract_run(entry_path, allow_empty=sealed_empty_publication(entry_path, pdata))
         if run_data is None:
             print("    Skipped (no artifacts)", file=sys.stderr)
             continue
@@ -328,11 +378,7 @@ def scan_runs(data_dir, max_runs=None):
         run_data["timestamp"] = ts.isoformat()
         run_data["is_current"] = (entry == current_target)
 
-        pdata = None
-        json_path = os.path.join(entry_path, "pipeline-data.json")
-        if os.path.exists(json_path):
-            with open(json_path, encoding="utf-8") as f:
-                pdata = json.load(f)
+        if pdata is not None:
             run_data["dry_run"] = pdata.get("dry_run", True)
             run_data["config"] = pdata.get("config")
         else:
@@ -345,7 +391,7 @@ def scan_runs(data_dir, max_runs=None):
 
         runs.append(run_data)
 
-    runs.sort(key=lambda r: r["run_id"])
+    runs.sort(key=lambda r: (r["timestamp"], r["run_id"]))
     if max_runs and len(runs) > max_runs:
         runs = runs[-max_runs:]
 
@@ -471,7 +517,9 @@ def main():
     group.add_argument("--run-dir", help="Path to a single run directory (flat artifacts)")
     parser.add_argument("--output-dir", help="Directory to write runs.json and summary.json")
     parser.add_argument("--output", help="Single file output")
+    parser.add_argument("--generated-at", help="Use a saved generation timestamp for repeatable publication")
     parser.add_argument("--max-runs", type=int, default=None, help="Maximum runs to include (default: all)")
+    parser.add_argument("--allow-empty", action="store_true", help="Write a valid zero-strategy run")
     parser.add_argument("--no-body", action="store_true",
                         help="Exclude strategy/review body text (metadata only)")
     parser.add_argument("--dry-run", action="store_true",
@@ -486,11 +534,11 @@ def main():
     if not args.output_dir and not args.output:
         parser.error("Either --output-dir or --output is required")
 
-    generated_at = datetime.now().isoformat()
+    generated_at = args.generated_at or datetime.now().isoformat()
 
     if args.run_dir:
         print(f"Extracting single run from {args.run_dir}...", file=sys.stderr)
-        run_data = extract_run(args.run_dir)
+        run_data = extract_run(args.run_dir, allow_empty=args.allow_empty)
         if run_data is None:
             print("No artifacts found (all RFEs may have been skipped).", file=sys.stderr)
             sys.exit(0)
