@@ -57,6 +57,8 @@ def source_rfe(root, key, data=None):
         task = root / f"artifacts/strat-tasks/{key}.md"
         if any(p.is_symlink() for p in (task, task.parent, task.parent.parent)):
             raise ValueError("freshness: unsafe strategy identity")
+        if not task.is_file():
+            raise ValueError(f"freshness: strategy file is missing or symlinked: {key}")
         fm, _ = read_frontmatter(task)
         if fm.get("strat_id") != key:
             raise ValueError("freshness: strategy identity mismatch")
@@ -195,6 +197,9 @@ def initialize(root, data, *, live=False, trusted_source=None):
                 "source": source(root), "architecture": tree(root, ".context/architecture-context"),
                 "live": live, "rfes": {k: jira_rfe(k) for k in data.get("acquired_keys", [])} if live else {},
                 "server": None}
+    if live and data.get("mode") == "batch":
+        from strat_history import initial_evidence
+        baseline.update(initial_evidence(data.get('acquired_keys', [])))
     if live:
         from jira_utils import require_env
         baseline["server"] = digest(require_env()[0].rstrip("/"))
@@ -415,8 +420,21 @@ def batch_deferred(root, data, progress, *, live=True):
     verify_progress(root, data, progress, live=live, deferred=deferred)
     if deferred is None:
         return progress.get("deferred", []) if not live else []
-    if any(v["key"] not in deferred for v in progress.get("deferred", [])):
-        raise ValueError("freshness: deferred ticket no longer matches its failure; use a new prepared run")
+    previous = progress.get('deferred', [])
+    if (not isinstance(previous, list) or any(not isinstance(v, dict) or set(v) != {'key', 'reason'}
+            or not isinstance(v['key'], str) or not isinstance(v['reason'], str)
+            or not 0 < len(v['reason']) <= 500 for v in previous)
+            or len({v['key'] for v in previous}) != len(previous)):
+        raise ValueError('freshness: malformed saved deferrals')
+    for old in previous:
+        if old['key'] not in data.get('acquired_keys', []):
+            raise ValueError('freshness: deferred ticket is outside acquired RFEs')
+        if old['key'] not in deferred:
+            from strat_history import proves_change
+            if not data.get('freshness', {}).get('live') or not proves_change(root, data, progress, old['key']):
+                raise ValueError("freshness: deferred ticket lacks independent change evidence; use a new prepared run")
+        # Reasons describe the first observed change, not publication authority.
+        deferred[old['key']] = old['reason']
     return [{"key": key, "reason": reason} for key, reason in sorted(deferred.items())]
 
 

@@ -122,7 +122,14 @@ def main():
             failed += 1
             continue
 
-        add_labels(server, user, token, jira_key, [REFINED_LABEL])
+        from strat_freshness import StaleTicket
+        try:
+            add_labels(server, user, token, jira_key, [REFINED_LABEL])
+        except StaleTicket:
+            if jira_key not in excluded_strategies():
+                raise
+            skipped += 1
+            continue
         print(f"[LABEL] {REFINED_LABEL} added to {jira_key}")
         pushed += 1
 

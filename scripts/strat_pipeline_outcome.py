@@ -82,6 +82,28 @@ def business_errors(root, data, progress, result, *, live=True):
     return _business_errors(root, data, progress, result)
 
 
+def creation_complete(data, progress):
+    """Verify effective create coverage without rewriting the original record.
+
+    A recorded partial create can finish by deferring its remaining pending
+    tickets. A missing timestamp alone never manufactures create completion.
+    The caller verifies the deferrals independently before using this result.
+    """
+    excluded = {v["key"] for v in progress.get("deferred", [])}
+    active = set(data.get("acquired_keys", [])) - excluded
+    if not active:
+        return True
+    create = progress.get("create") or {}
+    expected = {v["key"] for v in data.get("expected_skips") or []}
+    covered = {p["rfe"] for p in create.get("strategies", [])} | {
+        v["key"] for v in create.get("skipped", []) if v["key"] in expected}
+    pending = set(create.get("pending", []))
+    if pending - excluded or not active <= covered:
+        return False
+    return timestamp(create.get("done_at")) or bool(
+        create.get("done_at") is None and pending and pending <= excluded)
+
+
 def _business_errors(root, data, progress, result):
     """Validate batch contents after the caller verified these inputs/progress.
 
@@ -122,11 +144,10 @@ def _business_errors(root, data, progress, result):
         skipped = [s["key"] for s in skips]
         check(len(skipped) == len(set(skipped)), "duplicate create skips")
         check(set(skipped) <= expected_skips & set(acquired), "create skip was not expected by the host")
-        check(not set(skipped) & (set(rfes) | set(excluded)), "RFE has conflicting strategy/skip/deferred states")
+        check(not set(skipped) & set(rfes), "RFE has conflicting strategy/skip states")
         check(set(rfes) | set(skipped) | set(excluded) == set(acquired),
               "create inventory does not cover all acquired RFEs")
-        if set(acquired) - set(excluded):
-            check(timestamp(create.get("done_at")), "create completion is not recorded")
+        check(creation_complete(data, progress), "create completion is not recorded")
         check(not set(create.get("pending", [])) - set(excluded), "create still has pending RFEs")
         refined, reviews = progress["refine"], progress["review"]
         if not isinstance(refined, dict) or not isinstance(reviews, dict):
@@ -195,7 +216,8 @@ def _business_errors(root, data, progress, result):
             check(set(required) <= set(listed), f"{key}: required outputs omitted from artifact inventory")
         check(result["strategies"] == decisions, "result decisions disagree with verified saved reviews")
         check(
-            result["skipped"] == data.get("skipped", []) + skips, "result skip inventory disagrees with saved coverage"
+            result["skipped"] == data.get("skipped", []) + [v for v in skips if v["key"] not in excluded],
+            "result skip inventory disagrees with saved coverage"
         )
         for field in ("run_id", "mode", "input_keys", "acquired_keys", "dry_run", "architecture_context"):
             check(result.get(field) == data.get(field), f"result {field} disagrees with run input")

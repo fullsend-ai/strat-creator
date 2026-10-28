@@ -205,6 +205,21 @@ gates. A prior deferred push is not reused. Existing approval or human-gate
 labels are not cleared automatically, including when an edit arrived after a
 review had already been posted to Jira. No baseline is silently refreshed.
 
+A later revert does not readmit a ticket. The host records an RFE history
+cursor before work, and independently verifies post-cursor protected edits
+when the current input again matches its baseline. The host also pins existing
+linked STRAT history; post-cursor structured SME or sign-off edits on those
+STRATs can prove a change. Agent-supplied cursors and host-clock guesses cannot
+substitute for these anchors. Newly created STRATs have no pre-run STRAT cursor,
+so their reverted SME changes need other independent proof or fail closed.
+Old history, ordinary lock
+labels and an agent's saved claim do not suffice. Missing or unrecognizable
+history fails closed; a plain historical description without section structure
+cannot prove an SME edit, and a numeric needs-attention label alone cannot prove
+external intervention. A second edit does not invalidate a deferral merely
+because its informational reason differs. Original create skips and partial
+records remain in recovery; published skips omit tickets now deferred.
+
 ### Reviewer ticket scope
 
 The four forked reviewer Skills require exactly one strategy key. They select

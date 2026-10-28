@@ -175,12 +175,28 @@ if (!run.create_done && run.pending_create.length) {
     HEADLESS +
       `Use the Skill tool to run the ${NS}strategy-create skill with args "${run.pending_create.join(' ')}${dry}". ` +
       'The keys are the selection; do not ask which RFEs or which source to use (use Jira). ' +
+      'A ticket-specific freshness error defers that RFE: continue the remaining keys without repairing ' +
+      'or retrying the changed ticket. Shared-input or unverifiable-input errors stop the assignment. ' +
       'When the skill has finished, run `python3 scripts/strat_pipeline_state.py record-create` ' +
       'and return the strategies list it prints.',
     { label: 'strategy-create', phase: 'Create', schema: CREATE },
   )
-  if (!created) fail('create')
-  else strategies = created.strategies
+  if (created) strategies = created.strategies
+  else {
+    const recoveredCreate = await agent(
+      HEADLESS + 'Run `python3 scripts/strat_pipeline_state.py record-create` once, then ' +
+        '`python3 scripts/strat_pipeline_state.py read` once. Return the read JSON exactly. ' +
+        'This reconciles saved creation and verified deferrals. Do not repeat creation or repair artifacts.',
+      { label: 'reconcile creation', phase: 'Create', schema: READ, effort: 'low' },
+    )
+    if (!recoveredCreate || recoveredCreate.run_id !== run.run_id || recoveredCreate.cwd !== run.cwd ||
+        JSON.stringify(recoveredCreate.acquired_keys) !== JSON.stringify(run.acquired_keys)) fail('create')
+    else {
+      Object.assign(run, recoveredCreate)
+      strategies = run.strategies
+      run.pending_create.forEach((key) => fail('create', key))
+    }
+  }
 }
 
 const reviewOnly = new Set(run.review_only)

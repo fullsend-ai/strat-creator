@@ -147,6 +147,13 @@ Do not rewrite the baseline or clear progress to bypass this. The final result
 lists deferred RFEs separately; trusted host validation rechecks their live
 inputs and excludes their artifacts from completed publication. Failed runs
 can write diagnostic failure receipts, which never authorize publication.
+If a deferred input later reverts, the ticket stays deferred only when Jira
+history independently proves a protected change after preparation. The host
+pins RFE and existing linked STRAT history cursors; preexisting edits and lock
+bookkeeping are not proof. Structured SME and sign-off history for a pinned
+STRAT can also establish a change.
+Unavailable, truncated or unrecognized history cannot authorize a deferral.
+The original reason remains informational even if later edits change it.
 A later run may skip refinement/push only with matching prior provenance and
 live published-strategy read-back. Legacy progress requires refinement again.
 Launch a fresh Workflow by name; native `resumeFromRunId` replay is unsupported.

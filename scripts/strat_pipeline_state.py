@@ -280,6 +280,7 @@ def cmd_refine_status(_args):
 
 
 def cmd_read(_args):
+    from strat_pipeline_outcome import creation_complete
     with progress_lock():
         data, progress = load_state(batch=True)
     create = progress.get("create") or {}
@@ -301,7 +302,7 @@ def cmd_read(_args):
         "dry_run": bool(data.get("dry_run")),
         "acquired_keys": data.get("acquired_keys", []),
         "review_only": review_only(data),
-        "create_done": bool(create.get("done_at")),
+        "create_done": creation_complete(data, progress),
         "pending_create": pending,
         "strategies": strategies,
         "refined": refinement_status(data, progress)["refined"],
@@ -392,6 +393,10 @@ def cmd_record_create(_args):
 
 
 def cmd_mark(args):
+    if args.step == "refine":
+        if not args.key:
+            die("mark refine needs a strategy key")
+        check_strat(args.key)
     with progress_lock():
         if args.step == "push":
             data, progress = load_state(batch=True)
@@ -540,6 +545,7 @@ def existing(paths):
 
 
 def assemble(data, progress, failed):
+    from strat_pipeline_outcome import creation_complete
     acquired = data.get("acquired_keys", [])
     create = progress.get("create") or {}
     deferred = progress.get("deferred", [])
@@ -571,7 +577,7 @@ def assemble(data, progress, failed):
     errors = list(dict.fromkeys(errors))
 
     phases = []
-    if create.get("done_at") or not set(acquired) - excluded:
+    if creation_complete(data, progress):
         phases.append("create")
     if (create or excluded) and all(p["strat"] in refined for p in needs_refine):
         phases.append("refine")
@@ -599,9 +605,10 @@ def assemble(data, progress, failed):
     artifacts += existing([SKIPPED_MD, TICKETS_MD])
 
     action = "failed" if errors else "completed"
+    active_skips = [v for v in create.get("skipped", []) if v["key"] not in excluded]
     summary = (f"{len(results)} of {len(strategies)} strategies reviewed for "
                f"{len(acquired)} locked RFE(s); "
-               f"{len(create.get('skipped', []))} skipped by strategy-create; "
+               f"{len(active_skips)} skipped by strategy-create; "
                f"{len(deferred)} deferred for input changes")
     if errors:
         summary += f"; {len(errors)} error(s)"
@@ -612,7 +619,7 @@ def assemble(data, progress, failed):
         "summary": summary + ".",
         "input_keys": data.get("input_keys", []),
         "acquired_keys": acquired,
-        "skipped": data.get("skipped", []) + create.get("skipped", []),
+        "skipped": data.get("skipped", []) + active_skips,
         "deferred": deferred,
         "strategies": results,
         "completed_phases": phases,

@@ -53,9 +53,11 @@ def batch(tmp_path, jira, monkeypatch, request):
         original = tmp_path / f'artifacts/strat-originals/{rfe}.md'
         original.parent.mkdir(exist_ok=True)
         original.write_text('Authored source RFE for composition tests.\n')
+    if getattr(request, 'param', '') == 'skipped-create':
+        data['expected_skips'] = [{'key': 'RHAIRFE-8902', 'reason': 'release scope: outside this batch'}]
     initialize(tmp_path, data, live=True, trusted_source=ROOT)
     (tmp_path / 'tmp/strat-input.json').write_text(json.dumps(data))
-    if getattr(request, 'param', '') == 'before-create':
+    if getattr(request, 'param', '') in ('before-create', 'skipped-create'):
         return tmp_path, data, jira
     command(tmp_path, 'record-create')
     for _, key in pairs:
@@ -253,7 +255,8 @@ def test_deferred_ticket_is_not_silently_readmitted_or_reused(batch):
     jira.request('PUT', '/rest/api/3/issue/RHAIRFE-8902', {'fields': {
         'description': original}})
     response = command(root, 'ticket-status', 'RHAISTRAT-8902', check=False)
-    assert response.returncode != 0 and 'new prepared run' in response.stderr
+    assert response.returncode == 0, response.stderr
+    assert json.loads(response.stdout)['eligible'] is False
     assert json.loads((root / 'tmp/strat-input.json').read_text()) == data
 
 
