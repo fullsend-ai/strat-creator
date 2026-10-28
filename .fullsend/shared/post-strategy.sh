@@ -84,8 +84,12 @@ if [[ -z "${RESULTS_REPO_URL:-}" ]]; then
   exit 0
 fi
 
+# One data repo folder per work-item type: RHAISTRAT/ for rfe-strategy (the
+# dashboard and Org Pulse read it), the type's name for any other type.
+SUBDIR="$(python3 -c 'import json, sys; t = json.load(open(sys.argv[1])).get("type") or "rfe-strategy"
+print("RHAISTRAT" if t == "rfe-strategy" else t)' "${STRAT_STATE_DIR}/run.json")"
 python3 "${SHARED}/publish/push-results.py" --results-dir "${RESULTS}" \
-  --results-repo "${RESULTS_REPO_URL}" --run-id "$(field run_id)"
+  --results-repo "${RESULTS_REPO_URL}" --run-id "$(field run_id)" --subdir "${SUBDIR}"
 cd -- "${RESULTS}"
 generated_at="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generated_at"])' "${BUNDLE}/pipeline-data.json")"
 pushed=false
@@ -95,9 +99,9 @@ for attempt in 1 2 3; do
   # A failed synchronization stops publication; never conceal a rebase error.
   git pull --rebase -X theirs origin main
   python3 "${CLONE}/scripts/extract-pipeline-data.py" \
-    --data-dir "${RESULTS}/RHAISTRAT" --output "${RESULTS}/RHAISTRAT/summary.json" --no-body \
+    --data-dir "${RESULTS}/${SUBDIR}" --output "${RESULTS}/${SUBDIR}/summary.json" --no-body \
     --generated-at "${generated_at}"
-  git add RHAISTRAT/summary.json RHAISTRAT/summary-production.json
+  git add "${SUBDIR}/summary.json" "${SUBDIR}/summary-production.json"
   if git diff --cached --quiet; then
     echo "Summaries unchanged, nothing to commit."
   else
@@ -108,7 +112,9 @@ for attempt in 1 2 3; do
 done
 [[ "${pushed}" == true ]] || { echo "ERROR: summary push failed after 3 attempts" >&2; exit 1; }
 
-if [[ -n "${ORG_PULSE_URL:-}" && -n "${ORG_PULSE_API_TOKEN:-}" ]]; then
+if [[ "${SUBDIR}" != RHAISTRAT ]]; then
+  echo "INFO: Org Pulse reads RHAISTRAT/ only; nothing sent for ${SUBDIR}/"
+elif [[ -n "${ORG_PULSE_URL:-}" && -n "${ORG_PULSE_API_TOKEN:-}" ]]; then
   python3 "${SHARED}/publish/push-to-org-pulse.py" --results-dir "${RESULTS}" \
     || echo "WARNING: Org Pulse push failed (non-blocking)"
 else

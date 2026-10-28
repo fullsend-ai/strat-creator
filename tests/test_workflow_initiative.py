@@ -129,3 +129,15 @@ def test_validator_checks_keys_against_the_run_type():
     validator.check_keys(checker, result, {})  # an RFE run: neither key is an RFE or a STRAT
     assert len(checker.failures) == 4  # 3 input keys, 1 strategy key
 
+
+def test_initiative_results_publish_under_their_own_folder(tmp_path):
+    publisher = module("initiative_publisher", ROOT / ".fullsend/shared/publish/push-results.py")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "strat-tasks").mkdir()
+    (tmp_path / "strat-tasks" / f"{KEY}.md").write_text("strategy\n")
+    run = publisher.organize_identified_run(tmp_path, "r1", "initiative-strategy")
+    assert run == tmp_path.resolve() / "initiative-strategy/run-r1"
+    assert (run / "strat-tasks" / f"{KEY}.md").read_text() == "strategy\n"
+    assert not (tmp_path / "RHAISTRAT").exists()
+    with pytest.raises(ValueError, match="invalid publication folder"):
+        publisher.organize_identified_run(tmp_path, "r2", "../RHAISTRAT")
