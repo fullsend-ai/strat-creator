@@ -10,6 +10,8 @@ import re
 
 from strat_side_effects import digest
 
+ACTIVE_STATUSES = {"Closed", "Resolved", "In Progress", "Review", "Release Pending"}
+
 
 def histories(key, *, latest=False):
     from jira_utils import api_call, require_env
@@ -51,19 +53,32 @@ def cursor(key):
 def initial_evidence(rfes):
     """Host-only history anchors, including existing linked strategies."""
     from jira_utils import get_issue, require_env
+    from strat_side_effects import HUMAN_GATES, checked_labels
 
-    evidence = {"rfe_history": {}, "strategy_history": {}}
+    evidence = {"rfe_history": {}, "strategy_history": {}, "clone_inventory": {}}
     for rfe in rfes:
         evidence["rfe_history"][rfe] = cursor(rfe)
         try:
             fields = get_issue(*require_env(), rfe, fields=["issuelinks"])["fields"]
+            clones = set()
             for link in fields["issuelinks"]:
                 if link["type"]["name"] != "Cloners":
                     continue
                 for side in ("inwardIssue", "outwardIssue"):
                     key = link.get(side, {}).get("key", "")
                     if isinstance(key, str) and key.startswith("RHAISTRAT-"):
-                        evidence["strategy_history"][key] = {"rfe": rfe, "cursor": cursor(key)}
+                        clones.add(key)
+            # Presence means enumeration succeeded; partial/missing inventories
+            # can never establish that an unpinned STRAT is new to the run.
+            evidence["clone_inventory"][rfe] = sorted(clones)
+            for key in sorted(clones):
+                snapshot = get_issue(*require_env(), key, fields=["labels", "status"])["fields"]
+                gates = sorted(set(checked_labels(snapshot.get("labels"))) & HUMAN_GATES)
+                status = snapshot["status"]["name"]
+                if not isinstance(status, str) or not status:
+                    raise ValueError("missing STRAT status")
+                evidence["strategy_history"][key] = {
+                    "rfe": rfe, "cursor": cursor(key), "gate_labels": gates, "status": status}
         except (OSError, ValueError, KeyError, TypeError):
             continue  # Optional evidence cannot substitute for current-input checks.
     return evidence
@@ -138,8 +153,10 @@ def structured_staff(value):
 
 
 def proves_change(root, data, progress, rfe):
-    """Only externally verified history can explain a reverted live mismatch."""
+    """Host-pinned history or a live blocking gate can authorize STRAT exclusion."""
     from jira_utils import get_issue, require_env
+    from strat_freshness import canonical_staff
+    from strat_side_effects import HUMAN_GATES, HumanGateChanged, check_human_gates
 
     try:
         base = data["freshness"]
@@ -148,10 +165,15 @@ def proves_change(root, data, progress, rfe):
         for key, target in (progress.get("freshness") or {}).get("targets", {}).items():
             if target["rfe"] != rfe or not key.startswith("RHAISTRAT-"):
                 continue
-            prepared = base.get("strategy_history", {}).get(key)
-            if prepared is None or prepared["rfe"] != rfe:
+            if {"rfe": rfe, "strat": key} not in (progress.get("create") or {}).get("strategies", []):
                 continue
-            fields = get_issue(*require_env(), key, fields=["issuelinks"])["fields"]
+            prepared = base.get("strategy_history", {}).get(key)
+            if prepared is not None and prepared["rfe"] != rfe:
+                continue
+            if prepared is None and not base.get("live"):
+                continue  # An agent cursor does not establish a prepared live run.
+            env = require_env()
+            fields = get_issue(*env, key, fields=["issuelinks", "labels", "status"])["fields"]
             linked = {
                 link[side]["key"]
                 for link in fields["issuelinks"]
@@ -161,12 +183,32 @@ def proves_change(root, data, progress, rfe):
             }
             if linked != {rfe}:
                 continue
+            status = fields["status"]["name"]
+            if not isinstance(status, str) or not status:
+                raise ValueError("missing STRAT status")
+            if status in ACTIVE_STATUSES or (prepared or {}).get("status") in ACTIVE_STATUSES:
+                continue
+            try:
+                check_human_gates(env[0], key, fields.get("labels"), data, root=root)
+            except HumanGateChanged:
+                if prepared is not None:
+                    old_gates = prepared.get("gate_labels")
+                    if isinstance(old_gates, list) and set(fields["labels"]) & HUMAN_GATES - set(old_gates):
+                        return True
+                else:
+                    inventory = base.get("clone_inventory", {}).get(rfe)
+                    if isinstance(inventory, list) and key not in inventory:
+                        return True  # Host proves absence from the prepared clone inventory.
+            if prepared is None:
+                continue  # New STRATs cannot supply their own preparation cursor.
             items = since(histories(key), prepared["cursor"])
             for item in items:
                 field = item.get("fieldId") or item["field"]
                 if field == "description":
                     try:
-                        if structured_staff(item.get("fromString")) != structured_staff(item.get("toString")):
+                        before = canonical_staff(structured_staff(item.get("fromString")))
+                        after = canonical_staff(structured_staff(item.get("toString")))
+                        if before != after:
                             return True
                     except (ValueError, TypeError):
                         continue

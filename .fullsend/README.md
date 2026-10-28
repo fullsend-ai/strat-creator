@@ -220,6 +220,34 @@ external intervention. A second edit does not invalidate a deferral merely
 because its informational reason differs. Original create skips and partial
 records remain in recovery; published skips omit tickets now deferred.
 
+Saved STRAT human/publication snapshots detect mismatches but are agent-writable
+and cannot authorize a deferral. Each STRAT-derived exclusion also needs
+host-pinned protected-change history or a newly blocking human gate on this
+run's STRAT whose unique Jira clone link identifies that RFE. The host pins
+existing clone gates/statuses and records successful clone enumeration. Old
+gates and active/completed clones cannot authorize exclusion; an unpinned new
+STRAT requires a complete host inventory proving it was not linked at preparation.
+Recognized current-run numeric verdict intent excludes our own gate. These
+recovery checks assume retention of the write journal and use of the guarded
+helpers; agent-edited journals and direct Jira mutations are outside their
+containment guarantees. Without independent proof, a current or reverted
+STRAT mismatch fails closed, including SME/publication changes on a newly created
+STRAT without a host cursor. A trusted live RFE mismatch remains sufficient.
+Late gate-label changes during push are isolated only after verifying the unique
+source and its ownership; unrelated write, ownership, link and shared-input errors
+still stop the run.
+Managed refinement and push preserve live SME input; locally editing that input
+cannot manufacture history proof. Standalone human editing retains its normal
+push behavior. Late human gates during review-publication recovery use the same
+verified deferral reconciliation as the push loop.
+Write guards, current SME checks and history proof use the same canonical
+content comparison; a formatting-only push is neither new input nor a deferral.
+Both the normal description and attachment stub are checked after ADF encoding
+against current live SME input, before any description or attachment mutation.
+Input-change evidence identifies changed state without attributing the edit to
+a human. Deliberate agent edits to input tickets, including gate labels or clone
+links, remain outside these checks' containment guarantee.
+
 ### Reviewer ticket scope
 
 The four forked reviewer Skills require exactly one strategy key. They select

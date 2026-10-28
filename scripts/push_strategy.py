@@ -301,6 +301,17 @@ def _find_strategy_attachment(attachments, issue_key):
             if candidates else None)
 
 
+def _verify_managed_description(server, user, token, issue_key, payload):
+    """Compare the exact encoded payload with live SME input before mutations."""
+    if not os.path.lexists("tmp/strat-input.json") and os.environ.get("STRAT_MANAGED_RUN") != "1":
+        return
+    from strat_freshness import staff, verify_staff
+    from strat_side_effects import context
+    context()
+    fields = get_issue(server, user, token, issue_key, fields=["description"])["fields"]
+    verify_staff(adf_to_markdown(payload), staff(adf_to_markdown(fields["description"])))
+
+
 def _push_via_attachment(server, user, token, issue_key, existing_md,
                          strategy_section, staff_input_section, attachments):
     """Push strategy as attachment + stub description."""
@@ -310,6 +321,7 @@ def _push_via_attachment(server, user, token, issue_key, existing_md,
         stub_md = _build_description_stub(
             existing_md, strategy_section, staff_input_section, att_filename)
         stub_adf = markdown_to_adf(stub_md)
+        _verify_managed_description(server, user, token, issue_key, stub_adf)
 
         with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".md", delete=False, encoding="utf-8") as tmp:
@@ -357,6 +369,12 @@ def main():
     existing_desc = issue.get("fields", {}).get("description")
     existing_md = adf_to_markdown(existing_desc).strip() if existing_desc else ""
     attachments = issue.get("fields", {}).get("attachment", [])
+    managed = os.path.lexists("tmp/strat-input.json") or os.environ.get("STRAT_MANAGED_RUN") == "1"
+    if managed:
+        from strat_freshness import staff, verify_staff
+        from strat_side_effects import context
+        context()  # Validate managed state; never select standalone after a missing/invalid input.
+        verify_staff(local_content, staff(existing_md))
 
     if existing_md:
         backup_dir = os.path.join(os.path.dirname(args.local_file), "..", "strat-originals")
@@ -395,7 +413,10 @@ def main():
         idx = updated_md.index(STRATEGY_HEADING)
         updated_md = rfe_ref + "\n\n" + updated_md[idx:]
 
+    if managed:
+        verify_staff(updated_md, staff(existing_md))
     updated_adf = markdown_to_adf(updated_md)
+    _verify_managed_description(server, user, token, args.issue_key, updated_adf)
 
     try:
         update_description(server, user, token, args.issue_key, updated_adf)

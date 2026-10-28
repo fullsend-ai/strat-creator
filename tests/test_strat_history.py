@@ -80,6 +80,19 @@ def test_plain_description_is_not_inferred_as_sme_content():
         history.structured_staff("Plain description without section structure.")
 
 
+@pytest.mark.parametrize("text,valid", [("Use the shared queue.", True), ("Invented requirement.", False)])
+def test_managed_sme_comparison_allows_only_format_round_trips(text, valid):
+    from strat_freshness import verify_staff
+
+    artifact = "## Staff Engineer / SME Input\n" + text
+    live = "## Staff Engineer / SME Input\n\nUse the shared queue.\n"
+    if valid:
+        verify_staff(artifact, live)
+    else:
+        with pytest.raises(ValueError, match="cannot edit SME input"):
+            verify_staff(artifact, live)
+
+
 def test_structured_description_keeps_real_sme_and_ignores_empty_template():
     from jira_utils import markdown_to_adf
     from push_strategy import STAFF_INPUT_TEMPLATE
@@ -168,7 +181,11 @@ def test_other_strategy_cannot_supply_sme_history_proof(monkeypatch, tmp_path):
         jira_utils,
         "get_issue",
         lambda *args, **kwargs: {
-            "fields": {"issuelinks": [{"type": {"name": "Cloners"}, "outwardIssue": {"key": "RHAIRFE-2"}}]}
+            "fields": {
+                "labels": [],
+                "status": {"name": "Open"},
+                "issuelinks": [{"type": {"name": "Cloners"}, "outwardIssue": {"key": "RHAIRFE-2"}}],
+            }
         },
     )
     data = {
@@ -177,13 +194,18 @@ def test_other_strategy_cannot_supply_sme_history_proof(monkeypatch, tmp_path):
             "strategy_history": {"RHAISTRAT-1": {"rfe": "RHAIRFE-1", "cursor": {"id": None, "items": []}}},
         }
     }
-    progress = {"freshness": {"targets": {"RHAISTRAT-1": {"rfe": "RHAIRFE-1"}}}}
+    progress = {"freshness": {"targets": {"RHAISTRAT-1": {"rfe": "RHAIRFE-1"}}},
+                "create": {"strategies": [{"rfe": "RHAIRFE-1", "strat": "RHAISTRAT-1"}]}}
     assert not history.proves_change(tmp_path, data, progress, "RHAIRFE-1")
     monkeypatch.setattr(
         jira_utils,
         "get_issue",
         lambda *args, **kwargs: {
-            "fields": {"issuelinks": [{"type": {"name": "Cloners"}, "outwardIssue": {"key": "RHAIRFE-1"}}]}
+            "fields": {
+                "labels": [],
+                "status": {"name": "Open"},
+                "issuelinks": [{"type": {"name": "Cloners"}, "outwardIssue": {"key": "RHAIRFE-1"}}],
+            }
         },
     )
     assert history.proves_change(tmp_path, data, progress, "RHAIRFE-1")
@@ -195,6 +217,41 @@ def test_agent_supplied_strategy_cursor_is_not_preparation_evidence(monkeypatch,
     data = {"freshness": {"rfe_history": {}, "strategy_history": {}}}
     progress = {"freshness": {"targets": {"RHAISTRAT-1": {"rfe": "RHAIRFE-1", "cursor": {"id": None, "items": []}}}}}
     assert not history.proves_change(tmp_path, data, progress, "RHAIRFE-1")
+
+
+@pytest.mark.parametrize("inventory,expected", [(None,False),(["RHAISTRAT-1"],False),([],True)])
+def test_new_gate_needs_a_successful_host_inventory(monkeypatch,tmp_path,inventory,expected):
+    import jira_utils
+
+    monkeypatch.setattr(history,"histories",lambda key:[])
+    monkeypatch.setattr(jira_utils,"require_env",lambda:("http://fixture","admin","admin"))
+    monkeypatch.setattr(jira_utils,"get_issue",lambda *a,**kw:{"fields":{
+        "labels":["strat-creator-human-sign-off"],"status":{"name":"Open"},
+        "issuelinks":[{"type":{"name":"Cloners"},"outwardIssue":{"key":"RHAIRFE-1"}}]}})
+    base={"live":True,"strategy_history":{},"clone_inventory":{}}
+    if inventory is not None:
+        base["clone_inventory"]["RHAIRFE-1"]=inventory
+    progress={"freshness":{"targets":{"RHAISTRAT-1":{"rfe":"RHAIRFE-1"}}},
+              "create":{"strategies":[{"rfe":"RHAIRFE-1","strat":"RHAISTRAT-1"}]}}
+    assert history.proves_change(tmp_path,{"freshness":base},progress,"RHAIRFE-1") is expected
+
+
+def test_formatting_only_sme_history_is_not_independent_proof(monkeypatch,tmp_path):
+    import jira_utils
+
+    before=json.dumps(jira_utils.markdown_to_adf("## Staff Engineer / SME Input\nUse **shared queue**."))
+    after=json.dumps(jira_utils.markdown_to_adf("## Staff Engineer / SME Input\nUse **shared ****queue**."))
+    monkeypatch.setattr(history,"histories",lambda key:[] if key.startswith("RHAIRFE-") else
+                        [row(1,change("description",before,after))])
+    monkeypatch.setattr(jira_utils,"require_env",lambda:("http://fixture","admin","admin"))
+    monkeypatch.setattr(jira_utils,"get_issue",lambda *a,**kw:{"fields":{
+        "labels":[],"status":{"name":"Open"},
+        "issuelinks":[{"type":{"name":"Cloners"},"outwardIssue":{"key":"RHAIRFE-1"}}]}})
+    base={"live":True,"strategy_history":{"RHAISTRAT-1":{
+        "rfe":"RHAIRFE-1","cursor":{"id":None,"items":[]},"status":"Open","gate_labels":[]}}}
+    progress={"freshness":{"targets":{"RHAISTRAT-1":{"rfe":"RHAIRFE-1"}}},
+              "create":{"strategies":[{"rfe":"RHAIRFE-1","strat":"RHAISTRAT-1"}]}}
+    assert not history.proves_change(tmp_path,{"freshness":base},progress,"RHAIRFE-1")
 
 
 @pytest.mark.parametrize("identity", [None, "", False])

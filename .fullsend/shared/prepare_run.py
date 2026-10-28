@@ -52,13 +52,12 @@ from find_strat_for_rfe import find_strat_clones  # noqa: E402
 from jira_utils import get_issue, require_env  # noqa: E402
 from lock_issues import BLOCKING_LABELS  # noqa: E402
 from strat_freshness import initialize, reusable  # noqa: E402
+from strat_history import ACTIVE_STATUSES  # noqa: E402
 
 EXIT_SKIP = 78
 RFE_RE = re.compile(r"^RHAIRFE-\d+$")
 STRAT_RE = re.compile(r"^RHAISTRAT-\d+$")
 STEPS = ("create", "refine", "push", "review")
-# strategy-create Path A leaves STRATs in these states alone.
-ACTIVE_STATUSES = {"Closed", "Resolved", "In Progress", "Review", "Release Pending"}
 GATE_LABELS = {
     "strat-creator-human-sign-off": "signed off by a human",
     "strat-creator-needs-attention": "waiting for a human (needs-attention)",

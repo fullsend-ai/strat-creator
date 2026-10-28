@@ -154,6 +154,13 @@ bookkeeping are not proof. Structured SME and sign-off history for a pinned
 STRAT can also establish a change.
 Unavailable, truncated or unrecognized history cannot authorize a deferral.
 The original reason remains informational even if later edits change it.
+Saved STRAT snapshots cannot authorize deferral by themselves. The host also
+requires pinned protected-change history or a live blocking human gate on the
+uniquely linked STRAT in this run. The gate must be new against host-pinned
+clone state; existing gates and active/completed clones are not change proof.
+Managed create/refine/push must preserve live SME input. An unprovable STRAT mismatch stops the run, including
+SME/publication changes on a new STRAT without a trusted cursor. Preserve the
+evidence and start a new prepared run; do not rewrite the saved comparison.
 A later run may skip refinement/push only with matching prior provenance and
 live published-strategy read-back. Legacy progress requires refinement again.
 Launch a fresh Workflow by name; native `resumeFromRunId` replay is unsupported.

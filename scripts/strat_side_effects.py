@@ -30,6 +30,10 @@ class UncertainWrite(RuntimeError):
     """An operator must reconcile the external effect before work continues."""
 
 
+class HumanGateChanged(ValueError):
+    """A live human gate stops writes; batch exclusion still needs verification."""
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -193,7 +197,7 @@ def check_human_gates(server, target, labels, data, *, root=None):
                     and effect.get("status") in ("pending", "verified")):
                 gates.clear()
     if gates:
-        raise ValueError(f"freshness: human gate stops strategy writes: {target}: {', '.join(sorted(gates))}")
+        raise HumanGateChanged(f"freshness: human gate stops strategy writes: {target}: {', '.join(sorted(gates))}")
 
 
 def check_owner(server, user, token, target, data):
@@ -211,9 +215,11 @@ def check_owner(server, user, token, target, data):
         raise ValueError("managed write requires a valid lock owner")
     owner_label(data.get("lock_owner"))
     from jira_utils import get_issue
+    strategy_target = target
+    strategy_labels = None
     if target.startswith("RHAISTRAT-"):
         fields = get_issue(server, user, token, target, fields=["issuelinks", "labels"])["fields"]
-        check_human_gates(server, target, fields.get("labels"), data)
+        strategy_labels = checked_labels(fields.get("labels"))
         links = fields.get("issuelinks", [])
         rfes = {link.get(side, {}).get("key") for link in links if link.get("type", {}).get("name") == "Cloners"
                 for side in ("inwardIssue", "outwardIssue")
@@ -228,5 +234,9 @@ def check_owner(server, user, token, target, data):
     if owners != {owner_label(data["lock_owner"])} or "strat-creator-processing" not in labels:
         raise UncertainWrite("missing or conflicting Jira lock ownership")
     if labels & HUMAN_GATES:
-        raise ValueError(f"human gate stops source RFE writes: {target}")
+        raise HumanGateChanged(f"human gate stops source RFE writes: {target}")
+    # A human intervention must not conceal a simultaneous ownership or link
+    # failure. Establish the acquired source and its owner before classifying it.
+    if strategy_labels is not None:
+        check_human_gates(server, strategy_target, strategy_labels, data)
     return target

@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from artifact_utils import read_frontmatter
-from strat_side_effects import checked_labels, digest
+from strat_side_effects import HumanGateChanged, checked_labels, digest
 
 CONTRACT = "strat-freshness-v1"
 SOURCE_TREES = ("scripts", "config", "workflows", ".claude/skills", ".claude/agents",
@@ -145,6 +145,18 @@ def staff(markdown):
     if value.replace("\u2014", "---") == STAFF_INPUT_TEMPLATE.strip().replace("\u2014", "---"):
         return ""
     return value
+
+
+def canonical_staff(text):
+    """One SME equivalence for write guards, live checks and history evidence."""
+    from jira_utils import canonical_adf, markdown_to_adf
+    return canonical_adf(markdown_to_adf(text))
+
+
+def verify_staff(markdown, expected):
+    """Managed AI work preserves live SME content, allowing Markdown round trips."""
+    if canonical_staff(staff(markdown)) != canonical_staff(expected):
+        raise ValueError("freshness: managed pipeline cannot edit SME input")
 
 
 def jira_rfe(key):
@@ -330,12 +342,15 @@ def record(root, data, progress, phase, key, rfe):
         return
     value = {"strategy": strategy(root, key), "originals": originals(root, rfe)}
     jira_key = strategy_jira_key(root, data, key) if data["freshness"]["live"] else None
+    human = jira_human(jira_key, root=root, data=data) if jira_key and phase != "review" else None
+    if human is not None:
+        verify_staff(read_frontmatter(root / f"artifacts/strat-tasks/{key}.md")[1], human["staff"])
     if phase == "create":
-        saved["targets"][key] = {"rfe": rfe, "human": jira_human(jira_key, root=root, data=data) if jira_key else None}
+        saved["targets"][key] = {"rfe": rfe, "human": human}
     else:
         if phase == "push":
             value["published"] = jira_published(jira_key) if jira_key else None
-            value["human"] = jira_human(jira_key, root=root, data=data) if jira_key else None
+            value["human"] = human
         if phase == "review":
             value["review"] = hashed(root / f"artifacts/strat-reviews/{key}-review.md")
         saved[{"refine": "refined", "push": "pushed", "review": "reviewed"}[phase]][key] = value
@@ -349,6 +364,15 @@ def own_summary_change(root, key, summary):
                 and identity.get("payload_hash") == digest({"summary": summary})):
             return True
     return False
+
+
+def strategy_changed(root, data, progress, rfe, message, deferred):
+    """A saved STRAT snapshot can detect drift, but cannot authorize exclusion."""
+    if deferred is not None and rfe not in deferred:
+        from strat_history import proves_change
+        if not proves_change(root, data, progress, rfe):
+            raise ValueError(f"freshness: STRAT deferral lacks host-anchored change evidence: {rfe}")
+    changed(rfe, message, deferred)
 
 
 def verify_progress(root, data, progress, *, live=True, rfe=None, deferred=None):
@@ -381,7 +405,8 @@ def verify_progress(root, data, progress, *, live=True, rfe=None, deferred=None)
             if (phase == "pushed" and base["live"] and live and jira_keys[key]
                     and (rfe is None or target["rfe"] == rfe)
                     and stamp["published"] != jira_published(jira_keys[key])):
-                changed(target["rfe"], f"freshness: published strategy changed: {key}", deferred)
+                strategy_changed(root, data, progress, target["rfe"],
+                                 f"freshness: published strategy changed: {key}", deferred)
     if base["live"] and live:
         for key, target in saved["targets"].items():
             if rfe is not None and target["rfe"] != rfe:
@@ -393,15 +418,17 @@ def verify_progress(root, data, progress, *, live=True, rfe=None, deferred=None)
             expected = dict(target["human"])
             try:
                 current = jira_human(jira_keys[key], root=root, data=data)
-            except ValueError as error:
-                if not str(error).startswith("freshness: human gate"):
-                    raise
-                changed(target["rfe"], str(error), deferred)
+            except HumanGateChanged as error:
+                strategy_changed(root, data, progress, target["rfe"], str(error), deferred)
                 continue
+            if (isinstance(expected.get("staff"), str)
+                    and canonical_staff(expected["staff"]) == canonical_staff(current["staff"])):
+                expected["staff"] = current["staff"]
             if expected.get("summary") != current.get("summary") and own_summary_change(root, key, current["summary"]):
                 expected["summary"] = current["summary"]
             if expected != current:
-                changed(target["rfe"], f"freshness: live strategy/staff inputs changed: {key}", deferred)
+                strategy_changed(root, data, progress, target["rfe"],
+                                 f"freshness: live strategy/staff inputs changed: {key}", deferred)
     for rfe, reuse in data.get("reused_push", {}).items():
         pairs = (progress.get("create") or {}).get("strategies", [])
         pair = next((p for p in pairs if p["rfe"] == rfe), None)

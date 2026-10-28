@@ -123,9 +123,10 @@ def main():
             continue
 
         from strat_freshness import StaleTicket
+        from strat_side_effects import HumanGateChanged
         try:
             add_labels(server, user, token, jira_key, [REFINED_LABEL])
-        except StaleTicket:
+        except (StaleTicket, HumanGateChanged):
             if jira_key not in excluded_strategies():
                 raise
             skipped += 1

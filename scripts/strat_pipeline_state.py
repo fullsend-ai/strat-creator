@@ -501,6 +501,7 @@ def cmd_prepare_reviews(_args):
     """Recover verified compositions/publication before scheduling any scorers."""
     from publish_review import publish
     from review_composition import recover
+    from strat_side_effects import HumanGateChanged
     with progress_lock():
         data, progress = load_state(batch=True)
     reviewed = set(progress.get("review", {}))
@@ -520,8 +521,12 @@ def cmd_prepare_reviews(_args):
                 with contextlib.redirect_stdout(io.StringIO()):
                     cmd_record_review(argparse.Namespace(key=key))
                 reviewed.add(key)
-        except StaleTicket:
+        except (StaleTicket, HumanGateChanged):
             if data["mode"] != "batch":
+                raise
+            with progress_lock():
+                _, progress = load_state(batch=True)
+            if pair["rfe"] not in {v["key"] for v in progress.get("deferred", [])}:
                 raise
     with progress_lock():
         _, progress = load_state(batch=True)
