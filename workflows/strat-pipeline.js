@@ -1,6 +1,6 @@
 export const meta = {
   name: 'strat-pipeline',
-  description: 'Create, refine, push and review strategies for the RFEs the host pre-script locked',
+  description: 'Create, refine, push and review strategies for the tickets the host pre-script locked',
   whenToUse: 'The strat-single, strat-batch and strat-resume fullsend agents run it; reads tmp/strat-input.json',
   phases: [
     { title: 'Read', detail: 'run input and progress' },
@@ -44,8 +44,10 @@ const HEADLESS =
   + 'A freshness/input-change error ends that ticket assignment. Preserve all files and intent; ' +
   'never refresh the baseline, repair inputs or retry the Skill after that error.\n\n'
 
-const STRAT = '^(RHAISTRAT|STRAT)-[0-9]+$'
-const RFE = '^RHAIRFE-[0-9]+$'
+// Any Jira or local key: scripts/strat_pipeline_state.py checks each against the
+// run's work-item type (an RFE and its STRAT, or an Initiative paired with itself).
+const STRAT = '^[A-Z][A-Z0-9]*-[0-9]+$'
+const RFE = STRAT
 const PAIR = {
   type: 'object',
   required: ['rfe', 'strat'],
@@ -58,6 +60,7 @@ const READ = {
   properties: {
     cwd: { type: 'string', minLength: 1 },
     run_id: { type: 'string', minLength: 1 },
+    type: { type: 'string', pattern: '^[a-z0-9-]+$' },
     mode: { type: 'string', enum: ['single', 'batch', 'resume'] },
     dry_run: { type: 'boolean' },
     acquired_keys: { type: 'array', items: { type: 'string', pattern: RFE } },
@@ -163,7 +166,8 @@ const run = await agent(
   { label: 'read input', phase: 'Read', schema: READ, effort: 'low' },
 )
 if (!run) throw new Error('read: strat_pipeline_state.py read returned no result')
-const dry = run.dry_run ? ' --dry-run' : ''
+// rfe-strategy is the skills' default type, so its prompts stay as they were.
+const dry = (run.type && run.type !== 'rfe-strategy' ? ` --type ${run.type}` : '') + (run.dry_run ? ' --dry-run' : '')
 log(`run ${run.run_id}: ${run.acquired_keys.length} locked RFE(s)${run.dry_run ? ', dry run' : ''}`)
 
 let strategies = run.strategies

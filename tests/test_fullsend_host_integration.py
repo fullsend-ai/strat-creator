@@ -963,11 +963,54 @@ def test_expected_skip_mirrors_the_path_a_label_gate(monkeypatch):
         {"key": "RHAISTRAT-1", "status": "New", "labels": ["strat-creator-rubric-pass"]}])
     settings = {"jql": {"required_labels": ["strat-creator-3.7"], "quality_labels": ["tech-reviewed"],
                         "excluded_statuses": ["Closed"], "target_versions": []}}
-    assert prepare_run.expected_create_skip("RHAIRFE-1", settings) == \
+    rfe = prepare_run.load_types().get("rfe-strategy")
+    assert prepare_run.expected_create_skip("RHAIRFE-1", settings, rfe) == \
         "RHAISTRAT-1 already processed (label: strat-creator-rubric-pass)"
     monkeypatch.setattr(prepare_run, "find_strat_clones", lambda *a: [
         {"key": "RHAISTRAT-1", "status": "New", "labels": ["strat-creator-auto-created"]}])
-    assert prepare_run.expected_create_skip("RHAIRFE-1", settings) is None
+    assert prepare_run.expected_create_skip("RHAIRFE-1", settings, rfe) is None
+
+
+def test_same_ticket_gates_read_the_initiative_itself(monkeypatch):
+    sys.path.insert(0, str(SHARED))
+    import prepare_run
+
+    initiative = prepare_run.load_types().get("initiative-strategy")
+    labels = ["initiative-autofix-rubric-pass"]
+    monkeypatch.setattr(prepare_run, "require_env", lambda: ("s", "u", "t"))
+    monkeypatch.setattr(prepare_run, "get_issue", lambda *a, **k: {"fields": {
+        "status": {"name": "New"}, "labels": list(labels)}})
+    monkeypatch.setattr(prepare_run, "find_strat_clones", lambda *a: pytest.fail("an Initiative has no clones"))
+    settings = {"jql": {"quality_labels": ["initiative-autofix-rubric-pass"], "excluded_statuses": ["Closed"]}}
+    # No required labels or target versions: release scope is not checked, and nothing is cloned.
+    assert prepare_run.expected_create_skip("RHOAIENG-1", settings, initiative) is None
+    labels[:] = ["other"]
+    assert prepare_run.expected_create_skip("RHOAIENG-1", settings, initiative) == "quality: no quality label"
+    labels[:] = ["initiative-autofix-rubric-pass"]
+    assert prepare_run.resume_point("RHOAIENG-1", {}, initiative) == ("create", None)
+    labels.append("strat-creator-auto-refined")
+    assert prepare_run.resume_point("RHOAIENG-1", {}, initiative) == ("refine", None)
+    labels.append("strat-creator-rubric-pass")
+    assert prepare_run.resume_point("RHOAIENG-1", {}, initiative) == \
+        (None, "RHOAIENG-1 already approved (rubric-pass)")
+
+
+@pytest.mark.parametrize("extra,error", [
+    ({"STRAT_TYPE": "nope"}, "STRAT_TYPE must be one of"),
+    ({"STRAT_TYPE": "initiative-strategy", "RFE_KEY": "RHAIRFE-1"}, "must be a initiative-strategy input key"),
+    ({"STRAT_TYPE": "initiative-strategy", "CONFIG_FILE": "config/x.yaml"}, "single or default-JQL batch mode only"),
+])
+def test_type_selection_is_checked_before_jira(monkeypatch, tmp_path, capsys, extra, error):
+    sys.path.insert(0, str(SHARED))
+    import prepare_run
+
+    (tmp_path / "target" / ".context/architecture-context").mkdir(parents=True)
+    (tmp_path / "target" / ".context/architecture-context/LATEST_VERSION").write_text("rhoai-9.9\n")
+    monkeypatch.setattr(prepare_run, "require_env", lambda: pytest.fail("read Jira"))
+    env = {"STRAT_RUN_ID": "r", "STRAT_STATE_DIR": str(tmp_path / "state"),
+           "TARGET_REPO_DIR": str(tmp_path / "target"), "RFE_KEY": "RHOAIENG-1", **extra}
+    assert prepare_run.main(["prepare_run.py", "single"], env) == 1
+    assert error in capsys.readouterr().err
 
 
 def test_created_strategies_need_the_host_gate_check(validated_run):
@@ -985,7 +1028,7 @@ def test_gate_check_failure_locks_nothing(monkeypatch, tmp_path):
     (tmp_path / "target" / ".context/architecture-context").mkdir(parents=True)
     (tmp_path / "target" / ".context/architecture-context/LATEST_VERSION").write_text("rhoai-9.9\n")
     locked = []
-    monkeypatch.setattr(prepare_run, "resume_point", lambda key, previous: ("create", None))
+    monkeypatch.setattr(prepare_run, "resume_point", lambda key, previous, desc: ("create", None))
     monkeypatch.setattr(prepare_run, "lock", lambda *a: locked.append(a) or [])
 
     def unreachable(*_):

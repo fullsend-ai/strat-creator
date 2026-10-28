@@ -176,6 +176,27 @@ class Descriptor:
         """Every ``inputs[].jira.key_prefixes`` entry: the ids a run of this type starts from."""
         return [p for inp in self.get("inputs", []) or [] for p in (inp.get("jira") or {}).get("key_prefixes") or []]
 
+    @property
+    def strategy_key_re(self):
+        """Full match for this type's own ids: a tracker key or a local draft (``local_id_pattern``)."""
+        tracker = "|".join(map(re.escape, self.key_prefixes))
+        return re.compile(rf"^(?:(?:{tracker})\d+|{self.local_id_pattern.strip('^$')})$")
+
+    @property
+    def input_key_re(self):
+        """Full match for the tracker keys a run of this type starts from (``inputs[].jira.key_prefixes``)."""
+        return re.compile(rf"^(?:{'|'.join(map(re.escape, self.input_key_prefixes))})\d+$")
+
+    @property
+    def source_field(self):
+        """The strategy frontmatter field naming its input (``source_rfe``, ``source_initiative``)."""
+        return self.get("inputs.0.source_ref_field")
+
+    @property
+    def same_ticket(self):
+        """True when the strategy lives on its input ticket (``relation.kind: self``), not a clone."""
+        return self.get("inputs.0.relation.kind") == "self"
+
     def owns(self, item_id):
         """True when ``item_id`` is one of this type's ids: a full match of ``local_id_pattern``
         (most specific), else a ``key_prefixes`` prefix, else a ``local_prefix`` prefix."""
@@ -320,6 +341,12 @@ def _read_descriptor(path, expected_name):
             f"{path}: 'type: {declared}' does not match its directory name {expected_name!r}"
         )
     return data
+
+
+def run_type(run, registry=None):
+    """The descriptor a prepared Workflow run (``tmp/strat-input.json``) names in ``type``; a run
+    record from before the field is rfe-strategy."""
+    return (registry or load()).get(run.get("type") or LEGACY_DEFAULT_TYPE)
 
 
 def load(root=None, extra_roots=None, env=None):

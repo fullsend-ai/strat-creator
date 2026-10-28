@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+import type_registry
 import yaml
 from artifact_utils import read_frontmatter, read_frontmatter_validated
 from review_composition import ROLES, _verify_review
@@ -167,9 +168,10 @@ def _business_errors(root, data, progress, result):
             errors.append(message)
 
     try:
+        work_type = type_registry.run_type(data)
         acquired = data["acquired_keys"]
         if not isinstance(acquired, list) or not all(
-            isinstance(k, str) and re.fullmatch(r"RHAIRFE-\d+", k) for k in acquired
+            isinstance(k, str) and work_type.input_key_re.match(k) for k in acquired
         ):
             raise ValueError("invalid acquired_keys")
         check(len(acquired) == len(set(acquired)), "duplicate acquired RFEs")
@@ -225,12 +227,14 @@ def _business_errors(root, data, progress, result):
             key, rfe = pair["strat"], pair["rfe"]
             if rfe in excluded:
                 continue
-            if not isinstance(key, str) or not re.fullmatch(r"(?:RHAISTRAT|STRAT)-\d+", key):
+            if not isinstance(key, str) or not work_type.strategy_key_re.match(key):
                 raise ValueError("invalid strategy key")
             task = regular(root, f"artifacts/strat-tasks/{key}.md")
             fm, body = read_frontmatter_validated(task, "strat-task")
-            check(fm.get("strat_id") == key and fm.get("source_rfe") == rfe, f"{key}: task identity/source mismatch")
-            check(not key.startswith("RHAISTRAT-") or fm.get("jira_key") == key, f"{key}: Jira key mismatch")
+            check(fm.get("strat_id") == key and fm.get(work_type.source_field) == rfe,
+                  f"{key}: task identity/source mismatch")
+            check(not key.startswith(tuple(work_type.key_prefixes)) or fm.get("jira_key") == key,
+                  f"{key}: Jira key mismatch")
             check(fm.get("status") in ("Refined", "Reviewed"), f"{key}: strategy is not refined")
             section = re.search(r"^## Strategy(?:[ \t][^\n]*)?\r?\n(.*?)(?=^##\s|\Z)", body, re.M | re.S)
             check(

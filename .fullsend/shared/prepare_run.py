@@ -4,13 +4,18 @@
 Run by pre-strategy.sh in the trusted checkout. Candidates come from RFE_KEY
 (strat-single), the repository's default JQL discovery (strat-batch), or
 STRAT_RESUME_KEY (strat-resume: a RHAISTRAT key, resolved to its RFE through
-the Cloners link). Each candidate gets a resume point from durable state
+the Cloners link). STRAT_TYPE names the work-item type (types/<type>/type.yaml,
+default rfe-strategy); run.json records it as `type`. A same-ticket type
+(initiative-strategy: the strategy is written on the input ticket itself) runs
+in single and batch mode only, with RFE_KEY naming its input ticket. Each
+candidate gets a resume point from durable state
 (resume_point below); a STRAT at a human gate is skipped, not locked. The rest
 are locked once with scripts/lock_issues.py --locked-keys-file, so the lock
 record is on the host before the agent starts and the CI cleanup
 (release-locks.sh) can release it whatever happens next.
 
-Resume points, per RFE (first match wins):
+Resume points, per RFE (first match wins; a same-ticket type reads the
+labels on the input ticket itself, which is also its strategy):
   no open STRAT                                  -> create
   STRAT has rubric-pass, needs-attention or
     human-sign-off                               -> skipped (done, or waiting for a human)
@@ -53,6 +58,8 @@ from jira_utils import get_issue, require_env  # noqa: E402
 from lock_issues import BLOCKING_LABELS  # noqa: E402
 from strat_freshness import initialize, reusable  # noqa: E402
 from strat_history import ACTIVE_STATUSES  # noqa: E402
+from type_registry import LEGACY_DEFAULT_TYPE  # noqa: E402
+from type_registry import load as load_types  # noqa: E402
 
 EXIT_SKIP = 78
 RFE_RE = re.compile(r"^RHAIRFE-\d+$")
@@ -64,7 +71,6 @@ GATE_LABELS = {
     "strat-creator-rubric-pass": "already approved (rubric-pass)",
 }
 REFINED_LABEL = "strat-creator-auto-refined"
-SETTINGS = ROOT / "config" / "pipeline-settings.yaml"
 TARGET_VERSION_FIELD = "customfield_10855"
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 
@@ -78,7 +84,7 @@ def write_json(path, data):
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def discover(env):
+def discover(env, desc):
     args = [sys.executable, str(ROOT / "scripts" / "list-rfe-ids.py")]
     configuration = env.get("CONFIG_FILE", "")
     rfe_filter = env.get("RFE_FILTER", "")
@@ -97,7 +103,7 @@ def discover(env):
     else:
         if rfe_filter:
             raise ValueError("RFE_FILTER requires CONFIG_FILE")
-        args.append("--jql-default")
+        args += ["--jql-default", "--type", desc.name]  # CONFIG_FILE is rfe-strategy only (main)
     for name, flag in (("BATCH_SIZE", "--batch-size"), ("BATCH_OFFSET", "--batch-offset")):
         value = env.get(name, "")
         if value:
@@ -109,9 +115,9 @@ def discover(env):
     if proc.returncode != 0:
         raise ValueError(f"list-rfe-ids.py exited {proc.returncode}")
     keys = proc.stdout.split()
-    bad = [k for k in keys if not RFE_RE.match(k)]
+    bad = [k for k in keys if not desc.input_key_re.match(k)]
     if bad:
-        raise ValueError(f"discovery printed keys that are not RHAIRFE keys: {bad[:3]}")
+        raise ValueError(f"discovery printed keys that are not {desc.name} input keys: {bad[:3]}")
     return list(dict.fromkeys(keys))
 
 
@@ -145,13 +151,18 @@ def load_previous(path):
     return previous if isinstance(previous, dict) else {}
 
 
-def resume_point(rfe, previous):
+def resume_point(rfe, previous, desc):
     """(step, None) or (None, skip reason) for one RFE; see the module docstring."""
     server, user, token = require_env()
-    clones = [c for c in find_strat_clones(server, user, token, rfe) if c["status"] not in ACTIVE_STATUSES]
-    if len(clones) != 1:
-        return "create", None  # none: Path B clone; several: strategy-create skips and records why
-    strat, labels = clones[0]["key"], set(clones[0]["labels"])
+    if desc.same_ticket:
+        strat, labels = rfe, labels_of([rfe])[rfe]
+        if REFINED_LABEL not in labels:
+            return "create", None
+    else:
+        clones = [c for c in find_strat_clones(server, user, token, rfe) if c["status"] not in ACTIVE_STATUSES]
+        if len(clones) != 1:
+            return "create", None  # none: Path B clone; several: strategy-create skips and records why
+        strat, labels = clones[0]["key"], set(clones[0]["labels"])
     for label, reason in GATE_LABELS.items():
         if label in labels:
             return None, f"{strat} {reason}"
@@ -163,13 +174,13 @@ def resume_point(rfe, previous):
     if strategies.get(rfe) == strat and strat in push.get("strategies", []) and not push.get("skipped") \
             and strat not in previous.get("review", {}):
         target = Path(os.environ.get("TARGET_REPO_DIR") or ROOT)
-        if reusable(target, rfe, strat, previous, trusted_source=ROOT):
+        if reusable(target, rfe, strat, previous, trusted_source=ROOT, work_type=desc):
             return "review", None
         print(f"prepare-run: {rfe} previous push lacks matching freshness; refinement required", file=sys.stderr)
     return "refine", None
 
 
-def expected_create_skip(rfe, settings):
+def expected_create_skip(rfe, settings, desc):
     """The reason strategy-create will skip this RFE, or None.
 
     Reproduces the skill's gates from Jira fields (its Step 2a status, release
@@ -187,11 +198,15 @@ def expected_create_skip(rfe, settings):
         return f"RFE status: {status}"
     labels = set(fields.get("labels") or [])
     versions = {v.get("name", "") for v in fields.get(TARGET_VERSION_FIELD) or [] if isinstance(v, dict)}
-    if not (labels & set(jql.get("required_labels", [])) or versions & set(jql.get("target_versions", []))):
+    required, targets = set(jql.get("required_labels", [])), set(jql.get("target_versions", []))
+    # A same-ticket type checks release scope only when its settings name one (strategy-create's rule).
+    if (required or targets or not desc.same_ticket) and not (labels & required or versions & targets):
         return "release scope: no required label or target version"
     quality = set(jql.get("quality_labels", []))
     if quality and not labels & quality:
         return "quality: no quality label"
+    if desc.same_ticket:
+        return None  # nothing is cloned; the processed labels are resume_point's gates
     clones = find_strat_clones(server, user, token, rfe)
     open_clones = [c for c in clones if c["status"] not in ACTIVE_STATUSES]
     if clones and not open_clones:
@@ -238,6 +253,18 @@ def main(argv, env):
         print("usage: prepare_run.py single|batch|resume", file=sys.stderr)
         return 1
     mode = argv[1]
+    types = load_types()
+    type_name = env.get("STRAT_TYPE") or LEGACY_DEFAULT_TYPE
+    if type_name not in types:
+        print(f"prepare-run: STRAT_TYPE must be one of {', '.join(types.names())}, got {type_name!r}",
+              file=sys.stderr)
+        return 1
+    desc = types.get(type_name)
+    if desc.same_ticket and (mode == "resume" or env.get("CONFIG_FILE")):
+        # ponytail: resume walks Cloners links and CONFIG_FILE names RFE configs; add them when a
+        # same-ticket type needs one.
+        print(f"prepare-run: {type_name} runs in single or default-JQL batch mode only", file=sys.stderr)
+        return 1
     reprocess = env.get("STRAT_REPROCESS_KEY", "")
     if reprocess and (mode != "resume" or reprocess != env.get("STRAT_RESUME_KEY")):
         print("prepare-run: reprocess must name the exact STRAT selected for resume", file=sys.stderr)
@@ -266,8 +293,9 @@ def main(argv, env):
 
     if mode == "single":
         key = env.get("RFE_KEY", "")
-        if not RFE_RE.match(key):
-            print(f"prepare-run: RFE_KEY must look like RHAIRFE-NNNN, got {key!r}", file=sys.stderr)
+        if not desc.input_key_re.match(key):
+            print(f"prepare-run: RFE_KEY must be a {type_name} input key "
+                  f"({'/'.join(desc.input_key_prefixes)}NNNN), got {key!r}", file=sys.stderr)
             return 1
         candidates = [key]
     elif mode == "resume":
@@ -286,7 +314,7 @@ def main(argv, env):
         candidates = [key]
     else:
         try:
-            candidates = discover(env)
+            candidates = discover(env, desc)
         except ValueError as exc:
             print(f"prepare-run: discovery failed: {exc}", file=sys.stderr)
             return 1
@@ -296,7 +324,7 @@ def main(argv, env):
             print(f"prepare-run: discovered {candidates}, expected {expected}", file=sys.stderr)
             return 1
 
-    run = {"run_id": run_id, "mode": mode, "dry_run": dry_run, "input_keys": candidates,
+    run = {"run_id": run_id, "type": type_name, "mode": mode, "dry_run": dry_run, "input_keys": candidates,
            "acquired_keys": [], "skipped": [], "resume_points": {}, "resume_from": None,
            "expected_skips": None,
            "architecture_context": "available", "architecture_version": version,
@@ -304,7 +332,7 @@ def main(argv, env):
     if not dry_run:
         run["lock_owner"] = run_id
     run["request"] = {name: env.get(name, "") for name in (
-        "STRAT_MODE", "RFE_KEY", "STRAT_RESUME_KEY", "BATCH_SIZE", "BATCH_OFFSET", "BATCH_EXPECTED_KEYS",
+        "STRAT_MODE", "STRAT_TYPE", "RFE_KEY", "STRAT_RESUME_KEY", "BATCH_SIZE", "BATCH_OFFSET", "BATCH_EXPECTED_KEYS",
         "CONFIG_FILE", "RFE_FILTER", "STRAT_REPROCESS_KEY",
         "STRAT_DRY_RUN", "STRAT_ARCHITECTURE_CONTEXT_PATH")}
     if not candidates:
@@ -315,7 +343,7 @@ def main(argv, env):
     gated, points = {}, {}
     try:
         for key in candidates:
-            step, reason = ("refine", None) if reprocess else resume_point(key, previous)
+            step, reason = ("refine", None) if reprocess else resume_point(key, previous, desc)
             if step:
                 points[key] = step
             else:
@@ -327,10 +355,10 @@ def main(argv, env):
     # strategy-create's gate outcome for each lockable RFE, before any lock: if
     # it cannot be computed, nothing is locked and the run fails.
     try:
-        settings = yaml.safe_load(SETTINGS.read_text()) or {}
+        settings = yaml.safe_load((ROOT / desc.get("discovery.settings")).read_text()) or {}
         # An explicit STRAT request imports that existing strategy directly;
         # it does not rediscover an RFE or authorize a new clone.
-        gate_skips = {} if reprocess else {k: r for k in lockable if (r := expected_create_skip(k, settings))}
+        gate_skips = {} if reprocess else {k: r for k in lockable if (r := expected_create_skip(k, settings, desc))}
     except Exception as exc:
         print(f"prepare-run: could not compute expected create skips, no RFE was locked: {exc}",
               file=sys.stderr)
@@ -360,7 +388,7 @@ def main(argv, env):
     for rfe in acquired:
         if points[rfe] == "review":
             pair = next(p for p in previous["create"]["strategies"] if p["rfe"] == rfe)
-            reuse = reusable(target, rfe, pair["strat"], previous, trusted_source=ROOT)
+            reuse = reusable(target, rfe, pair["strat"], previous, trusted_source=ROOT, work_type=desc)
             if reuse is None:
                 raise ValueError("reusable push changed during preparation; preserve lock intent and reconcile")
             run["reused_push"][rfe] = reuse

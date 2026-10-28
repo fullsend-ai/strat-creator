@@ -17,7 +17,7 @@ def test_scheduled_batches_accept_the_same_publication_contract(dry_run, publish
         "CI_PIPELINE_SOURCE": "schedule", "FULLSEND_MODE": "batch",
         "STRAT_DRY_RUN": dry_run, "FULLSEND_PUBLISH": publish,
     })
-    assert result == {"mode": "batch", "rfe_key": "", "dry_run": dry_run, "publish": publish}
+    assert result == {"mode": "batch", "type": "rfe-strategy", "rfe_key": "", "dry_run": dry_run, "publish": publish}
 
 
 @pytest.mark.parametrize("source", ["push", "merge_request_event", "parent_pipeline", "trigger"])

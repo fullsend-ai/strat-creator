@@ -115,6 +115,19 @@ def check_run_record(c, result, run):
             "architecture context was not available for this run")
 
 
+def check_keys(c, result, run):
+    """Every key against the run's type: the schema accepts any Jira key shape."""
+    from type_registry import run_type
+    work_type = run_type(run)
+    for key in [*result["input_keys"], *result["acquired_keys"], *(s["key"] for s in result["skipped"])]:
+        c.check(bool(work_type.input_key_re.match(key)), f"{key} is not a {work_type.name} input key")
+    for s in result["strategies"]:
+        c.check(bool(work_type.input_key_re.match(s["rfe"])), f"{s['rfe']} is not a {work_type.name} input key")
+        c.check(bool(work_type.strategy_key_re.match(s["strat"])), f"{s['strat']} is not a {work_type.name} key")
+        if work_type.same_ticket:
+            c.check(s["strat"] == s["rfe"], f"{s['strat']} is not written on its own ticket {s['rfe']}")
+
+
 def check_coverage(c, result):
     with_strategy = {s["rfe"] for s in result["strategies"]}
     skipped = {s["key"] for s in result["skipped"]}
@@ -239,14 +252,18 @@ def check_artifacts(c, result, repo):
             c.fail(f"{s['strat']} review composition: {error}")
 
 
-def check_jira(c, result, repo):
+def check_jira(c, result, repo, run):
     from find_strat_for_rfe import find_strat_clones
     from jira_utils import get_issue, require_env
+    from type_registry import run_type
 
+    same_ticket = run_type(run).same_ticket
     server, user, token = require_env()
     for s in result["strategies"]:
         try:
-            clones = {clone["key"] for clone in find_strat_clones(server, user, token, s["rfe"])}
+            # A same-ticket strategy is its input ticket (check_keys): there is no clone to find.
+            clones = {s["strat"]} if same_ticket else {
+                clone["key"] for clone in find_strat_clones(server, user, token, s["rfe"])}
             labels = set(get_issue(server, user, token, s["strat"], fields=["labels"])
                          .get("fields", {}).get("labels", []))
         except Exception as exc:  # report and continue: one unreachable issue fails the run
@@ -289,6 +306,7 @@ def validate(result_path, repo, schema_path, run_path, env):
     except (OSError, ValueError, KeyError, TypeError) as error:
         c.fail(str(error))
     check_run_record(c, result, run)
+    check_keys(c, result, run)
     check_coverage(c, result)
     check_create_skips(c, result, run)
     check_progress(c, result, repo, run)
@@ -300,7 +318,7 @@ def validate(result_path, repo, schema_path, run_path, env):
     if result["dry_run"]:
         print("INFO: dry run, Jira readback skipped")
     elif all(env.get(k) for k in ("JIRA_SERVER", "JIRA_USER", "JIRA_TOKEN")):
-        check_jira(c, result, repo)
+        check_jira(c, result, repo, run)
     else:
         print("INFO: no Jira credentials on the runner, Jira readback skipped")
     return c.failures

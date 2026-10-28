@@ -14,6 +14,7 @@ import re
 import tempfile
 from pathlib import Path
 
+import type_registry
 from artifact_utils import read_frontmatter
 from strat_side_effects import HumanGateChanged, checked_labels, digest
 
@@ -159,15 +160,35 @@ def verify_staff(markdown, expected):
         raise ValueError("freshness: managed pipeline cannot edit SME input")
 
 
-def jira_rfe(key):
+def _type(work_type):
+    return work_type or type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+
+
+def own_comment(body, work_type):
+    """A comment this station posts (its comment prefix opens it), e.g. the review summary."""
+    from jira_utils import adf_to_markdown
+    text = adf_to_markdown(body) if isinstance(body, dict) else str(body or "")
+    return text.lstrip("*_ ").startswith(work_type.get("conventions.comment_prefix"))
+
+
+def jira_rfe(key, work_type=None):
+    """Digest of the input ticket's fields and comments.
+
+    A same-ticket type's input is also its strategy, which this run labels and
+    comments on: those labels and comments are this station's own output, not input.
+    """
     from jira_utils import get_comments, get_issue, require_env
+    work_type = _type(work_type)
     server, user, token = require_env()
     if not all((server, user, token)):
         raise ValueError("freshness needs Jira credentials to recheck live inputs")
     fields = get_issue(server, user, token, key, fields=list(RFE_FIELDS))["fields"]
+    own = work_type.get("conventions.label_prefix") + "-" if work_type.same_ticket else None
     fields["labels"] = sorted(x for x in checked_labels(fields.get("labels"))
-                              if x != "strat-creator-processing" and not x.startswith("strat-creator-owner-"))
-    comments = [{"id": str(c["id"]), "body": c["body"]} for c in get_comments(server, user, token, key)]
+                              if x != "strat-creator-processing" and not x.startswith("strat-creator-owner-")
+                              and not (own and x.startswith(own)))
+    comments = [{"id": str(c["id"]), "body": c["body"]} for c in get_comments(server, user, token, key)
+                if not (work_type.same_ticket and own_comment(c["body"], work_type))]
     return digest({"fields": fields, "comments": comments})
 
 
@@ -207,7 +228,8 @@ def initialize(root, data, *, live=False, trusted_source=None):
     root = root.resolve()
     baseline = {"contract": CONTRACT, "run_id": data["run_id"], "parameters": parameters(data),
                 "source": source(root), "architecture": tree(root, ".context/architecture-context"),
-                "live": live, "rfes": {k: jira_rfe(k) for k in data.get("acquired_keys", [])} if live else {},
+                "live": live, "rfes": {k: jira_rfe(k, type_registry.run_type(data))
+                                       for k in data.get("acquired_keys", [])} if live else {},
                 "server": None}
     if live and data.get("mode") == "batch":
         from strat_history import initial_evidence
@@ -266,7 +288,7 @@ def verify(root, data=None, *, live=True, trusted_source=None, rfe=None, deferre
         for key, expected in base["rfes"].items():
             if rfe is not None and key != rfe:
                 continue
-            if jira_rfe(key) != expected:
+            if jira_rfe(key, type_registry.run_type(data)) != expected:
                 changed(key, f"freshness: live RFE inputs changed: {key}", deferred)
     for reused_rfe, reuse in data.get("reused_push", {}).items():
         if rfe is not None and reused_rfe != rfe:
@@ -281,7 +303,7 @@ def verify(root, data=None, *, live=True, trusted_source=None, rfe=None, deferre
     return base
 
 
-def strategy(root, key):
+def strategy(root, key, work_type=None):
     from push_strategy import extract_strategy_section
     path = root / f"artifacts/strat-tasks/{key}.md"
     if path.is_symlink() or not path.is_file():
@@ -294,7 +316,8 @@ def strategy(root, key):
     published = strip_metadata(extract_strategy_section(body) or body.strip())
     # Parse content rather than hashing irrelevant Markdown blank-line changes.
     # ADF preserves lists, links, marks and code while Jira round trips spacing.
-    return digest({"identity": {k: fm.get(k) for k in ("strat_id", "source_rfe", "jira_key", "title", "priority")},
+    identity = ("strat_id", _type(work_type).source_field, "jira_key", "title", "priority")
+    return digest({"identity": {k: fm.get(k) for k in identity},
                    "strategy": canonical_adf(markdown_to_adf(published)),
                    "staff": canonical_adf(markdown_to_adf(staff(body)))})
 
@@ -321,7 +344,8 @@ def strategy_jira_key(root, data, key):
     A synthetic task has no remote strategy to snapshot, and must never make
     a real Jira key eligible for the local-only exception.
     """
-    if not re.fullmatch(r"(?:RHAISTRAT|STRAT)-\d+", key):
+    work_type = type_registry.run_type(data)
+    if not work_type.strategy_key_re.match(key):
         raise ValueError(f"freshness: strategy has no valid Jira identity: {key}")
     path = root / f"artifacts/strat-tasks/{key}.md"
     if any(p.is_symlink() for p in (path, path.parent, path.parent.parent)):
@@ -329,9 +353,9 @@ def strategy_jira_key(root, data, key):
     fm, _ = read_frontmatter(path)
     if fm.get("strat_id") != key:
         raise ValueError(f"freshness: strategy identity does not match its filename: {key}")
-    if re.fullmatch(r"RHAISTRAT-\d+", key) and fm.get("jira_key") == key:
+    if key.startswith(tuple(work_type.key_prefixes)) and fm.get("jira_key") == key:
         return key
-    if data.get("dry_run") is True and re.fullmatch(r"STRAT-\d+", key) and fm.get("jira_key") is None:
+    if data.get("dry_run") is True and re.fullmatch(work_type.local_id_pattern, key) and fm.get("jira_key") is None:
         return None
     raise ValueError(f"freshness: strategy has no valid Jira identity: {key}")
 
@@ -340,7 +364,7 @@ def record(root, data, progress, phase, key, rfe):
     saved = bind(data, progress)
     if saved is None:
         return
-    value = {"strategy": strategy(root, key), "originals": originals(root, rfe)}
+    value = {"strategy": strategy(root, key, type_registry.run_type(data)), "originals": originals(root, rfe)}
     jira_key = strategy_jira_key(root, data, key) if data["freshness"]["live"] else None
     human = jira_human(jira_key, root=root, data=data) if jira_key and phase != "review" else None
     if human is not None:
@@ -404,7 +428,7 @@ def verify_progress(root, data, progress, *, live=True, rfe=None, deferred=None)
         for key in marks:
             stamp = saved[phase].get(key)
             target = saved["targets"].get(key)
-            if not stamp or not target or stamp["strategy"] != strategy(root, key):
+            if not stamp or not target or stamp["strategy"] != strategy(root, key, type_registry.run_type(data)):
                 raise ValueError(f"freshness: {phase} strategy changed or lacks provenance: {key}")
             if stamp["originals"] != originals(root, target["rfe"]):
                 raise ValueError(f"freshness: cached RFE inputs changed: {key}")
@@ -440,7 +464,8 @@ def verify_progress(root, data, progress, *, live=True, rfe=None, deferred=None)
     for rfe, reuse in data.get("reused_push", {}).items():
         pairs = (progress.get("create") or {}).get("strategies", [])
         pair = next((p for p in pairs if p["rfe"] == rfe), None)
-        if pair and (pair["strat"] != reuse["key"] or strategy(root, pair["strat"]) != reuse["proof"]["strategy"]):
+        if pair and (pair["strat"] != reuse["key"]
+                     or strategy(root, pair["strat"], type_registry.run_type(data)) != reuse["proof"]["strategy"]):
             raise ValueError("freshness: imported strategy differs from the reusable push")
 
 
@@ -473,7 +498,7 @@ def batch_deferred(root, data, progress, *, live=True):
     return [{"key": key, "reason": reason} for key, reason in sorted(deferred.items())]
 
 
-def reusable(root, rfe, key, previous, *, trusted_source=None):
+def reusable(root, rfe, key, previous, *, trusted_source=None, work_type=None):
     if any(v["key"] == rfe for v in previous.get("deferred", [])):
         return None
     saved = previous.get("freshness") or {}
@@ -486,7 +511,7 @@ def reusable(root, rfe, key, previous, *, trusted_source=None):
     if trusted_source is not None and base.get("trusted_instructions") != source(trusted_source.resolve()):
         return None
     from jira_utils import require_env
-    if base["server"] != digest(require_env()[0].rstrip("/")) or base["rfes"].get(rfe) != jira_rfe(rfe):
+    if base["server"] != digest(require_env()[0].rstrip("/")) or base["rfes"].get(rfe) != jira_rfe(rfe, work_type):
         return None
     if proof.get("published") != jira_published(key) or proof.get("human") != jira_human(key):
         return None

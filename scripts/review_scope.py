@@ -10,8 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-TARGET = re.compile(r"(?:RHAISTRAT|STRAT)-[0-9]+")
-SOURCE = re.compile(r"(?:RHAIRFE|RFE)-[0-9]+")
+KEY = re.compile(r"[A-Z][A-Z0-9]*-[0-9]+")
 MARKER = "REVIEW_SCOPE_TARGET: "
 
 
@@ -32,10 +31,33 @@ def text(content):
     return ""
 
 
+def work_type(key):
+    """The work-item type whose strategy ids include key (an RFE's STRAT, an Initiative), or None."""
+    import type_registry
+
+    try:
+        found = type_registry.load().detect(key)
+    except type_registry.RegistryError:
+        return None
+    return found if found and found.strategy_key_re.match(key) else None
+
+
+def patterns(key):
+    """(strategy ids, source ids) of key's type, unanchored, for scanning a report."""
+    found = work_type(key)
+    target = "|".join(map(re.escape, found.key_prefixes + [found.local_prefix]))
+    source = found.get(f"schema.task.extra_fields.{found.source_field}.pattern").strip("^$")
+    return re.compile(rf"(?:{target})[0-9]+"), re.compile(source)
+
+
+def is_strategy_key(key):
+    return isinstance(key, str) and bool(KEY.fullmatch(key)) and work_type(key) is not None
+
+
 def assignment(prompt):
     lines = [line[len(MARKER):].strip() for line in prompt.splitlines()
              if line.startswith(MARKER)]
-    if len(lines) != 1 or not TARGET.fullmatch(lines[0]):
+    if len(lines) != 1 or not is_strategy_key(lines[0]):
         raise ScopeError("Exactly one strategy key is required; batch review is not allowed.")
     return lines[0]
 
@@ -99,9 +121,13 @@ def inputs(root, key):
         raise ScopeError("Strategy frontmatter is missing.")
     if not isinstance(metadata, dict) or metadata.get("strat_id") != key:
         raise ScopeError("Strategy frontmatter does not match the assigned key.")
-    source = metadata.get("source_rfe", "")
-    if not isinstance(source, str) or not SOURCE.fullmatch(source):
-        raise ScopeError("Strategy source_rfe is missing or invalid.")
+    found = work_type(key)
+    if found is None:
+        raise ScopeError("Assigned key is not a strategy key.")
+    field = found.source_field
+    source = metadata.get(field, "")
+    if not isinstance(source, str) or not patterns(key)[1].fullmatch(source):
+        raise ScopeError(f"Strategy {field} is missing or invalid.")
     # Fullsend create saves frozen source descriptions in strat-originals.
     # Legacy/evaluation workspaces may contain only rfe-tasks instead.
     original = safe_path(root, f"{mode}/strat-originals/{source}.md")
@@ -142,22 +168,23 @@ def check_report(scope, report):
     if report.startswith("REVIEW_SCOPE_ERROR:"):
         return  # Return an explicit failure to the caller, never an assessment.
     key = scope["key"]
-    headings = re.findall(r"^###\s+((?:RHAISTRAT|STRAT)-[0-9]+):", report, re.M)
+    target, source = patterns(key)
+    headings = re.findall(rf"^###\s+({target.pattern}):", report, re.M)
     if headings != [key]:
         raise ScopeError(f"Return one assessment headed '### {key}: <title>'.")
-    if set(TARGET.findall(report)) != {key}:
+    if set(target.findall(report)) != {key}:
         raise ScopeError("Assessment contains another strategy key.")
-    if set(SOURCE.findall(report)) - cited_rfes(scope):
+    if set(source.findall(report)) - cited_rfes(scope, source):
         raise ScopeError("Assessment contains an unrelated source RFE.")
 
 
-def cited_rfes(scope):
+def cited_rfes(scope, source):
     # A faithful assessment may quote RFEs that the assigned strategy or its
     # frozen source RFE cite. RFEs absent from those inputs remain unrelated.
     allowed = {scope["source_rfe"]}
     for name in ("strategy", "rfe"):
         if scope.get(name):
-            allowed.update(SOURCE.findall(scope[name].read_bytes().decode()))
+            allowed.update(source.findall(scope[name].read_bytes().decode()))
     return allowed
 
 

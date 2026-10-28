@@ -579,7 +579,8 @@ export STRAT_RUN_ID="${CI_JOB_ID}" STRAT_STATE_DIR="$(mktemp -d)"   # host only
 export STRAT_DRY_RUN=1                          # 0 explicitly enables live Jira writes
 export STRAT_PREVIOUS_PROGRESS= STRAT_ARCHITECTURE_CONTEXT_PATH= STRAT_PUBLISH_DIR=
 export RESULTS_REPO_URL= RESULTS_PUSH_TOKEN= RESULTS_GIT_USER= ORG_PULSE_URL= ORG_PULSE_API_TOKEN=
-export RFE_KEY=RHAIRFE-1234                      # strat-single
+export STRAT_TYPE=                              # empty: rfe-strategy; or initiative-strategy
+export RFE_KEY=RHAIRFE-1234                      # strat-single (an RHOAIENG Initiative for initiative-strategy)
 export BATCH_SIZE=10 BATCH_OFFSET=0 BATCH_EXPECTED_KEYS=   # strat-batch
 export FULLSEND_WORK_ITEM_KEY=RHAISTRAT-5678     # strat-resume (dispatch sets it)
 
@@ -600,6 +601,16 @@ resumes at `review`.
 Shared host preparation defaults unset or empty mode to dry-run. Only `0`
 enables live mode; `1`/`true` select dry-run. Any other value fails before Jira
 calls, vendoring or output cleanup. Dry-run still reads live Jira inputs.
+
+`STRAT_TYPE` names the work-item type (`types/<type>/type.yaml`; empty is
+`rfe-strategy`), recorded as `type` in the run record. `initiative-strategy` is
+a same-ticket type: the strategy is written on the Initiative itself, so each
+pair is the Initiative and itself, nothing is cloned, and the freshness check
+leaves out the station's own `strat-creator-*` labels and `[Strat Creator]`
+comments on it. It runs in `strat-single` (`RFE_KEY` names the Initiative) and
+default-JQL `strat-batch` (`config/initiative-settings.yaml`); `strat-resume`
+and `CONFIG_FILE` stay RFE-only. Its results go to the data repository's
+`initiative-strategy/` folder, which Org Pulse and the dashboard do not read.
 
 If the CI job itself is lost, the locks stay. Find them with the JQL
 `labels = strat-creator-processing`, and release them with
