@@ -26,12 +26,13 @@ known version mismatch, but a deployment smoke test remains necessary.
 ## Agent registration
 
 This repository provides harnesses, prompts, the plugin and shared helpers.
-Its committed `.fullsend/config.yaml` combines the onboarding configuration
-from PR 86 with the three strategy agent sources and their remote-resource
-allowlist. The existing runtime, roles, generic agents, issue targets and status
-notifications are retained. Keep those settings when changing strategy
-registration. The onboarding installer is not a recurring regeneration step
-for this repository.
+Its `.fullsend/config.yaml` is managed by the Fullsend repos manifest. The
+manifest registers the three local strategy agent sources alongside the
+standard agents and repository settings. Change `repos.yaml` in
+`fullsend-ai/.fullsend` when changing this repository's agent registration.
+The next repos sync will regenerate the managed config. Fullsend's default
+remote-resource prefixes cover the strategy harnesses' pinned profiles and
+providers.
 
 `fleet-entry.example.yaml` is a strategy registration fragment for other
 deployments. Merge it into their existing configuration, preserving the other

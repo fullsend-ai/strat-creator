@@ -12,6 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 FULLSEND = ROOT / ".fullsend"
 EVENTS = ROOT / "tests" / "fixtures" / "fullsend-events"
 AGENTS = ("strat-single", "strat-batch", "strat-resume")
+DEFAULT_ALLOWED_REMOTE_RESOURCES = (
+    "https://raw.githubusercontent.com/fullsend-ai/fullsend/",
+    "https://raw.githubusercontent.com/fullsend-ai/agents/",
+)
 IMAGE = re.compile(r"^ghcr[.]io/fullsend-ai/fullsend-sandbox@sha256:[0-9a-f]{64}$")
 PINNED = re.compile(r"^https://raw[.]githubusercontent[.]com/fullsend-ai/agents/[0-9a-f]{40}/\S+#sha256=[0-9a-f]{64}$")
 
@@ -22,14 +26,20 @@ def _harness(name):
 
 def test_config_registers_every_harness():
     config = yaml.safe_load((FULLSEND / "config.yaml").read_text())
-    strategies = {a["name"]: a["source"] for a in config["agents"] if a.get("name") in AGENTS}
-    assert strategies == {name: f"{name}/{name}.yaml" for name in AGENTS}
+    expected_sources = {f"{name}/{name}.yaml" for name in AGENTS}
+    strategies = [a for a in config["agents"] if a.get("source", "").startswith("strat-")]
+    assert {a["source"] for a in strategies} == expected_sources
+    assert len(strategies) == len(expected_sources)
+    assert all(a.get("name", a["source"].split("/")[0]) == a["source"].split("/")[0]
+               for a in strategies)
     example = yaml.safe_load((FULLSEND / "fleet-entry.example.yaml").read_text())
-    assert {a["source"] for a in example["agents"]} == set(strategies.values())
-    assert set(example["allowed_remote_resources"]) <= set(config["allowed_remote_resources"])
+    assert {a["source"] for a in example["agents"]} == expected_sources
+    allowed_remote_resources = config.get("allowed_remote_resources", DEFAULT_ALLOWED_REMOTE_RESOURCES)
+    assert set(allowed_remote_resources) <= set(example["allowed_remote_resources"])
+    assert "https://raw.githubusercontent.com/fullsend-ai/strat-creator/" in example["allowed_remote_resources"]
     for name in AGENTS:
         harness = _harness(name)
-        assert all(any(url.startswith(prefix) for prefix in config["allowed_remote_resources"])
+        assert all(any(url.startswith(prefix) for prefix in allowed_remote_resources)
                    for url in harness["openshell"]["profiles"] + harness["providers"])
 
 
