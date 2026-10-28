@@ -118,8 +118,9 @@ def check_run_record(c, result, run):
 def check_coverage(c, result):
     with_strategy = {s["rfe"] for s in result["strategies"]}
     skipped = {s["key"] for s in result["skipped"]}
+    deferred = {s["key"] for s in result.get("deferred", [])}
     for key in result["acquired_keys"]:
-        c.check(key in with_strategy or key in skipped,
+        c.check(key in with_strategy or key in skipped or key in deferred,
                 f"{key} has neither a reviewed strategy nor a skip reason")
     for s in result["strategies"]:
         c.check(s["rfe"] in result["acquired_keys"], f"{s['strat']} is for {s['rfe']}, which this run did not lock")
@@ -277,12 +278,14 @@ def validate(result_path, repo, schema_path, run_path, env):
     elif result["action"] == "skipped":
         c.fail("the agent may not skip: the host pre-script already chose and locked work")
     run = read_json(run_path)
-    from strat_freshness import verify, verify_progress
+    from strat_freshness import batch_deferred, verify
     try:
         if "freshness" not in run or read_json(repo / "tmp/strat-input.json").get("freshness") != run["freshness"]:
             raise ValueError("freshness: missing baseline or downloaded input differs from trusted host")
-        verify(repo, read_json(repo / "tmp/strat-input.json"), trusted_source=ROOT)
-        verify_progress(repo, read_json(repo / "tmp/strat-input.json"), read_json(repo / "tmp/strat-progress.json"))
+        data = read_json(repo / "tmp/strat-input.json")
+        verify(repo, data, live=False, trusted_source=ROOT)
+        observed = batch_deferred(repo, data, read_json(repo / "tmp/strat-progress.json"))
+        c.check(result.get("deferred", []) == observed, "deferred inventory disagrees with live inputs")
     except (OSError, ValueError, KeyError, TypeError) as error:
         c.fail(str(error))
     check_run_record(c, result, run)

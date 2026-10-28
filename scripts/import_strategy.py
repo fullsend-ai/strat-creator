@@ -73,7 +73,7 @@ def publish_file(source, target):
 
 def import_strategy(key, rfe):
     check_strat(key)
-    data = load_input()
+    data = load_input(rfe=rfe)
     if rfe not in data["acquired_keys"]:
         raise ValueError("RFE is not acquired by this prepared run")
     root = Path.cwd().resolve()
@@ -85,7 +85,7 @@ def import_strategy(key, rfe):
 
 
 def prepare_import(root, key, rfe, data):
-    progress = load_progress(data["run_id"])
+    progress = load_progress(data["run_id"], rfe=rfe)
     check_directories(root)
     existing = root / "artifacts/strat-tasks" / f"{key}.md"
     if existing.exists():

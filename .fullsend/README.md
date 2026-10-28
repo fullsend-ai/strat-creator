@@ -176,6 +176,35 @@ side-effect idempotency or stale-journal invalidation.
 7. **review**: `/strategy-review <KEY> --scores-from tmp/strat-assess/<KEY>`.
 8. **result**: `scripts/strat_pipeline_state.py result` writes `agent-result.json`, then `fullsend-check-output` checks it.
 
+### Input changes during a batch
+
+When live RFE requirements, STRAT staff input or other protected ticket inputs
+change after preparation, the batch defers that ticket and continues unchanged
+tickets. `strat_pipeline_state.py ticket-status KEY` checks an assignment before
+refinement/review. Every write and review composition also checks its source
+RFE. Already running model calls may finish; no new dependent work or writes
+are authorized for a deferred ticket.
+
+The result and published `pipeline-data.json` list deferred RFEs and reasons.
+The host independently verifies deferrals against the original baseline and
+current Jira. It publishes only completed, current strategies. Deferred task,
+review and original files remain in native/recovery evidence, outside that
+publication bundle. Successful partial batches retain them under
+`STRAT_STATE_DIR/recovery/deferred-*/`, which CI includes in native host-state
+artifacts. Progress and mutation intent are preserved. All acquired
+locks are released by normal cleanup, including deferred tickets.
+
+Shared source/instruction, architecture, parameter or provenance failures still
+fail the batch. Unreadable inputs fail closed. A diagnostic failed completion
+receipt can be recorded despite those failures; it cannot pass host validation
+or authorize publication. A batch with every ticket deferred reports zero
+completed strategies and an explicit deferred inventory.
+
+Deferred tickets require a new prepared run, with current inputs and normal
+gates. A prior deferred push is not reused. Existing approval or human-gate
+labels are not cleared automatically, including when an edit arrived after a
+review had already been posted to Jira. No baseline is silently refreshed.
+
 ### Reviewer ticket scope
 
 The four forked reviewer Skills require exactly one strategy key. They select

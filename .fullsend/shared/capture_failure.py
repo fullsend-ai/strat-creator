@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Retain failed-run artifacts/progress as data in the trusted host state."""
+import argparse
 import hashlib
 import json
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
 
-def capture(repo, state, result):
+def capture(repo, state, result, *, deferred=False):
     repo, state, result = Path(repo).resolve(), Path(state).resolve(), Path(result)
     destination = state / "recovery"
     destination.mkdir(parents=True, exist_ok=True)
-    snapshot = Path(tempfile.mkdtemp(prefix="failed-", dir=destination))
+    snapshot = Path(tempfile.mkdtemp(prefix="deferred-" if deferred else "failed-", dir=destination))
     files = {}
     for directory in ("artifacts", "tmp"):
         for source in (repo / directory).rglob("*"):
@@ -33,4 +33,11 @@ def capture(repo, state, result):
 
 
 if __name__ == "__main__":
-    print("Failed-run recovery retained at " + str(capture(*sys.argv[1:4])))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("repo")
+    parser.add_argument("state")
+    parser.add_argument("result")
+    parser.add_argument("--deferred", action="store_true")
+    args = parser.parse_args()
+    label = "Deferred-work" if args.deferred else "Failed-run"
+    print(label + " recovery retained at " + str(capture(args.repo, args.state, args.result, deferred=args.deferred)))

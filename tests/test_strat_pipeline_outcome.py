@@ -82,9 +82,10 @@ def finished_batch(finished):
     for index in range(9602, 9611):
         key, rfe = f"STRAT-{index}", f"RHAIRFE-{index}"
         (root / f"artifacts/strat-tasks/{key}.md").write_text(original.replace("9601", str(index)))
-        started, _ = prepare(root, key, rfe, (1, 1, 1, 1))
         data["input_keys"].append(rfe)
         data["acquired_keys"].append(rfe)
+        (root / state.INPUT).write_text(json.dumps(data))
+        started, _ = prepare(root, key, rfe, (1, 1, 1, 1))
         progress["create"]["strategies"].append({"rfe": rfe, "strat": key})
         progress["refine"][key] = when
         progress["push"]["strategies"].append(key)

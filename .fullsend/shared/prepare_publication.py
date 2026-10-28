@@ -64,6 +64,12 @@ def prepare(handoff, bundle, result_file, label):
             command.append("--dry-run")
         environment = {name: value for name, value in os.environ.items() if name != "DRY_RUN"}
         subprocess.run(command, check=True, env=environment)
+        if result.get("deferred"):
+            path = bundle / "pipeline-data.json"
+            exported = json.loads(path.read_text())
+            exported["deferred"] = result["deferred"]
+            exported["batch_summary"] = result["summary"]
+            atomic(path, exported)
         check(bundle)
         atomic(state, {"source": source, "ready": True, "files": inventory(bundle)})
 

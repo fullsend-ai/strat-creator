@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """S1 freshness: pin inputs before work, reject changes before reuse or writes.
 
-Same-run changes stop without deleting artifacts or mutation intent. A later
-run can reuse a verified push only under the same source/context and live Jira
-inputs. Native journal replay is deliberately not part of this contract.
+Shared changes stop the run; batch ticket changes defer that ticket without
+deleting artifacts or mutation intent. A later run can reuse a verified push
+only under the same source/context and live Jira inputs. Native journal replay
+is deliberately not part of this contract.
 """
 
 import hashlib
@@ -25,6 +26,44 @@ OWN_LABELS = {"strat-creator-processing", "strat-creator-auto-created", "strat-c
               "strat-creator-rubric-pass", "strat-creator-needs-attention"}
 RFE_FIELDS = ("summary", "description", "priority", "components", "versions", "fixVersions",
               "customfield_10855", "parent", "status", "labels")
+
+
+class StaleTicket(ValueError):
+    """A verified input change belongs to one acquired RFE, not shared code."""
+
+    def __init__(self, rfe, message):
+        self.rfe = rfe
+        super().__init__(message)
+
+
+def changed(rfe, message, deferred):
+    if deferred is None:
+        raise StaleTicket(rfe, message)
+    deferred.setdefault(rfe, message)
+
+
+def source_rfe(root, key, data=None):
+    """Resolve a ticket's scope from its actual identity, never a caller's filter."""
+    if not isinstance(key, str) or not re.fullmatch(r"(?:RHAIRFE|RHAISTRAT|STRAT)-[0-9]+", key):
+        raise ValueError("freshness: invalid ticket identity")
+    path = root / "tmp/strat-input.json"
+    if data is None:
+        if not path.exists():
+            return None  # Interactive, unprepared Skill usage.
+        data = json.loads(path.read_text())
+    if key.startswith("RHAIRFE-"):
+        rfe = key
+    else:
+        task = root / f"artifacts/strat-tasks/{key}.md"
+        if any(p.is_symlink() for p in (task, task.parent, task.parent.parent)):
+            raise ValueError("freshness: unsafe strategy identity")
+        fm, _ = read_frontmatter(task)
+        if fm.get("strat_id") != key:
+            raise ValueError("freshness: strategy identity mismatch")
+        rfe = fm.get("source_rfe")
+    if rfe not in data.get("acquired_keys", []):
+        raise ValueError("freshness: ticket is outside acquired RFEs")
+    return rfe
 
 
 def hashed(path):
@@ -171,7 +210,7 @@ def pipeline(root, data):
         or (root / ".claude-plugin/plugin.json").exists()
 
 
-def verify(root, data=None, *, live=True, trusted_source=None):
+def verify(root, data=None, *, live=True, trusted_source=None, rfe=None, deferred=None):
     root = root.resolve()
     path = root / "tmp/strat-input.json"
     if data is None:
@@ -182,6 +221,10 @@ def verify(root, data=None, *, live=True, trusted_source=None):
         data = json.loads(path.read_text())
     if not pipeline(root, data):
         return None
+    if rfe is not None and rfe not in data.get("acquired_keys", []):
+        raise ValueError("freshness: ticket is outside acquired RFEs")
+    if deferred is not None and data.get("mode") != "batch":
+        raise ValueError("freshness: deferral requires a batch")
     base = data.get("freshness", {})
     if not isinstance(base, dict):
         raise ValueError("malformed freshness baseline")
@@ -191,8 +234,9 @@ def verify(root, data=None, *, live=True, trusted_source=None):
         raise ValueError("freshness: prepared run parameters changed")
     current = source(root)
     if base["source"] != current:
-        changed = sorted(k for k in base["source"].keys() | current.keys() if base["source"].get(k) != current.get(k))
-        raise ValueError("freshness: pipeline source/instructions changed: " + ", ".join(changed[:6]))
+        changed_files = sorted(k for k in base["source"].keys() | current.keys()
+                               if base["source"].get(k) != current.get(k))
+        raise ValueError("freshness: pipeline source/instructions changed: " + ", ".join(changed_files[:6]))
     if base["architecture"] != tree(root, ".context/architecture-context"):
         raise ValueError("freshness: architecture files changed")
     if trusted_source is not None and base.get("trusted_instructions") != source(trusted_source.resolve()):
@@ -203,14 +247,18 @@ def verify(root, data=None, *, live=True, trusted_source=None):
         if not server or base["server"] != digest(server.rstrip("/")):
             raise ValueError("freshness: Jira upstream changed or unavailable")
         for key, expected in base["rfes"].items():
+            if rfe is not None and key != rfe:
+                continue
             if jira_rfe(key) != expected:
-                raise ValueError(f"freshness: live RFE inputs changed: {key}")
-    for rfe, reuse in data.get("reused_push", {}).items():
+                changed(key, f"freshness: live RFE inputs changed: {key}", deferred)
+    for reused_rfe, reuse in data.get("reused_push", {}).items():
+        if rfe is not None and reused_rfe != rfe:
+            continue
         if base["live"] and live and reuse["proof"].get("published") != jira_published(reuse["key"]):
-            raise ValueError("freshness: reused published strategy changed")
+            changed(reused_rfe, f"freshness: reused published strategy changed: {reuse['key']}", deferred)
         old = reuse.get("context", {})
         if old != {"source": digest(base["source"]), "architecture": digest(base["architecture"]),
-                   "rfe": base["rfes"].get(rfe), "server": base["server"],
+                   "rfe": base["rfes"].get(reused_rfe), "server": base["server"],
                    "trusted_instructions": digest(base.get("trusted_instructions"))}:
             raise ValueError("freshness: reusable push and current inputs disagree")
     return base
@@ -298,8 +346,8 @@ def own_summary_change(root, key, summary):
     return False
 
 
-def verify_progress(root, data, progress, *, live=True):
-    base = verify(root, data, live=live)
+def verify_progress(root, data, progress, *, live=True, rfe=None, deferred=None):
+    base = verify(root, data, live=live, rfe=rfe, deferred=deferred)
     if base is None:
         return
     if not isinstance(progress, dict):
@@ -311,6 +359,8 @@ def verify_progress(root, data, progress, *, live=True):
         return
     if saved.get("contract") != CONTRACT or saved.get("baseline") != base:
         raise ValueError("freshness: progress belongs to different inputs")
+    if rfe is not None and any(v["key"] == rfe for v in progress.get("deferred", [])):
+        raise StaleTicket(rfe, f"freshness: ticket already deferred in this run: {rfe}")
     jira_keys = {key: strategy_jira_key(root, data, key) for key in saved["targets"]} if base["live"] else {}
     for phase, marks in (("refined", progress.get("refine", {})), ("pushed", (progress.get("push") or {}).get(
             "strategies", [])), ("reviewed", progress.get("review", {}))):
@@ -324,19 +374,29 @@ def verify_progress(root, data, progress, *, live=True):
             if phase == "reviewed" and stamp["review"] != hashed(root / f"artifacts/strat-reviews/{key}-review.md"):
                 raise ValueError(f"freshness: saved review changed: {key}")
             if (phase == "pushed" and base["live"] and live and jira_keys[key]
+                    and (rfe is None or target["rfe"] == rfe)
                     and stamp["published"] != jira_published(jira_keys[key])):
-                raise ValueError(f"freshness: published strategy changed: {key}")
+                changed(target["rfe"], f"freshness: published strategy changed: {key}", deferred)
     if base["live"] and live:
         for key, target in saved["targets"].items():
+            if rfe is not None and target["rfe"] != rfe:
+                continue
             if jira_keys[key] is None:
                 if target["human"] is not None:
                     raise ValueError(f"freshness: local strategy has a remote snapshot: {key}")
                 continue
-            expected, current = dict(target["human"]), jira_human(jira_keys[key], root=root, data=data)
+            expected = dict(target["human"])
+            try:
+                current = jira_human(jira_keys[key], root=root, data=data)
+            except ValueError as error:
+                if not str(error).startswith("freshness: human gate"):
+                    raise
+                changed(target["rfe"], str(error), deferred)
+                continue
             if expected.get("summary") != current.get("summary") and own_summary_change(root, key, current["summary"]):
                 expected["summary"] = current["summary"]
             if expected != current:
-                raise ValueError(f"freshness: live strategy/staff inputs changed: {key}")
+                changed(target["rfe"], f"freshness: live strategy/staff inputs changed: {key}", deferred)
     for rfe, reuse in data.get("reused_push", {}).items():
         pairs = (progress.get("create") or {}).get("strategies", [])
         pair = next((p for p in pairs if p["rfe"] == rfe), None)
@@ -344,7 +404,25 @@ def verify_progress(root, data, progress, *, live=True):
             raise ValueError("freshness: imported strategy differs from the reusable push")
 
 
+def batch_deferred(root, data, progress, *, live=True):
+    """Recompute deferrals from real inputs; local-only hooks check saved state.
+
+    Only typed, ticket-specific live changes can be collected. Missing data,
+    malformed responses, shared inputs and artifact/provenance errors still
+    raise. The host calls this independently before accepting publication.
+    """
+    deferred = {} if data.get("mode") == "batch" and live else None
+    verify_progress(root, data, progress, live=live, deferred=deferred)
+    if deferred is None:
+        return progress.get("deferred", []) if not live else []
+    if any(v["key"] not in deferred for v in progress.get("deferred", [])):
+        raise ValueError("freshness: deferred ticket no longer matches its failure; use a new prepared run")
+    return [{"key": key, "reason": reason} for key, reason in sorted(deferred.items())]
+
+
 def reusable(root, rfe, key, previous, *, trusted_source=None):
+    if any(v["key"] == rfe for v in previous.get("deferred", [])):
+        return None
     saved = previous.get("freshness") or {}
     base = saved.get("baseline") or {}
     proof = saved.get("pushed", {}).get(key)

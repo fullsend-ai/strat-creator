@@ -72,9 +72,11 @@ def business_errors(root, data, progress, result, *, live=True):
     This verifies completion/consistency, not strategy-content accuracy or that
     a recorded push is visible in Jira. Trusted host validation reads Jira back.
     """
-    from strat_freshness import verify_progress
+    from strat_freshness import batch_deferred
     try:
-        verify_progress(root, data, progress, live=live)
+        observed = batch_deferred(root, data, progress, live=live)
+        if result.get("deferred", []) != observed:
+            return ["freshness: result deferrals disagree with verified live inputs"]
     except (OSError, ValueError, KeyError, TypeError) as error:
         return [str(error)]
     return _business_errors(root, data, progress, result)
@@ -104,6 +106,12 @@ def _business_errors(root, data, progress, result):
         create = progress.get("create") or {}
         pairs = create.get("strategies", [])
         skips = create.get("skipped", [])
+        deferred = result.get("deferred", [])
+        excluded = [v["key"] for v in deferred]
+        check(len(excluded) == len(set(excluded)), "duplicate deferred RFEs")
+        check(set(excluded) <= set(acquired), "deferred RFE is outside acquired inventory")
+        check(not excluded or data["mode"] == "batch", "only batches may defer tickets")
+        check(deferred == progress.get("deferred", []), "result deferrals disagree with saved progress")
         if not isinstance(pairs, list) or not isinstance(skips, list):
             raise ValueError("invalid create inventory")
         keys = [p["strat"] for p in pairs]
@@ -114,10 +122,12 @@ def _business_errors(root, data, progress, result):
         skipped = [s["key"] for s in skips]
         check(len(skipped) == len(set(skipped)), "duplicate create skips")
         check(set(skipped) <= expected_skips & set(acquired), "create skip was not expected by the host")
-        check(not set(skipped) & set(rfes), "RFE has both a strategy and a skip")
-        check(set(rfes) | set(skipped) == set(acquired), "create inventory does not cover all acquired RFEs")
-        check(timestamp(create.get("done_at")), "create completion is not recorded")
-        check(not create.get("pending"), "create still has pending RFEs")
+        check(not set(skipped) & (set(rfes) | set(excluded)), "RFE has conflicting strategy/skip/deferred states")
+        check(set(rfes) | set(skipped) | set(excluded) == set(acquired),
+              "create inventory does not cover all acquired RFEs")
+        if set(acquired) - set(excluded):
+            check(timestamp(create.get("done_at")), "create completion is not recorded")
+        check(not set(create.get("pending", [])) - set(excluded), "create still has pending RFEs")
         refined, reviews = progress["refine"], progress["review"]
         if not isinstance(refined, dict) or not isinstance(reviews, dict):
             raise ValueError("invalid refine/review progress")
@@ -130,9 +140,16 @@ def _business_errors(root, data, progress, result):
         for relative in listed:
             check(relative.startswith("artifacts/"), "listed output is outside artifacts")
             regular(root, relative)
+        excluded_keys = set(excluded) | {p["strat"] for p in pairs if p["rfe"] in excluded}
+        for relative in listed:
+            name = Path(relative).name
+            check(not any(name == k + ".md" or name.startswith(k + "-") for k in excluded_keys),
+                  "deferred ticket artifact is included in publication")
         decisions = []
         for pair in pairs:
             key, rfe = pair["strat"], pair["rfe"]
+            if rfe in excluded:
+                continue
             if not isinstance(key, str) or not re.fullmatch(r"(?:RHAISTRAT|STRAT)-\d+", key):
                 raise ValueError("invalid strategy key")
             task = regular(root, f"artifacts/strat-tasks/{key}.md")
@@ -190,7 +207,7 @@ def _business_errors(root, data, progress, result):
 
 
 def summary(root, receipt):
-    return {
+    result = {
         "kind": "strat-completion",
         "run_id": receipt["run_id"],
         "action": receipt["result"]["action"],
@@ -198,6 +215,9 @@ def summary(root, receipt):
         "receipt_id": receipt["receipt_id"],
         "receipt_sha256": hashed(regular(root, RECEIPT)),
     }
+    if receipt["result"].get("deferred"):
+        result["deferred_rfes"] = [v["key"] for v in receipt["result"]["deferred"]]
+    return result
 
 
 def finalize(root, data, progress, result, reported_failures, output):
@@ -256,8 +276,6 @@ def verify_completion(root, result_path=None, *, allow_failed=False, live=True):
         raise ValueError("unsupported completion contract")
     data = read_json(regular(root, "tmp/strat-input.json"))
     progress = read_json(regular(root, "tmp/strat-progress.json"))
-    from strat_freshness import verify_progress
-    verify_progress(root, data, progress, live=live)
     if receipt.get("run_id") != data.get("run_id"):
         raise ValueError("completion belongs to another run")
     for relative, identity in receipt["inputs"].items():
@@ -279,6 +297,9 @@ def verify_completion(root, result_path=None, *, allow_failed=False, live=True):
         if allow_failed and result["action"] == "failed" and receipt["check_exit"] == 1 and result["errors"]:
             return receipt
         raise ValueError("business completion failed: " + "; ".join(result["errors"])[:500])
+    from strat_freshness import batch_deferred
+    if result.get("deferred", []) != batch_deferred(root, data, progress, live=live):
+        raise ValueError("freshness: completion deferrals disagree with verified inputs")
     required = {"tmp/strat-input.json", "tmp/strat-progress.json", *result["artifacts"]}
     if set(receipt["inputs"]) != required:
         raise ValueError("completion input inventory is incomplete")

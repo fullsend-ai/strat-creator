@@ -40,7 +40,7 @@ def write_summary(path, content):
 def publish(root, key, check_only=False, dry_run=False):
     if not re.fullmatch(r"(?:RHAISTRAT|STRAT)-[0-9]+", key):
         raise ValueError("invalid strategy key")
-    from strat_freshness import verify_progress
+    from strat_freshness import source_rfe, verify_progress
     input_path, progress_path = root / "tmp/strat-input.json", root / "tmp/strat-progress.json"
     if input_path.exists():
         data = json.loads(input_path.read_text())
@@ -50,7 +50,7 @@ def publish(root, key, check_only=False, dry_run=False):
             if not check_only and (not key.startswith("RHAISTRAT-") or not all(require_env())):
                 raise ValueError("prepared live publication requires a Jira strategy and credentials")
         progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
-        verify_progress(root, data, progress)
+        verify_progress(root, data, progress, rfe=source_rfe(root, key, data))
     path = root / "artifacts/strat-reviews" / f"{key}-review.md"
     if not path.exists():
         return None

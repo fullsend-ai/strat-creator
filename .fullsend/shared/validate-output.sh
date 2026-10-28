@@ -48,3 +48,11 @@ python3 "${CLONE}/.fullsend/shared/validate_result.py" \
   --repo "${TARGET_REPO_DIR}" \
   --schema "${FULLSEND_OUTPUT_SCHEMA}" \
   --run "${STRAT_STATE_DIR}/run.json"
+
+# Successful partial batches publish only current work. Retain deferred files
+# and write intent in host recovery before post_script replaces the handoff.
+DEFERRED_COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("deferred", [])))' "$RESULT_FILE")"
+if [[ "$DEFERRED_COUNT" != 0 ]]; then
+  python3 "$CLONE/.fullsend/shared/capture_failure.py" --deferred "$TARGET_REPO_DIR" \
+    "$STRAT_STATE_DIR" "$RESULT_FILE"
+fi

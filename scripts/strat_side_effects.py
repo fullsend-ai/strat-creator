@@ -110,12 +110,6 @@ def perform(server, kind, target, payload, read, write, guard=None, slot=None):
     Model/Workflow restarts call this same function; HTTP retries do not append.
     """
     directory, data = context()
-    if data and Path("tmp/strat-input.json").exists():
-        from strat_freshness import verify_progress
-        root = Path.cwd()
-        progress_path = root / "tmp/strat-progress.json"
-        progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
-        verify_progress(root, data, progress)
     identity = {"server_hash": digest(server.rstrip("/")), "kind": kind, "target": target,
                 "payload_hash": digest(payload)}
     name = identity if slot is None else {"server_hash": identity["server_hash"], "kind": kind,
@@ -123,8 +117,17 @@ def perform(server, kind, target, payload, read, write, guard=None, slot=None):
     path = directory / (digest(name) + ".json") if directory else None
     manager = locked(directory / ".lock") if directory else contextlib.nullcontext()
     with manager:
+        rfe = None
         if guard:
-            guard(data)
+            rfe = guard(data)
+        if data and Path("tmp/strat-input.json").exists():
+            from strat_freshness import verify_progress
+            root = Path.cwd()
+            progress_path = root / "tmp/strat-progress.json"
+            progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
+            # check_owner resolves a unique owned RFE even before local target
+            # binding. A caller without that proof keeps full-batch checking.
+            verify_progress(root, data, progress, rfe=rfe)
         if path and path.is_symlink():
             raise UncertainWrite("symlinked side-effect ledger")
         record = json.loads(path.read_text()) if path and path.exists() else None
@@ -226,3 +229,4 @@ def check_owner(server, user, token, target, data):
         raise UncertainWrite("missing or conflicting Jira lock ownership")
     if labels & HUMAN_GATES:
         raise ValueError(f"human gate stops source RFE writes: {target}")
+    return target

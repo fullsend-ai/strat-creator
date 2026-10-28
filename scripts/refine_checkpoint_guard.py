@@ -22,7 +22,7 @@ def guard(event):
         sys.path.insert(0, str(Path.cwd() / "scripts"))
         import strat_pipeline_state as state
         with state.progress_lock():
-            data, progress = state.load_state(live=False)
+            data, progress = state.load_state(live=False, batch=True)
             expected = state.refinement_status(data, progress)
     if snapshot and value != expected:
         raise ValueError("refinement checkpoint disagrees with current-run progress/artifacts; "
