@@ -16,6 +16,35 @@ from strat_freshness import initialize, reusable, verify, verify_progress  # noq
 from strat_freshness_guard import guard  # noqa: E402
 
 
+@pytest.mark.parametrize("dash", ["\u2014", "---"])
+@pytest.mark.parametrize("comment", ["", "\n<!-- Invisible draft note. -->"])
+def test_empty_staff_placeholder_is_not_human_input(dash, comment):
+    from push_strategy import STAFF_INPUT_TEMPLATE
+    from strat_freshness import staff
+
+    placeholder = STAFF_INPUT_TEMPLATE.replace("\u2014", dash) + comment
+    assert staff(placeholder) == ""
+
+
+@pytest.mark.parametrize("addition", ["Use the existing shared budget.", "\u2705", "."])
+def test_staff_placeholder_with_added_content_remains_input(addition):
+    from push_strategy import STAFF_INPUT_TEMPLATE
+    from strat_freshness import staff
+
+    content = STAFF_INPUT_TEMPLATE.replace("\u2014", "---") + "\n\n" + addition
+    assert staff(content) == content
+
+
+def test_genuine_staff_punctuation_is_not_normalized():
+    from strat_freshness import staff
+
+    content = "## Staff Engineer / SME Input\n\nUse shared budgets \u2014 retain project quotas."
+    variant = content.replace("\u2014", "---")
+    assert staff(content) == content
+    assert staff(variant) == variant
+    assert staff(content) != staff(variant)
+
+
 def test_tree_preserves_logical_aliases_and_rechecks_content(tmp_path):
     import hashlib
 
@@ -445,6 +474,39 @@ def push(live):
     marked = command(repo, "mark", "push")
     assert marked.returncode == 0, marked.stderr
     return repo, data, json.loads((repo / "tmp/strat-progress.json").read_text())
+
+
+@pytest.mark.parametrize("sme_input", ["Use the existing shared budget.", "\u2705"])
+def test_push_of_empty_staff_placeholder_keeps_freshness_and_rejects_real_input(tmp_path, jira, monkeypatch, sme_input):
+    from push_strategy import STAFF_INPUT_TEMPLATE
+    from strat_freshness import jira_human
+    from strat_side_effects import owner_label
+
+    for name, value in {"JIRA_SERVER": jira.url, "JIRA_USER": "admin", "JIRA_TOKEN": "admin"}.items():
+        monkeypatch.setenv(name, value)
+    jira.create("RHAIRFE-8801", "Timeout ownership", "Users need bounded latency.",
+                labels=["strat-creator-processing", owner_label("freshness-run")])
+    jira.create("RHAISTRAT-8801", "Timeout ownership", "Original business need.", issue_type="Feature")
+    jira.request("POST", "/rest/api/3/issueLink", {"type": {"name": "Cloners"},
+                 "inwardIssue": {"key": "RHAISTRAT-8801"}, "outwardIssue": {"key": "RHAIRFE-8801"}})
+    data = seed(tmp_path, live=True)
+    task = tmp_path / "artifacts/strat-tasks/RHAISTRAT-8801.md"
+    placeholder = STAFF_INPUT_TEMPLATE.replace("\u2014", "---")
+    task.write_text(task.read_text() + "\n" + placeholder + "\n")
+    assert command(tmp_path, "record-create").returncode == 0
+    assert command(tmp_path, "mark", "refine", "RHAISTRAT-8801").returncode == 0
+
+    repo, _, progress = push((tmp_path, data, jira))
+    assert progress["push"]["strategies"] == ["RHAISTRAT-8801"]
+    verify_progress(repo, data, progress)
+    assert jira_human("RHAISTRAT-8801")["staff"] == ""
+    before = (repo / "tmp/strat-progress.json").read_bytes()
+    jira.request("PUT", "/rest/api/3/issue/RHAISTRAT-8801", {"fields": {
+        "description": markdown_to_adf(placeholder + "\n\n" + sme_input)}})
+    assert jira_human("RHAISTRAT-8801")["staff"].endswith("\n\n" + sme_input)
+    result = command(repo, "read")
+    assert result.returncode != 0 and "published strategy changed" in result.stderr
+    assert (repo / "tmp/strat-progress.json").read_bytes() == before
 
 
 def test_verified_push_reuses_unchanged_inputs_in_later_job(live):
