@@ -200,7 +200,7 @@ def check_human_gates(server, target, labels, data, *, root=None):
         raise HumanGateChanged(f"freshness: human gate stops strategy writes: {target}: {', '.join(sorted(gates))}")
 
 
-def check_owner(server, user, token, target, data):
+def check_owner(server, user, token, target, data, *, expected_rfe=None):
     """Recheck S1 ownership at each write; never adopt a foreign/orphaned claim.
 
     Jira labels do not provide compare-and-swap. This is conflict detection and
@@ -227,6 +227,8 @@ def check_owner(server, user, token, target, data):
         if len(rfes) != 1:
             raise UncertainWrite("strategy write has no unique source RFE")
         target = rfes.pop()
+    if expected_rfe is not None and target != expected_rfe:
+        raise UncertainWrite("strategy source differs from creation mapping")
     if target not in data.get("acquired_keys", []):
         raise UncertainWrite("write target is outside acquired RFEs")
     labels = set(checked_labels(get_issue(server, user, token, target, fields=["labels"])["fields"].get("labels")))

@@ -162,10 +162,11 @@ def proves_change(root, data, progress, rfe):
         base = data["freshness"]
         if any(rfe_change(v) for v in since(histories(rfe), base.get("rfe_history", {}).get(rfe))):
             return True
-        for key, target in (progress.get("freshness") or {}).get("targets", {}).items():
-            if target["rfe"] != rfe or not key.startswith("RHAISTRAT-"):
-                continue
-            if {"rfe": rfe, "strat": key} not in (progress.get("create") or {}).get("strategies", []):
+        # Creation may encounter a gate before it can bind a human snapshot.
+        # Candidate mappings discover keys; only Jira and host anchors prove drift.
+        for pair in (progress.get("create") or {}).get("strategies", []):
+            key = pair["strat"]
+            if pair["rfe"] != rfe or not isinstance(key, str) or not key.startswith("RHAISTRAT-"):
                 continue
             prepared = base.get("strategy_history", {}).get(key)
             if prepared is not None and prepared["rfe"] != rfe:

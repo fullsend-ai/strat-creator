@@ -355,6 +355,26 @@ def restore_review_import(data, pair, progress):
     update_frontmatter(path, {"status": "Refined"}, "strat-task")
 
 
+def defer_created_ticket(data, progress, pair, error):
+    """Verify an unbound candidate without inventing its missing human snapshot."""
+    from jira_utils import require_env
+    from strat_freshness import StaleTicket
+    from strat_history import proves_change
+    from strat_side_effects import HumanGateChanged, check_owner
+
+    if data["mode"] != "batch" or not data.get("freshness", {}).get("live"):
+        raise error
+    if isinstance(error, StaleTicket) and error.rfe != pair["rfe"]:
+        raise error
+    try:
+        check_owner(*require_env(), pair["strat"], data, expected_rfe=pair["rfe"])
+    except HumanGateChanged:
+        pass  # Unique source and ownership were verified before the gate.
+    if not proves_change(Path.cwd(), data, progress, pair["rfe"]):
+        raise ValueError(f"freshness: create deferral lacks independent change evidence: {pair['rfe']}") from error
+    progress.setdefault("deferred", []).append({"key": pair["rfe"], "reason": str(error)[:500]})
+
+
 def cmd_record_create(_args):
     """Record what strategy-create produced; done only when every RFE is resolved.
 
@@ -374,20 +394,27 @@ def cmd_record_create(_args):
         expected = {s["key"] for s in data.get("expected_skips") or []}
         pending = [k for k in acquired if k not in deferred and k not in with_strategy
                    and not (k in reasons and k in expected)]
-        for pair in strategies:
-            if pair["rfe"] in deferred:
-                continue
-            restore_review_import(data, pair, progress)
-            if pair["strat"] not in known:
-                prepare_score_dir(pair["strat"], clean=True)
         progress["create"] = {"done_at": None if pending else now(), "strategies": strategies,
                               "skipped": skipped, "pending": pending}
-        from strat_freshness import bind, record
+        from strat_freshness import StaleTicket, batch_deferred, bind, record
+        from strat_side_effects import HumanGateChanged
         bind(data, progress)
         for pair in strategies:
             if pair["rfe"] in deferred:
                 continue
-            record(Path.cwd(), data, progress, "create", pair["strat"], pair["rfe"])
+            try:
+                restore_review_import(data, pair, progress)
+                if pair["strat"] not in known:
+                    prepare_score_dir(pair["strat"], clean=True)
+                record(Path.cwd(), data, progress, "create", pair["strat"], pair["rfe"])
+            except (StaleTicket, HumanGateChanged) as error:
+                defer_created_ticket(data, progress, pair, error)
+                deferred.add(pair["rfe"])
+        if data["mode"] == "batch":
+            progress["deferred"] = batch_deferred(Path.cwd(), data, progress)
+            deferred = {v["key"] for v in progress["deferred"]}
+            pending = [key for key in pending if key not in deferred]
+            progress["create"].update(pending=pending, done_at=None if pending else now())
         save_progress(progress)
     print(json.dumps({"strategies": strategies, "skipped": skipped, "pending": pending}, indent=2))
 
@@ -456,7 +483,8 @@ def _mark(args, progress, data):
 
 def cmd_record_review(args):
     from review_composition import verify_review
-    from strat_freshness import source_rfe
+    from strat_freshness import StaleTicket, source_rfe
+    from strat_side_effects import HumanGateChanged
     key = check_strat(args.key)
     rfe = source_rfe(Path.cwd(), key)
     data = load_input(rfe=rfe)
@@ -464,12 +492,16 @@ def cmd_record_review(args):
         manifest = verify_review(Path.cwd().resolve(), key)
         if manifest.get("workflow_run_id") != data["run_id"]:
             die("review composition belongs to another workflow run")
+    except (StaleTicket, HumanGateChanged):
+        raise
     except Exception as error:
         die(f"cannot record review {key}: {error}")
     if not data.get("dry_run"):
         from publish_review import verify_publication
         try:
             verify_publication(Path.cwd().resolve(), key)
+        except (StaleTicket, HumanGateChanged):
+            raise
         except (OSError, ValueError, RuntimeError) as error:
             die(f"cannot record review {key}: live publication is incomplete: {error}")
     path = REVIEWS / f"{key}-review.md"

@@ -248,6 +248,13 @@ Input-change evidence identifies changed state without attributing the edit to
 a human. Deliberate agent edits to input tickets, including gate labels or clone
 links, remain outside these checks' containment guarantee.
 
+Creation reconciles a newly blocking gate even before its first STRAT snapshot.
+Candidate mappings identify the ticket; its unique owned source and host-pinned
+change evidence must still be verified. No human snapshot is invented to make
+it fit. Unaffected creation records are retained and retries recheck deferrals.
+Internal review recording preserves typed freshness errors for batch recovery;
+unrelated verification errors remain fatal CLI errors.
+
 ### Reviewer ticket scope
 
 The four forked reviewer Skills require exactly one strategy key. They select

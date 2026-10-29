@@ -118,6 +118,8 @@ def review_comment(path, verdict):
 
 def verify_publication(root, key):
     """Verify all live review effects without posting, uploading or relabeling."""
+    from strat_side_effects import check_human_gates, checked_labels
+
     if not key.startswith("RHAISTRAT-") or not all(require_env()):
         raise ValueError("live review publication requires a Jira strategy and credentials")
     manifest = verify_review(root, key)
@@ -126,7 +128,13 @@ def verify_publication(root, key):
     server, user, token = require_env()
     label = "strat-creator-needs-attention" if verdict["needs_attention"] else "strat-creator-rubric-pass"
     other = "strat-creator-rubric-pass" if verdict["needs_attention"] else "strat-creator-needs-attention"
-    labels = set(get_issue(server, user, token, key, fields=["labels"])["fields"].get("labels", []))
+    live_labels = checked_labels(get_issue(server, user, token, key, fields=["labels"])["fields"].get("labels"))
+    input_path = root / "tmp/strat-input.json"
+    if input_path.exists():
+        data = json.loads(regular(root, input_path).read_text())
+        if data.get("freshness", {}).get("live"):
+            check_human_gates(server, key, live_labels, data, root=root)
+    labels = set(live_labels)
     if label not in labels or other in labels:
         raise ValueError("live review publication is missing its numeric verdict label or has conflicting labels")
     if find_matching_comment(server, user, token, key, markdown_to_adf(review_comment(path, verdict))) is None:

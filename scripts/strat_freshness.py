@@ -344,7 +344,15 @@ def record(root, data, progress, phase, key, rfe):
     jira_key = strategy_jira_key(root, data, key) if data["freshness"]["live"] else None
     human = jira_human(jira_key, root=root, data=data) if jira_key and phase != "review" else None
     if human is not None:
-        verify_staff(read_frontmatter(root / f"artifacts/strat-tasks/{key}.md")[1], human["staff"])
+        markdown = read_frontmatter(root / f"artifacts/strat-tasks/{key}.md")[1]
+        try:
+            verify_staff(markdown, human["staff"])
+        except ValueError as error:
+            if phase == "create":
+                # A typed scope claim still needs independent Jira change proof
+                # before batch creation may defer this candidate.
+                raise StaleTicket(rfe, f"freshness: create SME input differs from live Jira: {key}") from error
+            raise
     if phase == "create":
         saved["targets"][key] = {"rfe": rfe, "human": human}
     else:
