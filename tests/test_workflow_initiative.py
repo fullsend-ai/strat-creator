@@ -159,3 +159,14 @@ def test_write_guard_takes_an_initiative_as_its_own_input(monkeypatch):
     effects.check_owner("s", "u", "t", KEY, data)
     with pytest.raises(effects.UncertainWrite, match="no unique source RFE"):
         effects.check_owner("s", "u", "t", KEY, {**data, "type": "rfe-strategy"})
+
+
+def test_stale_ticket_scope_follows_the_run_type(repo):
+    """#93's per-ticket freshness scope: an Initiative strategy's source is the Initiative itself."""
+    import strat_freshness
+    data = json.loads((repo / "tmp/strat-input.json").read_text())
+    assert strat_freshness.source_rfe(repo, KEY, data) == KEY
+    rfe_run = {**data, "type": "rfe-strategy", "acquired_keys": ["RHAIRFE-1"]}
+    assert strat_freshness.source_rfe(repo, "RHAIRFE-1", rfe_run) == "RHAIRFE-1"
+    with pytest.raises(ValueError, match="outside acquired"):  # an RFE run reads source_rfe, which it lacks
+        strat_freshness.source_rfe(repo, KEY, rfe_run)

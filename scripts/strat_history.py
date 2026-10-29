@@ -8,6 +8,7 @@ Missing, truncated or unrecognized history provides no proof.
 import json
 import re
 
+import type_registry
 from strat_side_effects import digest
 
 ACTIVE_STATUSES = {"Closed", "Resolved", "In Progress", "Review", "Release Pending"}
@@ -188,7 +189,7 @@ def proves_change(root, data, progress, rfe):
             if issue.get("key") != key:
                 raise ValueError("Jira change-evidence identity differs from requested key")
             fields = issue["fields"]
-            linked = {
+            linked = {key} if type_registry.run_type(data).same_ticket else {  # an Initiative is its own source
                 link[side]["key"]
                 for link in fields["issuelinks"]
                 if link["type"]["name"] == "Cloners"

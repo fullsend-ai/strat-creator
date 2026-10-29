@@ -45,14 +45,15 @@ def changed(rfe, message, deferred):
 
 def source_rfe(root, key, data=None):
     """Resolve a ticket's scope from its actual identity, never a caller's filter."""
-    if not isinstance(key, str) or not re.fullmatch(r"(?:RHAIRFE|RHAISTRAT|STRAT)-[0-9]+", key):
+    if not isinstance(key, str) or not re.fullmatch(r"[A-Z][A-Z0-9]*-[0-9]+", key):
         raise ValueError("freshness: invalid ticket identity")
     path = root / "tmp/strat-input.json"
     if data is None:
         if not path.exists():
             return None  # Interactive, unprepared Skill usage.
         data = json.loads(path.read_text())
-    if key.startswith("RHAIRFE-"):
+    work_type = type_registry.run_type(data)
+    if work_type.input_key_re.match(key) and not work_type.strategy_key_re.match(key):
         rfe = key
     else:
         task = root / f"artifacts/strat-tasks/{key}.md"
@@ -63,7 +64,7 @@ def source_rfe(root, key, data=None):
         fm, _ = read_frontmatter(task)
         if fm.get("strat_id") != key:
             raise ValueError("freshness: strategy identity mismatch")
-        rfe = fm.get("source_rfe")
+        rfe = fm.get(work_type.source_field)  # an Initiative's is itself
     if rfe not in data.get("acquired_keys", []):
         raise ValueError("freshness: ticket is outside acquired RFEs")
     return rfe

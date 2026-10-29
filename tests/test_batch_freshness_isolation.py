@@ -245,10 +245,10 @@ def test_unreadable_live_input_produces_failed_receipt_without_approving_it(batc
     root = batch[0]
     real = strat_freshness.jira_rfe
 
-    def unavailable(key):
+    def unavailable(key, work_type=None):
         if key == 'RHAIRFE-8902':
             raise OSError('Cannot read the second RFE.')
-        return real(key)
+        return real(key, work_type)
 
     monkeypatch.setattr(strat_freshness, 'jira_rfe', unavailable)
     monkeypatch.setenv('FULLSEND_OUTPUT_DIR', str(root / 'output'))
