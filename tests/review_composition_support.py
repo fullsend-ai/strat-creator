@@ -10,11 +10,11 @@ import review_composition as composition  # noqa: E402
 from artifact_utils import write_frontmatter  # noqa: E402
 
 
-def prepare(root, key, rfe, scores, verdicts=None, finish=True):
+def prepare(root, key, rfe, scores, verdicts=None, finish=True, *, source_text=None):
     root = root.resolve()
     source = root / "artifacts/strat-originals" / f"{rfe}.md"
     source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text("Authored source RFE for composition tests.\n")
+    source.write_text("Authored source RFE for composition tests.\n" if source_text is None else source_text)
     review = root / "artifacts/strat-reviews" / f"{key}-review.md"
     review.parent.mkdir(parents=True, exist_ok=True)
     review.write_text("## Scores\nPrepared numeric assessment.\n")

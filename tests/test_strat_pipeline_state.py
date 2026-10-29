@@ -285,7 +285,7 @@ def test_preparation_recovers_captured_review_even_if_original_score_file_is_gon
     data["dry_run"] = True
     data_path.write_text(json.dumps(data))
     result = _run(repo, "prepare-reviews")
-    assert json.loads(result.stdout) == {"reviewed": ["RHAISTRAT-1"]}
+    assert json.loads(result.stdout) == {"reviewed": ["RHAISTRAT-1"], "deferred": []}
     before = (repo / "artifacts/strat-reviews/RHAISTRAT-1-review.md").read_bytes()
-    assert json.loads(_run(repo, "prepare-reviews").stdout) == {"reviewed": ["RHAISTRAT-1"]}
+    assert json.loads(_run(repo, "prepare-reviews").stdout) == {"reviewed": ["RHAISTRAT-1"], "deferred": []}
     assert (repo / "artifacts/strat-reviews/RHAISTRAT-1-review.md").read_bytes() == before

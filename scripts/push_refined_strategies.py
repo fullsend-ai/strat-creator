@@ -25,16 +25,17 @@ from jira_utils import add_labels, require_env
 REFINED_LABEL = "strat-creator-auto-refined"
 
 
-def review_only_strategies():
-    """A restored import is Refined, but its verified prior push is reused."""
+def excluded_strategies():
+    """Do not repush review-only imports or tickets with verified input drift."""
     if not Path("tmp/strat-input.json").exists():
-        return set()
-    from strat_pipeline_state import load_input, load_progress, review_only
-    data = load_input()
-    progress = load_progress(data["run_id"])
-    rfes = set(review_only(data))
-    return {pair["strat"] for pair in (progress.get("create") or {}).get("strategies", [])
-            if pair["rfe"] in rfes}
+        return {}
+    from strat_pipeline_state import load_state, progress_lock, review_only
+    with progress_lock():
+        data, progress = load_state(batch=True)
+    reasons = dict.fromkeys(review_only(data), "verified review-only import; prior push reused")
+    reasons.update({v["key"]: "deferred: " + v["reason"] for v in progress.get("deferred", [])})
+    return {pair["strat"]: reasons[pair["rfe"]]
+            for pair in (progress.get("create") or {}).get("strategies", []) if pair["rfe"] in reasons}
 
 
 def read_frontmatter(filepath):
@@ -88,7 +89,7 @@ def main():
     pushed = 0
     skipped = 0
     failed = 0
-    reused = review_only_strategies()
+    excluded = excluded_strategies()
 
     for filepath in files:
         basename = os.path.basename(filepath)
@@ -101,8 +102,8 @@ def main():
         status = fm.get("status")
         jira_key = fm.get("jira_key")
 
-        if jira_key in reused:
-            print(f"[SKIP] {basename} — verified review-only import; prior push reused")
+        if jira_key in excluded:
+            print(f"[SKIP] {basename} — {excluded[jira_key]}")
             skipped += 1
             continue
 
@@ -113,10 +114,23 @@ def main():
 
         print(f"[PUSH] {jira_key} — pushing strategy to Jira...")
         if not push_strategy(jira_key, filepath):
+            # An edit during this loop can defer one target without hiding an
+            # unrelated push failure. Recompute from live inputs, not stderr.
+            if jira_key in excluded_strategies():
+                skipped += 1
+                continue
             failed += 1
             continue
 
-        add_labels(server, user, token, jira_key, [REFINED_LABEL])
+        from strat_freshness import StaleTicket
+        from strat_side_effects import HumanGateChanged
+        try:
+            add_labels(server, user, token, jira_key, [REFINED_LABEL])
+        except (StaleTicket, HumanGateChanged):
+            if jira_key not in excluded_strategies():
+                raise
+            skipped += 1
+            continue
         print(f"[LABEL] {REFINED_LABEL} added to {jira_key}")
         pushed += 1
 

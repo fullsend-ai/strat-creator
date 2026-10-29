@@ -75,10 +75,10 @@ def _read_input():
     return data
 
 
-def load_input(*, live=True):
+def load_input(*, live=True, rfe=None):
     data = _read_input()
     from strat_freshness import verify
-    verify(Path.cwd(), data, live=live)
+    verify(Path.cwd(), data, live=live, rfe=rfe)
     return data
 
 
@@ -91,15 +91,15 @@ def _read_progress(run_id):
             "review": {}}, False
 
 
-def load_progress(run_id, *, live=True):
+def load_progress(run_id, *, live=True, rfe=None):
     progress, recorded = _read_progress(run_id)
     if recorded:
         from strat_freshness import verify_progress
-        verify_progress(Path.cwd(), json.loads(INPUT.read_text()), progress, live=live)
+        verify_progress(Path.cwd(), json.loads(INPUT.read_text()), progress, live=live, rfe=rfe)
     return progress
 
 
-def load_state(*, live=True):
+def load_state(*, live=True, batch=False):
     """Verify prepared inputs and saved progress together, with one full scan.
 
     Callers that need a consistent checkpoint hold progress_lock. Even absent
@@ -108,8 +108,14 @@ def load_state(*, live=True):
     """
     data = _read_input()
     progress, _ = _read_progress(data["run_id"])
-    from strat_freshness import verify_progress
-    verify_progress(Path.cwd(), data, progress, live=live)
+    from strat_freshness import batch_deferred, verify_progress
+    if batch:
+        deferred = batch_deferred(Path.cwd(), data, progress, live=live)
+        if deferred != progress.get("deferred", []):
+            progress["deferred"] = deferred
+            save_progress(progress)
+    else:
+        verify_progress(Path.cwd(), data, progress, live=live)
     return data, progress
 
 
@@ -243,10 +249,14 @@ def refinement_status(data, progress):
     refined, rejected = [], []
     skip = set(review_only(data))
     pairs = sorted((progress.get("create") or {}).get("strategies", []), key=lambda p: p["strat"])
+    deferred = {v["key"] for v in progress.get("deferred", [])}
     for pair in pairs:
         if pair["rfe"] in skip:
             continue
         key = pair["strat"]
+        if pair["rfe"] in deferred:
+            rejected.append({"key": key, "reason": "input_changed"})
+            continue
         record = progress.get("refine", {}).get(key)
         try:
             recorded = isinstance(record, str) and datetime.fromisoformat(record).tzinfo is not None
@@ -264,24 +274,26 @@ def refinement_status(data, progress):
 
 def cmd_refine_status(_args):
     with progress_lock():
-        data, progress = load_state()
+        data, progress = load_state(batch=True)
         status = refinement_status(data, progress)
     print(json.dumps(status))
 
 
 def cmd_read(_args):
-    data = load_input()
-    progress = load_progress(data["run_id"])
+    from strat_pipeline_outcome import creation_complete
+    with progress_lock():
+        data, progress = load_state(batch=True)
     create = progress.get("create") or {}
+    deferred = {v["key"] for v in progress.get("deferred", [])}
     strategies = create.get("strategies", [])
     reviewed = sorted(progress.get("review", {}))
     # A create skip the host did not expect (expected_skips) stays pending, so a
     # retry runs strategy-create for it again instead of carrying the claim.
     expected = {s["key"] for s in data.get("expected_skips") or []}
     resolved = {p["rfe"] for p in strategies} | {s["key"] for s in create.get("skipped", []) if s["key"] in expected}
-    pending = [k for k in data.get("acquired_keys", []) if k not in resolved]
+    pending = [k for k in data.get("acquired_keys", []) if k not in resolved and k not in deferred]
     for pair in strategies:
-        if pair["strat"] not in reviewed:
+        if pair["strat"] not in reviewed and pair["rfe"] not in deferred:
             prepare_score_dir(pair["strat"], clean=False)
     print(json.dumps({
         "cwd": os.getcwd(),
@@ -290,13 +302,30 @@ def cmd_read(_args):
         "dry_run": bool(data.get("dry_run")),
         "acquired_keys": data.get("acquired_keys", []),
         "review_only": review_only(data),
-        "create_done": bool(create.get("done_at")),
+        "create_done": creation_complete(data, progress),
         "pending_create": pending,
         "strategies": strategies,
         "refined": refinement_status(data, progress)["refined"],
         "pushed": pushed(progress),
         "reviewed": reviewed,
+        "deferred": progress.get("deferred", []),
     }, indent=2))
+
+
+def cmd_ticket_status(args):
+    from strat_freshness import StaleTicket, source_rfe, verify_progress
+    with progress_lock():
+        data = _read_input()
+        progress, _ = _read_progress(data["run_id"])
+        rfe = source_rfe(Path.cwd(), args.key, data)
+        try:
+            verify_progress(Path.cwd(), data, progress, rfe=rfe)
+        except StaleTicket:
+            if data["mode"] != "batch":
+                raise
+            data, progress = load_state(batch=True)
+        reason = next((v["reason"] for v in progress.get("deferred", []) if v["key"] == rfe), None)
+    print(json.dumps({"key": args.key, "eligible": reason is None, "reason": reason or ""}))
 
 
 def restore_review_import(data, pair, progress):
@@ -326,16 +355,36 @@ def restore_review_import(data, pair, progress):
     update_frontmatter(path, {"status": "Refined"}, "strat-task")
 
 
+def defer_created_ticket(data, progress, pair, error):
+    """Verify an unbound candidate without inventing its missing human snapshot."""
+    from jira_utils import require_env
+    from strat_freshness import StaleTicket
+    from strat_history import proves_change
+    from strat_side_effects import HumanGateChanged, check_owner
+
+    if data["mode"] != "batch" or not data.get("freshness", {}).get("live"):
+        raise error
+    if isinstance(error, StaleTicket) and error.rfe != pair["rfe"]:
+        raise error
+    try:
+        check_owner(*require_env(), pair["strat"], data, expected_rfe=pair["rfe"])
+    except HumanGateChanged:
+        pass  # Unique source and ownership were verified before the gate.
+    if not proves_change(Path.cwd(), data, progress, pair["rfe"]):
+        raise ValueError(f"freshness: create deferral lacks independent change evidence: {pair['rfe']}") from error
+    progress.setdefault("deferred", []).append({"key": pair["rfe"], "reason": str(error)[:500]})
+
+
 def cmd_record_create(_args):
     """Record what strategy-create produced; done only when every RFE is resolved.
 
     An RFE with neither a strategy nor a skip row stays pending, so the next
     attempt runs strategy-create again for the pending keys only.
     """
-    data = load_input()
-    acquired = data.get("acquired_keys", [])
     with progress_lock():
-        progress = load_progress(data["run_id"])
+        data, progress = load_state(batch=True)
+        acquired = data.get("acquired_keys", [])
+        deferred = {v["key"] for v in progress.get("deferred", [])}
         known = {p["strat"] for p in (progress.get("create") or {}).get("strategies", [])}
         strategies = created_strategies(acquired)
         with_strategy = {p["rfe"] for p in strategies}
@@ -343,25 +392,46 @@ def cmd_record_create(_args):
         skipped = [{"key": k, "reason": reasons[k]} for k in acquired
                    if k not in with_strategy and k in reasons]
         expected = {s["key"] for s in data.get("expected_skips") or []}
-        pending = [k for k in acquired if k not in with_strategy and not (k in reasons and k in expected)]
-        for pair in strategies:
-            restore_review_import(data, pair, progress)
-            if pair["strat"] not in known:
-                prepare_score_dir(pair["strat"], clean=True)
+        pending = [k for k in acquired if k not in deferred and k not in with_strategy
+                   and not (k in reasons and k in expected)]
         progress["create"] = {"done_at": None if pending else now(), "strategies": strategies,
                               "skipped": skipped, "pending": pending}
-        from strat_freshness import bind, record
+        from strat_freshness import StaleTicket, batch_deferred, bind, record
+        from strat_side_effects import HumanGateChanged
         bind(data, progress)
         for pair in strategies:
-            record(Path.cwd(), data, progress, "create", pair["strat"], pair["rfe"])
+            if pair["rfe"] in deferred:
+                continue
+            try:
+                restore_review_import(data, pair, progress)
+                if pair["strat"] not in known:
+                    prepare_score_dir(pair["strat"], clean=True)
+                record(Path.cwd(), data, progress, "create", pair["strat"], pair["rfe"])
+            except (StaleTicket, HumanGateChanged) as error:
+                defer_created_ticket(data, progress, pair, error)
+                deferred.add(pair["rfe"])
+        if data["mode"] == "batch":
+            progress["deferred"] = batch_deferred(Path.cwd(), data, progress)
+            deferred = {v["key"] for v in progress["deferred"]}
+            pending = [key for key in pending if key not in deferred]
+            progress["create"].update(pending=pending, done_at=None if pending else now())
         save_progress(progress)
     print(json.dumps({"strategies": strategies, "skipped": skipped, "pending": pending}, indent=2))
 
 
 def cmd_mark(args):
-    data = load_input()
+    if args.step == "refine":
+        if not args.key:
+            die("mark refine needs a strategy key")
+        check_strat(args.key)
     with progress_lock():
-        progress = load_progress(data["run_id"])
+        if args.step == "push":
+            data, progress = load_state(batch=True)
+        else:
+            from strat_freshness import source_rfe
+            rfe = source_rfe(Path.cwd(), args.key)
+            data = load_input(rfe=rfe)
+            progress = load_progress(data["run_id"], rfe=rfe)
         recorded = _mark(args, progress, data)
     out = {"recorded": recorded}
     if recorded == "push":
@@ -393,14 +463,40 @@ def _mark(args, progress, data):
         # imports. A strategy refined later (a
         # retried create) needs a push of its own. A dry run pushes nothing.
         refined_now = set(progress.get("refine", {}))
+        deferred = {v["key"] for v in progress.get("deferred", [])}
+        refined_now -= {p["strat"] for p in (progress.get("create") or {}).get("strategies", [])
+                        if p["rfe"] in deferred}
         if not args.skipped:
             refined_now = {k for k in refined_now if pushable(k)}
-        covered = set(pushed(progress)) | refined_now
-        progress["push"] = {"done_at": now(), "skipped": bool(args.skipped), "strategies": sorted(covered)}
-        from strat_freshness import record
+        covered = set(pushed(progress))
+        failures = []
+        from strat_freshness import StaleTicket, batch_deferred, record
+        from strat_side_effects import HumanGateChanged
         for pair in (progress.get("create") or {}).get("strategies", []):
             if pair["strat"] in refined_now:
-                record(Path.cwd(), data, progress, "push", pair["strat"], pair["rfe"])
+                try:
+                    record(Path.cwd(), data, progress, "push", pair["strat"], pair["rfe"])
+                except (StaleTicket, HumanGateChanged) as error:
+                    if (data["mode"] != "batch"
+                            or isinstance(error, StaleTicket) and error.rfe != pair["rfe"]):
+                        raise
+                    failures.append((pair, error))
+                    covered.discard(pair["strat"])
+                else:
+                    covered.add(pair["strat"])
+        # Only successful snapshots enter coverage. A typed error is a claim,
+        # not permission to exclude a ticket; independently reconcile all inputs
+        # before saving, including changes after an earlier snapshot succeeded.
+        progress["push"] = {"done_at": now(), "skipped": bool(args.skipped), "strategies": sorted(covered)}
+        if data["mode"] == "batch":
+            progress["deferred"] = batch_deferred(Path.cwd(), data, progress)
+            deferred = {v["key"] for v in progress["deferred"]}
+            for pair, error in failures:
+                if pair["rfe"] not in deferred:
+                    raise error
+            excluded = {p["strat"] for p in (progress.get("create") or {}).get("strategies", [])
+                        if p["rfe"] in deferred}
+            progress["push"]["strategies"] = sorted(covered - excluded)
         recorded = "push"
     else:
         die(f"cannot mark {args.step!r}")
@@ -410,18 +506,25 @@ def _mark(args, progress, data):
 
 def cmd_record_review(args):
     from review_composition import verify_review
-    data = load_input()
+    from strat_freshness import StaleTicket, source_rfe
+    from strat_side_effects import HumanGateChanged
     key = check_strat(args.key)
+    rfe = source_rfe(Path.cwd(), key)
+    data = load_input(rfe=rfe)
     try:
         manifest = verify_review(Path.cwd().resolve(), key)
         if manifest.get("workflow_run_id") != data["run_id"]:
             die("review composition belongs to another workflow run")
+    except (StaleTicket, HumanGateChanged):
+        raise
     except Exception as error:
         die(f"cannot record review {key}: {error}")
     if not data.get("dry_run"):
         from publish_review import verify_publication
         try:
             verify_publication(Path.cwd().resolve(), key)
+        except (StaleTicket, HumanGateChanged):
+            raise
         except (OSError, ValueError, RuntimeError) as error:
             die(f"cannot record review {key}: live publication is incomplete: {error}")
     path = REVIEWS / f"{key}-review.md"
@@ -436,7 +539,7 @@ def cmd_record_review(args):
                "composition_session": manifest["session_id"],
                "done_at": now()}
     with progress_lock():
-        progress = load_progress(data["run_id"])
+        progress = load_progress(data["run_id"], rfe=rfe)
         pairs = [pair for pair in (progress.get("create") or {}).get("strategies", []) if pair["strat"] == key]
         if len(pairs) != 1:
             die(f"cannot record review {key}: not in this run's create inventory as one unique target")
@@ -453,23 +556,38 @@ def cmd_prepare_reviews(_args):
     """Recover verified compositions/publication before scheduling any scorers."""
     from publish_review import publish
     from review_composition import recover
-    data = load_input()
-    progress = load_progress(data["run_id"])
+    from strat_side_effects import HumanGateChanged
+    with progress_lock():
+        data, progress = load_state(batch=True)
     reviewed = set(progress.get("review", {}))
     pairs = (progress.get("create") or {}).get("strategies", [])
     covered = set(pushed(progress))
     for pair in pairs:
         key = pair["strat"]
+        if pair["rfe"] in {v["key"] for v in progress.get("deferred", [])}:
+            continue
         if key in reviewed or (pair["rfe"] not in review_only(data) and key not in covered):
             continue
-        recover(Path.cwd().resolve(), key)
-        if publish(Path.cwd().resolve(), key, check_only=True) is not None:
-            publish(Path.cwd().resolve(), key, dry_run=data.get("dry_run", False))
-            # Reuse the exact normal recorder, including provenance and freshness.
-            with contextlib.redirect_stdout(io.StringIO()):
-                cmd_record_review(argparse.Namespace(key=key))
-            reviewed.add(key)
-    print(json.dumps({"reviewed": sorted(reviewed)}))
+        from strat_freshness import StaleTicket
+        try:
+            recover(Path.cwd().resolve(), key)
+            if publish(Path.cwd().resolve(), key, check_only=True) is not None:
+                publish(Path.cwd().resolve(), key, dry_run=data.get("dry_run", False))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    cmd_record_review(argparse.Namespace(key=key))
+                reviewed.add(key)
+        except (StaleTicket, HumanGateChanged):
+            if data["mode"] != "batch":
+                raise
+            with progress_lock():
+                _, progress = load_state(batch=True)
+            if pair["rfe"] not in {v["key"] for v in progress.get("deferred", [])}:
+                raise
+    with progress_lock():
+        _, progress = load_state(batch=True)
+    deferred = progress.get("deferred", [])
+    excluded = {p["strat"] for p in pairs if p["rfe"] in {v["key"] for v in deferred}}
+    print(json.dumps({"reviewed": sorted(reviewed - excluded), "deferred": deferred}))
 
 
 def parse_failed(values):
@@ -487,19 +605,24 @@ def existing(paths):
 
 
 def assemble(data, progress, failed):
+    from strat_pipeline_outcome import creation_complete
     acquired = data.get("acquired_keys", [])
     create = progress.get("create") or {}
-    strategies = create.get("strategies", [])
+    deferred = progress.get("deferred", [])
+    excluded = {v["key"] for v in deferred}
+    strategies = [p for p in create.get("strategies", []) if p["rfe"] not in excluded]
     refined, reviews = progress.get("refine", {}), progress.get("review", {})
     skip_refine = set(review_only(data))
     needs_refine = [p for p in strategies if p["rfe"] not in skip_refine]
     errors = [f"{step}: {key or 'step'} returned no result" for step, key in failed]
 
-    if not create:
+    if not create and set(acquired) - excluded:
         errors.append("create: not recorded")
     created = {p["rfe"] for p in strategies}
     skipped_create = {s["key"] for s in create.get("skipped", [])}
     for key in acquired:
+        if key in excluded:
+            continue
         if create and key not in created and key not in skipped_create:
             errors.append(f"create: no strategy recorded for {key}")
     for pair in strategies:
@@ -514,13 +637,13 @@ def assemble(data, progress, failed):
     errors = list(dict.fromkeys(errors))
 
     phases = []
-    if create.get("done_at"):
+    if creation_complete(data, progress):
         phases.append("create")
-    if create and all(p["strat"] in refined for p in needs_refine):
+    if (create or excluded) and all(p["strat"] in refined for p in needs_refine):
         phases.append("refine")
-    if create and all(p["strat"] in covered for p in needs_refine):
+    if (create or excluded) and all(p["strat"] in covered for p in needs_refine):
         phases.append("push")
-    if create and all(p["strat"] in reviews for p in strategies):
+    if (create or excluded) and all(p["strat"] in reviews for p in strategies):
         phases.append("review")
 
     results = [{"rfe": p["rfe"], "strat": p["strat"],
@@ -542,9 +665,11 @@ def assemble(data, progress, failed):
     artifacts += existing([SKIPPED_MD, TICKETS_MD])
 
     action = "failed" if errors else "completed"
+    active_skips = [v for v in create.get("skipped", []) if v["key"] not in excluded]
     summary = (f"{len(results)} of {len(strategies)} strategies reviewed for "
                f"{len(acquired)} locked RFE(s); "
-               f"{len(create.get('skipped', []))} skipped by strategy-create")
+               f"{len(active_skips)} skipped by strategy-create; "
+               f"{len(deferred)} deferred for input changes")
     if errors:
         summary += f"; {len(errors)} error(s)"
     return {
@@ -554,7 +679,8 @@ def assemble(data, progress, failed):
         "summary": summary + ".",
         "input_keys": data.get("input_keys", []),
         "acquired_keys": acquired,
-        "skipped": data.get("skipped", []) + create.get("skipped", []),
+        "skipped": data.get("skipped", []) + active_skips,
+        "deferred": deferred,
         "strategies": results,
         "completed_phases": phases,
         "artifacts": artifacts,
@@ -566,13 +692,19 @@ def assemble(data, progress, failed):
 
 def cmd_result(args):
     from strat_pipeline_outcome import finalize
-    data = load_input()
+    data = _read_input()
     out_dir = os.environ.get("FULLSEND_OUTPUT_DIR")
     if not out_dir:
         die("FULLSEND_OUTPUT_DIR is not set")
     path = Path(out_dir) / "agent-result.json"
     with progress_lock():
-        progress = load_progress(data["run_id"])
+        progress, _ = _read_progress(data["run_id"])
+        try:
+            data, progress = load_state(batch=True)
+        except (OSError, ValueError, KeyError, TypeError):
+            # Finalize records the validation failure without authorizing any
+            # work or publication. Do not let stale inputs suppress reporting.
+            pass
         if not PROGRESS.is_file():
             save_progress(progress)
         # A failed handoff is reconciled with actual saved work. Missing work
@@ -602,6 +734,9 @@ def main(argv=None):
     sub.add_parser("refine-status").set_defaults(func=cmd_refine_status)
     sub.add_parser("prepare-reviews").set_defaults(func=cmd_prepare_reviews)
     sub.add_parser("completion-status").set_defaults(func=cmd_completion_status)
+    status = sub.add_parser("ticket-status")
+    status.add_argument("key")
+    status.set_defaults(func=cmd_ticket_status)
     mark = sub.add_parser("mark")
     mark.add_argument("step", choices=["refine", "push"])
     mark.add_argument("key", nargs="?")

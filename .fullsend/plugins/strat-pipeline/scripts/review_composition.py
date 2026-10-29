@@ -75,15 +75,21 @@ def report_verdict(scope, role, report):
 
 def snapshot(root, key):
     scope = inputs(root, key)
-    return scope, {"strategy": {"path": str(scope["strategy"].relative_to(root)),
-                                "sha256": digest(scope["strategy"].read_bytes().decode())},
-                   "rfe": {"path": str(scope["rfe"].relative_to(root)),
-                           "sha256": digest(scope["rfe"].read_bytes().decode())}}
+    source = {"strategy": {"path": str(scope["strategy"].relative_to(root)),
+                           "sha256": digest(scope["strategy"].read_bytes().decode())},
+              "rfe": {"path": str(scope["rfe"].relative_to(root)),
+                      "sha256": digest(scope["rfe"].read_bytes().decode())}}
+    original = scope["strategy"].parent.parent / "strat-originals" / f"{key}.md"
+    if original.exists() or original.is_symlink():
+        original = regular(root, original)
+        source["strategy_original"] = {"path": str(original.relative_to(root)),
+                                       "sha256": digest(original.read_bytes().decode())}
+    return scope, source
 
 
 def begin(root, key, scorer):
-    from strat_freshness import verify
-    verify(root)
+    from strat_freshness import source_rfe, verify
+    verify(root, rfe=source_rfe(root, key))
     from artifact_utils import read_frontmatter_validated
     scope, source = snapshot(root, key)
     fm, _ = read_frontmatter_validated(scope["prior"], "strat-review")
@@ -223,8 +229,8 @@ def rendered(key, scores, decision, reports, scorer):
 
 
 def compose(root, key):
-    from strat_freshness import verify
-    verify(root)
+    from strat_freshness import source_rfe, verify
+    verify(root, rfe=source_rfe(root, key))
     from artifact_utils import write_frontmatter
     with locked(root, key) as directory:
         path, session = active(root, directory)
@@ -292,8 +298,8 @@ def recover(root, key):
 
 def verify_review(root, key, *, live=True):
     """Read the repository only as data; safe for use by the trusted host validator."""
-    from strat_freshness import verify
-    verify(root, live=live)
+    from strat_freshness import source_rfe, verify
+    verify(root, live=live, rfe=source_rfe(root, key))
     return _verify_review(root, key)
 
 

@@ -27,6 +27,17 @@
         }
       }
     },
+    "deferred": {
+      "description": "Acquired RFEs whose inputs changed during this batch. The host independently verifies every deferral; these tickets have no published artifacts in this result.",
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["key", "reason"],
+        "properties": {
+          "key": {"$ref": "#/$defs/rfe_key"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+        }
+      }
+    },
     "strategies": {
       "type": "array",
       "items": {

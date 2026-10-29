@@ -30,6 +30,10 @@ class UncertainWrite(RuntimeError):
     """An operator must reconcile the external effect before work continues."""
 
 
+class HumanGateChanged(ValueError):
+    """A live human gate stops writes; batch exclusion still needs verification."""
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -110,12 +114,6 @@ def perform(server, kind, target, payload, read, write, guard=None, slot=None):
     Model/Workflow restarts call this same function; HTTP retries do not append.
     """
     directory, data = context()
-    if data and Path("tmp/strat-input.json").exists():
-        from strat_freshness import verify_progress
-        root = Path.cwd()
-        progress_path = root / "tmp/strat-progress.json"
-        progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
-        verify_progress(root, data, progress)
     identity = {"server_hash": digest(server.rstrip("/")), "kind": kind, "target": target,
                 "payload_hash": digest(payload)}
     name = identity if slot is None else {"server_hash": identity["server_hash"], "kind": kind,
@@ -123,8 +121,17 @@ def perform(server, kind, target, payload, read, write, guard=None, slot=None):
     path = directory / (digest(name) + ".json") if directory else None
     manager = locked(directory / ".lock") if directory else contextlib.nullcontext()
     with manager:
+        rfe = None
         if guard:
-            guard(data)
+            rfe = guard(data)
+        if data and Path("tmp/strat-input.json").exists():
+            from strat_freshness import verify_progress
+            root = Path.cwd()
+            progress_path = root / "tmp/strat-progress.json"
+            progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
+            # check_owner resolves a unique owned RFE even before local target
+            # binding. A caller without that proof keeps full-batch checking.
+            verify_progress(root, data, progress, rfe=rfe)
         if path and path.is_symlink():
             raise UncertainWrite("symlinked side-effect ledger")
         record = json.loads(path.read_text()) if path and path.exists() else None
@@ -190,10 +197,10 @@ def check_human_gates(server, target, labels, data, *, root=None):
                     and effect.get("status") in ("pending", "verified")):
                 gates.clear()
     if gates:
-        raise ValueError(f"freshness: human gate stops strategy writes: {target}: {', '.join(sorted(gates))}")
+        raise HumanGateChanged(f"freshness: human gate stops strategy writes: {target}: {', '.join(sorted(gates))}")
 
 
-def check_owner(server, user, token, target, data):
+def check_owner(server, user, token, target, data, *, expected_rfe=None):
     """Recheck S1 ownership at each write; never adopt a foreign/orphaned claim.
 
     Jira labels do not provide compare-and-swap. This is conflict detection and
@@ -208,9 +215,11 @@ def check_owner(server, user, token, target, data):
         raise ValueError("managed write requires a valid lock owner")
     owner_label(data.get("lock_owner"))
     from jira_utils import get_issue
+    strategy_target = target
+    strategy_labels = None
     if target.startswith("RHAISTRAT-"):
         fields = get_issue(server, user, token, target, fields=["issuelinks", "labels"])["fields"]
-        check_human_gates(server, target, fields.get("labels"), data)
+        strategy_labels = checked_labels(fields.get("labels"))
         links = fields.get("issuelinks", [])
         rfes = {link.get(side, {}).get("key") for link in links if link.get("type", {}).get("name") == "Cloners"
                 for side in ("inwardIssue", "outwardIssue")
@@ -218,6 +227,8 @@ def check_owner(server, user, token, target, data):
         if len(rfes) != 1:
             raise UncertainWrite("strategy write has no unique source RFE")
         target = rfes.pop()
+    if expected_rfe is not None and target != expected_rfe:
+        raise UncertainWrite("strategy source differs from creation mapping")
     if target not in data.get("acquired_keys", []):
         raise UncertainWrite("write target is outside acquired RFEs")
     labels = set(checked_labels(get_issue(server, user, token, target, fields=["labels"])["fields"].get("labels")))
@@ -225,4 +236,9 @@ def check_owner(server, user, token, target, data):
     if owners != {owner_label(data["lock_owner"])} or "strat-creator-processing" not in labels:
         raise UncertainWrite("missing or conflicting Jira lock ownership")
     if labels & HUMAN_GATES:
-        raise ValueError(f"human gate stops source RFE writes: {target}")
+        raise HumanGateChanged(f"human gate stops source RFE writes: {target}")
+    # A human intervention must not conceal a simultaneous ownership or link
+    # failure. Establish the acquired source and its owner before classifying it.
+    if strategy_labels is not None:
+        check_human_gates(server, strategy_target, strategy_labels, data)
+    return target

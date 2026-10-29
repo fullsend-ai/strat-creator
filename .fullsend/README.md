@@ -177,6 +177,99 @@ side-effect idempotency or stale-journal invalidation.
 7. **review**: `/strategy-review <KEY> --scores-from tmp/strat-assess/<KEY>`.
 8. **result**: `scripts/strat_pipeline_state.py result` writes `agent-result.json`, then `fullsend-check-output` checks it.
 
+### Input changes during a batch
+
+When live RFE requirements, STRAT staff input or other protected ticket inputs
+change after preparation, the batch defers that ticket and continues unchanged
+tickets. `strat_pipeline_state.py ticket-status KEY` checks an assignment before
+refinement/review. Every write and review composition also checks its source
+RFE. Already running model calls may finish; no new dependent work or writes
+are authorized for a deferred ticket.
+
+The result and published `pipeline-data.json` list deferred RFEs and reasons.
+The host independently verifies deferrals against the original baseline and
+current Jira. It publishes only completed, current strategies. Deferred task,
+review and original files remain in native/recovery evidence, outside that
+publication bundle. Successful partial batches retain them under
+`STRAT_STATE_DIR/recovery/deferred-*/`, which CI includes in native host-state
+artifacts. Progress and mutation intent are preserved. All acquired
+locks are released by normal cleanup, including deferred tickets.
+
+Shared source/instruction, architecture, parameter or provenance failures still
+fail the batch. Unreadable inputs fail closed. A diagnostic failed completion
+receipt can be recorded despite those failures; it cannot pass host validation
+or authorize publication. A batch with every ticket deferred reports zero
+completed strategies and an explicit deferred inventory.
+
+Deferred tickets require a new prepared run, with current inputs and normal
+gates. A prior deferred push is not reused. Existing approval or human-gate
+labels are not cleared automatically, including when an edit arrived after a
+review had already been posted to Jira. No baseline is silently refreshed.
+
+A later revert does not readmit a ticket. The host records an RFE history
+cursor before work, and independently verifies post-cursor protected edits
+when the current input again matches its baseline. The host also pins existing
+linked STRAT history; post-cursor structured SME or sign-off edits on those
+STRATs can prove a change. Agent-supplied cursors and host-clock guesses cannot
+substitute for these anchors. Newly created STRATs have no pre-run STRAT cursor,
+so their reverted SME changes need other independent proof or fail closed.
+Old history, ordinary lock
+labels and an agent's saved claim do not suffice. Missing or unrecognizable
+history fails closed; a plain historical description without section structure
+cannot prove an SME edit, and a numeric needs-attention label alone cannot prove
+external intervention. A second edit does not invalidate a deferral merely
+because its informational reason differs. Original create skips and partial
+records remain in recovery; published skips omit tickets now deferred.
+
+Saved STRAT human/publication snapshots detect mismatches but are agent-writable
+and cannot authorize a deferral. Each STRAT-derived exclusion also needs
+host-pinned protected-change history or a newly blocking human gate on this
+run's STRAT whose unique Jira clone link identifies that RFE. The host pins
+existing clone gates/statuses and records successful clone enumeration. Old
+gates and active/completed clones cannot authorize exclusion; an unpinned new
+STRAT requires a complete host inventory proving it was not linked at preparation.
+Recognized current-run numeric verdict intent excludes our own gate. These
+recovery checks assume retention of the write journal and use of the guarded
+helpers; agent-edited journals and direct Jira mutations are outside their
+containment guarantees. Without independent proof, a current or reverted
+STRAT mismatch fails closed, including SME/publication changes on a newly created
+STRAT without a host cursor. A trusted live RFE mismatch remains sufficient.
+Late gate-label changes during push are isolated only after verifying the unique
+source and its ownership; unrelated write, ownership, link and shared-input errors
+still stop the run.
+Managed refinement and push preserve live SME input; locally editing that input
+cannot manufacture history proof. Standalone human editing retains its normal
+push behavior. Late human gates during review-publication recovery use the same
+verified deferral reconciliation as the push loop.
+Write guards, current SME checks and history proof use the same canonical
+content comparison; a formatting-only push is neither new input nor a deferral.
+Both the normal description and attachment stub are checked after ADF encoding
+against current live SME input, before any description or attachment mutation.
+Input-change evidence identifies changed state without attributing the edit to
+a human. Deliberate agent edits to input tickets, including gate labels or clone
+links, remain outside these checks' containment guarantee.
+
+Creation reconciles a newly blocking gate even before its first STRAT snapshot.
+Candidate mappings identify the ticket; its unique owned source and host-pinned
+change evidence must still be verified. No human snapshot is invented to make
+it fit. Unaffected creation records are retained and retries recheck deferrals.
+Internal review recording preserves typed freshness errors for batch recovery;
+unrelated verification errors remain fatal CLI errors.
+
+Push recording uses the same per-ticket recovery rule. Only successful push
+snapshots enter coverage, and a final independent input check must prove any
+excluded tickets before progress is saved. Shared and unrelated errors remain
+fatal. Change evidence accepts exact ASCII Jira keys and matching returned
+issue identities; both changelog GETs use the normal bounded read retries.
+
+Publication accepts canonical ticket artifact paths only for completed pairs.
+Task, review and report/provenance identities remain checked. Optional original
+metadata must match its ticket/source, and a saved review comment must match
+the verified review. Raw Jira descriptions/comments need no new metadata
+format. A STRAT original is also bound into review provenance when present;
+adding, removing or changing it after composition invalidates that review.
+The batch ticket and skip tables remain permitted summary outputs.
+
 ### Reviewer ticket scope
 
 The four forked reviewer Skills require exactly one strategy key. They select

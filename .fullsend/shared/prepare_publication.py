@@ -47,23 +47,39 @@ def prepare(handoff, bundle, result_file, label):
         shutil.copytree(handoff, bundle, dirs_exist_ok=True)
         for name in ("agent-result.json", "strat-progress.json"):
             (bundle / name).unlink(missing_ok=True)
+        result = json.loads(result_file.read_text())
+        skipped = bundle / 'strat-skipped.md'
+        if result.get('deferred') and skipped.is_file():
+            excluded = {v['key'] for v in result['deferred']}
+            skipped.write_text(''.join(line for line in skipped.read_text().splitlines(keepends=True)
+                                      if line.strip().strip('|').split('|')[0].strip() not in excluded))
         if any((bundle / "strat-tasks").glob("*.md")):
             subprocess.run([sys.executable, str(ROOT / "scripts/generate-report.py"), "--artifacts", str(bundle),
                             "--output", str(bundle / "reports/report.html")], check=True)
         else:
             import html
             (bundle / "reports").mkdir(exist_ok=True)
-            summary = json.loads(result_file.read_text()).get("summary", "All acquired work was skipped.")
+            summary = result.get("summary", "All acquired work was skipped.")
+            deferred = result.get("deferred", [])
+            heading = (f"No completed strategies; {len(deferred)} ticket(s) deferred" if deferred
+                       else "No strategies required processing")
+            details = "".join("<li>" + html.escape(v["key"]) + ": " + html.escape(v["reason"]) + "</li>"
+                              for v in deferred)
             (bundle / "reports/report.html").write_text(
-                "<!doctype html><meta charset='utf-8'><h1>No strategies required processing</h1><p>"
-                + html.escape(summary) + "</p>\n")
-        result = json.loads(result_file.read_text())
+                "<!doctype html><meta charset='utf-8'><h1>" + html.escape(heading) + "</h1><p>"
+                + html.escape(summary) + "</p>" + ("<ul>" + details + "</ul>" if details else "") + "\n")
         command = [sys.executable, str(ROOT / "scripts/extract-pipeline-data.py"), "--run-dir", str(bundle),
                    "--output", str(bundle / "pipeline-data.json"), "--config", label, "--allow-empty"]
         if result.get("dry_run") is True:
             command.append("--dry-run")
         environment = {name: value for name, value in os.environ.items() if name != "DRY_RUN"}
         subprocess.run(command, check=True, env=environment)
+        if result.get("deferred"):
+            path = bundle / "pipeline-data.json"
+            exported = json.loads(path.read_text())
+            exported["deferred"] = result["deferred"]
+            exported["batch_summary"] = result["summary"]
+            atomic(path, exported)
         check(bundle)
         atomic(state, {"source": source, "ready": True, "files": inventory(bundle)})
 

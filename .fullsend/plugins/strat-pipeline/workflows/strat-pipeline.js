@@ -41,6 +41,8 @@ const HEADLESS =
   'answer questions: never use AskUserQuestion, and decide from the skill\'s own rules. ' +
   'Never lock or unlock Jira issues and never run scripts/lock_issues.py; the host owns ' +
   'the locks. Run commands from the repository root exactly as written.\n\n'
+  + 'A freshness/input-change error ends that ticket assignment. Preserve all files and intent; ' +
+  'never refresh the baseline, repair inputs or retry the Skill after that error.\n\n'
 
 const STRAT = '^(RHAISTRAT|STRAT)-[0-9]+$'
 const RFE = '^RHAIRFE-[0-9]+$'
@@ -52,7 +54,7 @@ const PAIR = {
 const READ = {
   type: 'object',
   required: ['cwd', 'run_id', 'mode', 'dry_run', 'acquired_keys', 'review_only', 'create_done',
-    'pending_create', 'strategies', 'refined', 'pushed', 'reviewed'],
+    'pending_create', 'strategies', 'refined', 'pushed', 'reviewed', 'deferred'],
   properties: {
     cwd: { type: 'string', minLength: 1 },
     run_id: { type: 'string', minLength: 1 },
@@ -66,6 +68,8 @@ const READ = {
     refined: { type: 'array', items: { type: 'string', pattern: STRAT } },
     pushed: { type: 'array', items: { type: 'string', pattern: STRAT } },
     reviewed: { type: 'array', items: { type: 'string', pattern: STRAT } },
+    deferred: { type: 'array', items: { type: 'object', required: ['key', 'reason'],
+      properties: { key: { type: 'string', pattern: RFE }, reason: { type: 'string' } } } },
   },
 }
 const CREATE = {
@@ -104,7 +108,7 @@ async function refinementCheckpoint(run, keys) {
         refined: { type: 'array', items: key, uniqueItems: true },
         rejected: { type: 'array', items: {
           type: 'object', additionalProperties: false, required: ['key', 'reason'],
-          properties: { key, reason: { type: 'string', enum: ['not_recorded', 'invalid_artifact'] } },
+          properties: { key, reason: { type: 'string', enum: ['not_recorded', 'invalid_artifact', 'input_changed'] } },
         } },
       },
     } },
@@ -121,12 +125,13 @@ async function refinementCheckpoint(run, keys) {
 // Keep object roots; check cross-field consistency after each handoff.
 const VERDICT = {
   type: 'object',
-  required: ['key', 'recommendation', 'needs_attention'],
+  required: ['key'],
   additionalProperties: false,
   properties: {
     key: { type: 'string', pattern: STRAT },
     recommendation: { type: 'string', enum: ['approve', 'revise', 'reject'] },
     needs_attention: { type: 'boolean' },
+    deferred: { type: 'boolean' },
   },
 }
 const RESULT = {
@@ -140,6 +145,7 @@ const RESULT = {
     check_exit: { type: 'integer', enum: [0, 1] },
     receipt_id: { type: 'string', pattern: '^[a-f0-9]{32}$' },
     receipt_sha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+    deferred_rfes: { type: 'array', items: { type: 'string', pattern: RFE }, uniqueItems: true },
   },
 }
 
@@ -169,18 +175,35 @@ if (!run.create_done && run.pending_create.length) {
     HEADLESS +
       `Use the Skill tool to run the ${NS}strategy-create skill with args "${run.pending_create.join(' ')}${dry}". ` +
       'The keys are the selection; do not ask which RFEs or which source to use (use Jira). ' +
+      'A ticket-specific freshness error defers that RFE: continue the remaining keys without repairing ' +
+      'or retrying the changed ticket. Shared-input or unverifiable-input errors stop the assignment. ' +
       'When the skill has finished, run `python3 scripts/strat_pipeline_state.py record-create` ' +
       'and return the strategies list it prints.',
     { label: 'strategy-create', phase: 'Create', schema: CREATE },
   )
-  if (!created) fail('create')
-  else strategies = created.strategies
+  if (created) strategies = created.strategies
+  else {
+    const recoveredCreate = await agent(
+      HEADLESS + 'Run `python3 scripts/strat_pipeline_state.py record-create` once, then ' +
+        '`python3 scripts/strat_pipeline_state.py read` once. Return the read JSON exactly. ' +
+        'This reconciles saved creation and verified deferrals. Do not repeat creation or repair artifacts.',
+      { label: 'reconcile creation', phase: 'Create', schema: READ, effort: 'low' },
+    )
+    if (!recoveredCreate || recoveredCreate.run_id !== run.run_id || recoveredCreate.cwd !== run.cwd ||
+        JSON.stringify(recoveredCreate.acquired_keys) !== JSON.stringify(run.acquired_keys)) fail('create')
+    else {
+      Object.assign(run, recoveredCreate)
+      strategies = run.strategies
+      run.pending_create.forEach((key) => fail('create', key))
+    }
+  }
 }
 
 const reviewOnly = new Set(run.review_only)
 const refined = new Set(run.refined)
 const receipts = new Map()
-const toRefine = strategies.filter((p) => !refined.has(p.strat) && !reviewOnly.has(p.rfe))
+const initialDeferred = new Set((run.deferred || []).map((v) => v.key))
+const toRefine = strategies.filter((p) => !initialDeferred.has(p.rfe) && !refined.has(p.strat) && !reviewOnly.has(p.rfe))
 if (reviewOnly.size) log(`resume point review: refine and push skipped for ${[...reviewOnly].join(' ')}`)
 if (toRefine.length) {
   phase('Refine')
@@ -188,7 +211,9 @@ if (toRefine.length) {
     toRefine.map((p) => () =>
       agent(
         HEADLESS +
-          `Use the Skill tool to run the ${NS}strategy-refine skill with args "${p.strat}${dry}". ` +
+          `First run \`python3 scripts/strat_pipeline_state.py ticket-status ${p.strat}\`. ` +
+          'If eligible is false, return {"recorded":"none"} immediately. Otherwise ' +
+          `use the Skill tool to run the ${NS}strategy-refine skill with args "${p.strat}${dry}". ` +
           `When it has finished and artifacts/strat-tasks/${p.strat}.md holds the refined strategy, ` +
           `run \`python3 scripts/strat_pipeline_state.py mark refine ${p.strat}\` and return what it prints. ` +
           'If the skill stopped without refining (for example a label gate), do not run the command; ' +
@@ -246,13 +271,18 @@ const recovered = await agent(
     'This recovers completed compositions/publication and records reviews without rescoring. ' +
     'If it fails, stop; do not repair or delete saved review evidence.',
   { label: 'prepare reviews', phase: 'Score', effort: 'low', schema: {
-    type: 'object', required: ['reviewed'], additionalProperties: false,
-    properties: { reviewed: { type: 'array', items: { type: 'string', pattern: STRAT } } },
+    type: 'object', required: ['reviewed', 'deferred'], additionalProperties: false,
+    properties: {
+      reviewed: { type: 'array', items: { type: 'string', pattern: STRAT } },
+      deferred: { type: 'array', items: { type: 'object', required: ['key', 'reason'],
+        properties: { key: { type: 'string', pattern: RFE }, reason: { type: 'string' } } } },
+    },
   } },
 )
 if (!recovered || !Array.isArray(recovered.reviewed)) throw new Error('review preparation failed')
 const reviewed = new Set([...run.reviewed, ...recovered.reviewed])
-const toReview = ready.filter((p) => !reviewed.has(p.strat) && (reviewOnly.has(p.rfe) || pushed.has(p.strat)))
+const deferred = new Set((recovered.deferred || []).map((v) => v.key))
+const toReview = ready.filter((p) => !deferred.has(p.rfe) && !reviewed.has(p.strat) && (reviewOnly.has(p.rfe) || pushed.has(p.strat)))
 const unpushed = ready.filter((p) => !reviewed.has(p.strat) && !toReview.includes(p))
 if (unpushed.length) log(`not reviewed, no recorded push: ${unpushed.map((p) => p.strat).join(' ')}`)
 if (toReview.length) {
@@ -283,11 +313,18 @@ if (toReview.length) {
     async (runDir, p) => {
       const verdict = await agent(
         HEADLESS +
-          `Use the Skill tool to run the ${NS}strategy-review skill with args "${p.strat} --scores-from ${runDir}${dry}". ` +
+          `First run \`python3 scripts/strat_pipeline_state.py ticket-status ${p.strat}\`. ` +
+          `If eligible is false, return {"key":"${p.strat}","deferred":true} immediately. Otherwise ` +
+          `use the Skill tool to run the ${NS}strategy-review skill with args "${p.strat} --scores-from ${runDir}${dry}". ` +
           `The scorer already wrote ${runDir}/${p.strat}.result.md. When the skill has finished, run ` +
-          `\`python3 scripts/strat_pipeline_state.py record-review ${p.strat}\` and return what it prints.`,
+          `\`python3 scripts/strat_pipeline_state.py record-review ${p.strat}\` and return what it prints. ` +
+          `If a freshness error occurs, stop and return {"key":"${p.strat}","deferred":true}; do not launch more reviewers.`,
         { label: `review ${p.strat}`, phase: 'Review', schema: VERDICT },
       )
+      if (verdict && verdict.key === p.strat && verdict.deferred === true) {
+        log(`review ${p.strat}: deferred; final helper verifies live inputs independently`)
+        return null
+      }
       if (!verdict || verdict.key !== p.strat ||
           !['approve', 'revise', 'reject'].includes(verdict.recommendation) ||
           verdict.needs_attention !== (verdict.recommendation !== 'approve')) {
@@ -314,7 +351,15 @@ const result = await agent(
   }, effort: 'low' },
 )
 if (!result) throw new Error('result: strat_pipeline_state.py result returned no result')
-if (failed.length || result.kind !== 'strat-completion' || result.run_id !== run.run_id ||
+// Only the checked final receipt may reconcile a ticket failure as deferred.
+// Invalid handoffs for fresh tickets retain the existing strict behavior.
+const verifiedDeferred = new Set(result.deferred_rfes || [])
+const unresolved = failed.filter((entry) => {
+  const [, key] = entry.split(':')
+  const rfe = key && (key.startsWith('RHAIRFE-') ? key : strategies.find((p) => p.strat === key)?.rfe)
+  return !rfe || !verifiedDeferred.has(rfe)
+})
+if (unresolved.length || result.kind !== 'strat-completion' || result.run_id !== run.run_id ||
     result.action !== 'completed' || result.check_exit !== 0 ||
     !/^[a-f0-9]{32}$/.test(result.receipt_id || '') || !/^[a-f0-9]{64}$/.test(result.receipt_sha256 || '')) {
   throw new Error(`result: business completion not verified (${result.action || 'missing'}, check ${result.check_exit})`)

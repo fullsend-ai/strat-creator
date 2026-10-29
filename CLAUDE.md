@@ -139,9 +139,28 @@ catch mistakes, not a compromised agent that can edit its code or credentials.
 The S1 host records `strat-freshness-v1` before agent work. Same-run reuse and
 writes require unchanged code/Skills/instructions, pinned architecture files,
 prepared parameters, live RFE fields/comments, staff input, human-gate labels
-and recorded artifact identity. Changed or unverifiable inputs stop the run and
-preserve its work and mutation intent. Do not rewrite the baseline or clear
-progress to bypass this.
+and recorded artifact identity. In a batch, verified live RFE/STRAT/SME changes
+defer only the affected ticket. Stop that assignment; preserve its work and
+mutation intent. The other tickets may finish. Shared code/context changes,
+unverifiable inputs and invalid artifact/provenance data still stop the run.
+Do not rewrite the baseline or clear progress to bypass this. The final result
+lists deferred RFEs separately; trusted host validation rechecks their live
+inputs and excludes their artifacts from completed publication. Failed runs
+can write diagnostic failure receipts, which never authorize publication.
+If a deferred input later reverts, the ticket stays deferred only when Jira
+history independently proves a protected change after preparation. The host
+pins RFE and existing linked STRAT history cursors; preexisting edits and lock
+bookkeeping are not proof. Structured SME and sign-off history for a pinned
+STRAT can also establish a change.
+Unavailable, truncated or unrecognized history cannot authorize a deferral.
+The original reason remains informational even if later edits change it.
+Saved STRAT snapshots cannot authorize deferral by themselves. The host also
+requires pinned protected-change history or a live blocking human gate on the
+uniquely linked STRAT in this run. The gate must be new against host-pinned
+clone state; existing gates and active/completed clones are not change proof.
+Managed create/refine/push must preserve live SME input. An unprovable STRAT mismatch stops the run, including
+SME/publication changes on a new STRAT without a trusted cursor. Preserve the
+evidence and start a new prepared run; do not rewrite the saved comparison.
 A later run may skip refinement/push only with matching prior provenance and
 live published-strategy read-back. Legacy progress requires refinement again.
 Launch a fresh Workflow by name; native `resumeFromRunId` replay is unsupported.
