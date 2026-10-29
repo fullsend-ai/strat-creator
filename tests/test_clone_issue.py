@@ -255,13 +255,13 @@ class TestCloneIssue:
         assert clone["fields"]["summary"] == "[DRAFT] Already prefixed feature"
 
     def test_refuses_an_initiative_which_runs_on_its_own_ticket(self, jira):
-        jira.create("RHOAIENG-900", "Initiative for GPU sharing",
+        jira.create("RHAISTRAT-900", "Initiative for GPU sharing",
                      "Initiative body.", issue_type="Initiative")
 
-        result = _run(jira, ["RHOAIENG-900", "--target-project", "RHAISTRAT"])
+        result = _run(jira, ["RHAISTRAT-900", "--target-project", "RHAISTRAT"])
         assert result.returncode == 1
         assert "refusing to clone" in result.stderr
-        assert jira.search("project = RHAISTRAT") == []
+        assert [issue["key"] for issue in jira.search("project = RHAISTRAT")] == ["RHAISTRAT-900"]  # no clone
 
     def test_missing_env_vars_exits_with_code_2(self, jira):
         env = {k: v for k, v in os.environ.items()

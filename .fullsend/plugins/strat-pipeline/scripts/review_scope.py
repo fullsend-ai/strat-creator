@@ -31,20 +31,25 @@ def text(content):
     return ""
 
 
-def work_type(key):
-    """The work-item type whose strategy ids include key (an RFE's STRAT, an Initiative), or None."""
+def work_type(key, name=None):
+    """The work-item type of strategy key, or None: the one its task file's ``type:`` stamp names,
+    else the type that owns key. RHAISTRAT keys are an RFE's STRAT or an Initiative, so an
+    unstamped one is rfe-strategy's (the Initiative writers always stamp)."""
     import type_registry
 
-    try:
-        found = type_registry.load().detect(key)
-    except type_registry.RegistryError:
-        return None
+    registry = type_registry.load()
+    if name is not None:
+        found = registry.get(name) if name in registry else None
+    else:
+        try:
+            found = registry.detect(key)
+        except type_registry.RegistryError:
+            found = registry.get(type_registry.LEGACY_DEFAULT_TYPE)
     return found if found and found.strategy_key_re.match(key) else None
 
 
-def patterns(key):
-    """(strategy ids, source ids) of key's type, unanchored, for scanning a report."""
-    found = work_type(key)
+def patterns(found):
+    """(strategy ids, source ids) of a type, unanchored, for scanning a report."""
     target = "|".join(map(re.escape, found.key_prefixes + [found.local_prefix]))
     source = found.get(f"schema.task.extra_fields.{found.source_field}.pattern").strip("^$")
     return re.compile(rf"(?:{target})[0-9]+"), re.compile(source)
@@ -121,12 +126,13 @@ def inputs(root, key):
         raise ScopeError("Strategy frontmatter is missing.")
     if not isinstance(metadata, dict) or metadata.get("strat_id") != key:
         raise ScopeError("Strategy frontmatter does not match the assigned key.")
-    found = work_type(key)
+    stamp = metadata.get("type")
+    found = work_type(key, stamp if isinstance(stamp, str) else None)
     if found is None:
         raise ScopeError("Assigned key is not a strategy key.")
     field = found.source_field
     source = metadata.get(field, "")
-    if not isinstance(source, str) or not patterns(key)[1].fullmatch(source):
+    if not isinstance(source, str) or not patterns(found)[1].fullmatch(source):
         raise ScopeError(f"Strategy {field} is missing or invalid.")
     # Fullsend create saves frozen source descriptions in strat-originals.
     # Legacy/evaluation workspaces may contain only rfe-tasks instead.
@@ -137,7 +143,7 @@ def inputs(root, key):
         raise ScopeError("Assigned strategy's source RFE is missing.")
     prior = safe_path(root, f"{mode}/strat-reviews/{key}-review.md")
     architecture = safe_path(root, ".context/architecture-context")
-    return {"key": key, "source_rfe": source, "strategy": strategy, "rfe": rfe,
+    return {"key": key, "type": found, "source_rfe": source, "strategy": strategy, "rfe": rfe,
             "prior": prior, "architecture": architecture}
 
 
@@ -168,7 +174,7 @@ def check_report(scope, report):
     if report.startswith("REVIEW_SCOPE_ERROR:"):
         return  # Return an explicit failure to the caller, never an assessment.
     key = scope["key"]
-    target, source = patterns(key)
+    target, source = patterns(scope.get("type") or work_type(key))
     headings = re.findall(rf"^###\s+({target.pattern}):", report, re.M)
     if headings != [key]:
         raise ScopeError(f"Return one assessment headed '### {key}: <title>'.")

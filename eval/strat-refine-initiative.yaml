@@ -84,7 +84,7 @@ dataset:
 
 outputs:
   - path: artifacts/strat-tasks
-    schema: "Refined strategy RHOAIENG-<n>.md with YAML frontmatter (status=Refined) and a filled ## Strategy section."
+    schema: "Refined strategy RHAISTRAT-<n>.md with YAML frontmatter (status=Refined) and a filled ## Strategy section."
   - path: artifacts/strat-reviews
     schema: "<strat_id>-review.md with frontmatter scores{feasibility,testability,scope,architecture,total}, recommendation, needs_attention, reviewers{}."
 

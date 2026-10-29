@@ -214,10 +214,13 @@ def check_owner(server, user, token, target, data, *, expected_rfe=None):
     if not isinstance(data, dict):
         raise ValueError("managed write requires a valid lock owner")
     owner_label(data.get("lock_owner"))
+    import type_registry
     from jira_utils import get_issue
     strategy_target = target
     strategy_labels = None
-    if target.startswith("RHAISTRAT-"):
+    # A clone's writes are checked against its source RFE. A same-ticket type's strategy key IS its input
+    # (an Initiative, also in RHAISTRAT since AISDLC-461): no clone link to follow.
+    if target.startswith("RHAISTRAT-") and not type_registry.run_type(data).same_ticket:
         fields = get_issue(server, user, token, target, fields=["issuelinks", "labels"])["fields"]
         strategy_labels = checked_labels(fields.get("labels"))
         links = fields.get("issuelinks", [])

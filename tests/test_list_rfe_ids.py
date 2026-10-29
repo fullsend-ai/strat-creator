@@ -154,7 +154,8 @@ class TestTypeMode:
         result = _run(["--jql-default", "--type", "initiative-strategy"], env=env)
         assert result.returncode != 0
         assert result.stderr.startswith("TYPE RESOLVED: initiative-strategy (--type)\n")
-        assert 'JQL: project = RHOAIENG AND (labels = "initiative-autofix-rubric-pass"' in result.stderr
+        assert ('JQL: project = RHAISTRAT AND issuetype = "Initiative" AND '
+                '(labels = "initiative-autofix-rubric-pass"') in result.stderr
 
 
 class TestSameTicketDiscovery:
@@ -164,20 +165,21 @@ class TestSameTicketDiscovery:
 
     def test_initiatives(self, jira):
         gate = "initiative-autofix-rubric-pass"
-        jira.create("RHOAIENG-1", "Fresh", "d", labels=[gate], issue_type="Initiative")
-        jira.create("RHOAIENG-2", "Reviewed", "d", labels=[gate, "strat-creator-rubric-pass"], issue_type="Initiative")
-        jira.create("RHOAIENG-3", "Locked", "d", labels=[gate, "strat-creator-processing"], issue_type="Initiative")
+        jira.create("RHAISTRAT-1", "Fresh", "d", labels=[gate], issue_type="Initiative")
+        jira.create("RHAISTRAT-2", "Reviewed", "d", labels=[gate, "strat-creator-rubric-pass"], issue_type="Initiative")
+        jira.create("RHAISTRAT-3", "Locked", "d", labels=[gate, "strat-creator-processing"], issue_type="Initiative")
         jira.create("RHAIRFE-4", "An RFE", "d", labels=["strat-creator-3.5", "rfe-creator-autofix-rubric-pass"])
+        jira.create("RHAISTRAT-5", "An RFE's strategy", "d", labels=[gate], issue_type="Feature")  # same project
         env = dict(os.environ, JIRA_SERVER=jira.url, JIRA_USER="admin", JIRA_TOKEN="admin")
 
         result = _run(["--jql-default", "--type", "initiative-strategy", "--verbose"], env=env)
         assert result.returncode == 0, result.stderr
-        assert result.stdout.split() == ["RHOAIENG-1"]
-        assert "JQL returned 2 RFE(s)" in result.stderr  # RHOAIENG-3 is gated out by its lock
-        assert "excluding RHOAIENG-2" in result.stderr
+        assert result.stdout.split() == ["RHAISTRAT-1"]
+        assert "JQL returned 2 RFE(s)" in result.stderr  # RHAISTRAT-3 is gated out by its lock
+        assert "excluding RHAISTRAT-2" in result.stderr
 
         result = _run(["--jql-default", "--type", "initiative-strategy", "--include-processed"], env=env)
-        assert result.stdout.split() == ["RHOAIENG-1", "RHOAIENG-2"]
+        assert result.stdout.split() == ["RHAISTRAT-1", "RHAISTRAT-2"]
 
         result = _run(["--jql-default"], env=env)
         assert result.returncode == 0, result.stderr

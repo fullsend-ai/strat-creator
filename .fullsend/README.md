@@ -580,7 +580,7 @@ export STRAT_DRY_RUN=1                          # 0 explicitly enables live Jira
 export STRAT_PREVIOUS_PROGRESS= STRAT_ARCHITECTURE_CONTEXT_PATH= STRAT_PUBLISH_DIR=
 export RESULTS_REPO_URL= RESULTS_PUSH_TOKEN= RESULTS_GIT_USER= ORG_PULSE_URL= ORG_PULSE_API_TOKEN=
 export STRAT_TYPE=                              # empty: rfe-strategy; or initiative-strategy
-export RFE_KEY=RHAIRFE-1234                      # strat-single (an RHOAIENG Initiative for initiative-strategy)
+export RFE_KEY=RHAIRFE-1234                      # strat-single (an RHAISTRAT Initiative for initiative-strategy)
 export BATCH_SIZE=10 BATCH_OFFSET=0 BATCH_EXPECTED_KEYS=   # strat-batch
 export FULLSEND_WORK_ITEM_KEY=RHAISTRAT-5678     # strat-resume (dispatch sets it)
 

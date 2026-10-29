@@ -24,7 +24,7 @@ from artifact_utils import compute_strat_labels, label_category, read_frontmatte
 
 # Every registered type's file names (local id prefix, then tracker key prefixes): the types share one
 # artifacts tree, so the report lists them all. rfe-strategy alone gives today's STRAT- and RHAISTRAT-.
-_ID_PREFIXES = [p for desc in type_registry.load() for p in [desc.local_prefix] + desc.key_prefixes]
+_ID_PREFIXES = list(dict.fromkeys(p for desc in type_registry.load() for p in [desc.local_prefix] + desc.key_prefixes))
 
 
 def load_yaml_config(path):

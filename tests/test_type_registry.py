@@ -76,10 +76,15 @@ def test_owns_and_detect():
     assert not d.owns("RHAIRFE-1")
     assert not d.owns("")
     assert not d.owns(None)
-    assert REG.detect("RHAISTRAT-400") is d
     assert REG.detect("STRAT-7") is d
     assert REG.detect("RHAIRFE-1") is None
-    assert REG.detect("RHOAIENG-5").name == TWIN
+    # RHAISTRAT holds both types' tickets: the Jira issue type settles it, and is asked only then.
+    with pytest.raises(type_registry.RegistryError, match="claimed by"):
+        REG.detect("RHAISTRAT-400")
+    assert REG.detect("RHAISTRAT-400", issue_type="Feature") is d
+    assert REG.detect("RHAISTRAT-5", issue_type=lambda: "Initiative").name == TWIN
+    assert REG.detect("RHAISTRAT-5", issue_type="Epic") is None
+    assert REG.detect("STRAT-7", issue_type=lambda: pytest.fail("no tie, no Jira call")) is d
     assert REG.detect("ISTRAT-2").name == TWIN
     assert REG.detect(None) is None
 
@@ -480,33 +485,39 @@ def test_strat_schemas_follow_a_drop_in_type(tmp_path):
 def test_initiative_strategy_descriptor(monkeypatch):
     twin = REG.get(TWIN)
     rfe = REG.get(SHIPPED)
-    assert twin.get("identity.jira.project") == "RHOAIENG" and twin.write_prefix == "RHOAIENG-"
+    assert twin.get("identity.jira.project") == "RHAISTRAT" and twin.write_prefix == "RHAISTRAT-"
     assert twin.get("inputs.0.relation.kind") == "self" and twin.get("inputs.0.from_type") == "initiative"
     assert twin.labels == rfe.labels, "one label vocabulary per station"
     assert twin.stages == rfe.stages
     assert twin.get("pipeline.rubric.rubric_version") == rfe.get("pipeline.rubric.rubric_version")
     assert jira_utils.build_jql_from_type(twin) == (
-        'project = RHOAIENG AND (labels = "initiative-autofix-rubric-pass") '
+        'project = RHAISTRAT AND issuetype = "Initiative" AND (labels = "initiative-autofix-rubric-pass") '
         'AND (labels NOT IN ("strat-creator-processing") OR labels IS EMPTY) AND status NOT IN ("Closed", "Resolved") '
         'ORDER BY key ASC')
     schemas = artifact_utils._strat_schemas(twin)
     assert (artifact_utils.SCHEMAS[f"{TWIN}-task"], artifact_utils.SCHEMAS[f"{TWIN}-review"]) == (
         schemas["strat-task"], schemas["strat-review"])
     assert schemas["strat-task"]["type"]["enum"] == [TWIN] and "type" not in schemas["strat-review"]
-    assert schemas["strat-task"]["strat_id"]["pattern"] == r"^(ISTRAT-\d+|RHOAIENG-\d+)$"
+    assert schemas["strat-task"]["strat_id"]["pattern"] == r"^(ISTRAT-\d+|RHAISTRAT-\d+)$"
     assert "source_initiative" in schemas["strat-task"] and "source_rfe" not in schemas["strat-task"]
     assert list(schemas["strat-task"])[:4] == ["strat_id", "title", "source_initiative", "jira_key"]
-    # A second type resolves with --type and from its own ids; the input's id still names rfe-strategy.
+    # A second type resolves with --type and from its local ids; an RHAISTRAT key is either type's, so a
+    # headless run needs --type; the input's id still names rfe-strategy.
     assert type_registry.resolve(REG, explicit_type=TWIN, env={}).desc is twin
-    assert type_registry.resolve(REG, ids=["RHOAIENG-1"], env={}).line() == f"TYPE RESOLVED: {TWIN} (id grammar)"
+    assert type_registry.resolve(REG, ids=["ISTRAT-1"], env={}).line() == f"TYPE RESOLVED: {TWIN} (id grammar)"
+    assert type_registry.resolve(REG, ids=["RHAISTRAT-1"], env={}).ambiguous
+    with pytest.raises(type_registry.ResolveError):
+        type_registry.resolve(REG, ids=["RHAISTRAT-1"], env={"CI": "true"})
+    assert type_registry.resolve(REG, explicit_type=TWIN, ids=["RHAISTRAT-1"], env={"CI": "true"}).desc is twin
     assert type_registry.resolve(REG, ids=["RHAIRFE-1"], env={"CI": "true"}).type_name == SHIPPED
-    # Same ticket: processed = the Initiatives that carry a skip label, from one search on RHOAIENG.
+    # Same ticket: processed = the Initiatives that carry a skip label, from one search on RHAISTRAT.
     searches = []
     monkeypatch.setattr(jira_utils, "search_issues",
-                        lambda s, u, t, jql, fields=None: searches.append((jql, fields)) or [{"key": "RHOAIENG-2"}])
+                        lambda s, u, t, jql, fields=None: searches.append((jql, fields)) or [{"key": "RHAISTRAT-2"}])
     skip = yaml.safe_load((REPO / twin.get("discovery.settings")).read_text(encoding="utf-8"))["skip_labels"]
-    assert jira_utils.find_processed_rfe_ids("s", "u", "t", skip, desc=twin) == {"RHOAIENG-2"}
-    assert searches == [('project = RHOAIENG AND (labels = "strat-creator-rubric-pass" OR labels = '
+    assert jira_utils.find_processed_rfe_ids("s", "u", "t", skip, desc=twin) == {"RHAISTRAT-2"}
+    assert searches == [('project = RHAISTRAT AND issuetype = "Initiative" AND '
+                         '(labels = "strat-creator-rubric-pass" OR labels = '
                          '"strat-creator-needs-attention" OR labels = "strat-creator-processing")', ["key"])]
 
 
@@ -546,8 +557,8 @@ def test_jira_scripts_equal_the_4c6ae1c_literals():
 
 def test_reporters_read_every_types_files(tmp_path):
     """generate-report and extract-pipeline-data list every registered type's tasks, reviews and review
-    comments: rfe-strategy's STRAT- and RHAISTRAT- (the 4c6ae1c globs) plus the twin's RHOAIENG-."""
-    ids = ["RHAISTRAT-2", "RHOAIENG-3", "STRAT-1"]
+    comments: rfe-strategy's STRAT- and RHAISTRAT- (the 4c6ae1c globs), which the twin shares, plus its ISTRAT-."""
+    ids = ["ISTRAT-3", "RHAISTRAT-2", "STRAT-1"]
     (tmp_path / "strat-tasks").mkdir()
     (tmp_path / "strat-reviews").mkdir()
     for strat_id in ids:
@@ -570,12 +581,16 @@ def test_reporters_read_each_types_source_field():
     from artifact_utils import source_key
     assert source_key({"source_rfe": "RHAIRFE-1"}, "STRAT-1") == "RHAIRFE-1"
     assert source_key({"source_rfe": "RHAIRFE-2"}, "RHAISTRAT-2") == "RHAIRFE-2"
-    assert source_key({"source_initiative": "RHOAIENG-3"}, "RHOAIENG-3") == "RHOAIENG-3"  # by id
-    assert source_key({"type": "initiative-strategy", "source_initiative": "RHOAIENG-4"}, "ISTRAT-4") == "RHOAIENG-4"
-    assert source_key({"source_initiative": "RHOAIENG-5"}, "STRAT-5") == ""  # an rfe-strategy id reads source_rfe
+    assert source_key({"source_initiative": "RHAISTRAT-3"}, "ISTRAT-3") == "RHAISTRAT-3"  # by id
+    # An unstamped RHAISTRAT file is rfe-strategy's: an Initiative strategy's task file is always stamped.
+    assert source_key({"source_initiative": "RHAISTRAT-3"}, "RHAISTRAT-3") == ""
+    stamped = {"type": "initiative-strategy", "source_initiative": "RHAISTRAT-3"}
+    assert source_key(stamped, "RHAISTRAT-3") == "RHAISTRAT-3"
+    assert source_key({"type": "initiative-strategy", "source_initiative": "RHAISTRAT-4"}, "ISTRAT-4") == "RHAISTRAT-4"
+    assert source_key({"source_initiative": "RHAISTRAT-5"}, "STRAT-5") == ""  # an rfe-strategy id reads source_rfe
     path = REPO / "scripts" / "extract-pipeline-data.py"
     spec = importlib.util.spec_from_file_location("extract_pipeline_data", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    task = {"meta": {"source_initiative": "RHOAIENG-3", "title": "t"}, "body": ""}
-    assert module.extract_strategy("RHOAIENG-3", task, None, None)["source_rfe"] == "RHOAIENG-3"
+    task = {"meta": {"type": "initiative-strategy", "source_initiative": "RHAISTRAT-3", "title": "t"}, "body": ""}
+    assert module.extract_strategy("RHAISTRAT-3", task, None, None)["source_rfe"] == "RHAISTRAT-3"

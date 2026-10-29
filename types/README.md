@@ -15,7 +15,7 @@ from rfe-creator PR #172 §3.5.
 | type | source → derived | status |
 |---|---|---|
 | `rfe-strategy` | RHAIRFE Feature Request → RHAISTRAT Feature (Cloners link) | today's pipeline, plus the `type:` stamp on task files; every value is a live literal with its `file:line @ cc1ba8c` |
-| `initiative-strategy` | RHOAIENG Initiative → the same ticket (`relation.kind: self`) | draft twin; the open questions are marked inline |
+| `initiative-strategy` | RHAISTRAT Initiative → the same ticket (`relation.kind: self`) | draft twin; the open questions are marked inline |
 
 ## Selecting a type
 
@@ -24,7 +24,8 @@ else the artifact's directory, else the ids' prefixes (a type's own key prefixes
 `rfe-strategy`. A headless or CI run (`STRAT_CREATOR_HEADLESS`, `CI` or `GITHUB_ACTIONS` set) never guesses: an id no
 type owns is an error there. `list-rfe-ids.py --type` and the create, refine, review and sign-off skills (`--type` in
 their arguments; refine falls back to the task file's `type:`) pick the type today; `push_strategy.py` and
-`pull_strategy.py` know a `relation.kind: self` type's key by its prefix; `generate-report.py`,
+`pull_strategy.py` know a `relation.kind: self` type's key by its prefix, and by the ticket's Jira issue type
+when two types share the prefix (RHAISTRAT: Features and Initiatives); `generate-report.py`,
 `extract-pipeline-data.py` and `push_refined_strategies.py` list every type's files; the other scripts read
 `rfe-strategy`'s values, and a comment in each says how it would pick the type per call.
 
@@ -38,7 +39,7 @@ default. Each type's schema allows only its own name and refuses ids and fields 
 stamped: strategy-review and strategy-signoff attach them to Jira whole, and a checkout from before the stamp refuses a
 field it does not know. `frontmatter.py` and the `artifact_utils.py` read/write helpers read the stamp: a strategy
 file validates against its own type's schema, picked by its `type:`, else by the id its file name starts with
-(`RHOAIENG-1.md`, `RHOAIENG-1-review.md`). `rfe-strategy`'s schemas keep the names `strat-task` and `strat-review`;
+(`RHAISTRAT-1.md`; two types share that prefix, so an unstamped file is `rfe-strategy`'s). `rfe-strategy`'s schemas keep the names `strat-task` and `strat-review`;
 every other type's are `<type>-task` and `<type>-review` (rfe-creator's names, `frontmatter.py schema <name>`). There
 is no `tracker_ref`: `jira_key` (`identity.tracker_key_field`) already holds the tracker key.
 

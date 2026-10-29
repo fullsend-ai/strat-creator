@@ -31,6 +31,7 @@ from jira_utils import (
     download_attachment,
     get_comments,
     get_issue,
+    issue_type_name,
     reconstruct_business_need,
     require_env,
 )
@@ -61,7 +62,7 @@ ATTACHMENT_NOTICE_MARKER = "exceeds Jira's description size limit"
 
 def _same_ticket_type(key):
     """The type of ``key`` when the ticket is its own input (relation self), else None."""
-    desc = _TYPES.detect(key)
+    desc = _TYPES.detect(key, issue_type=lambda: issue_type_name(key, get_issue))
     return desc if desc and desc.get("inputs.0.relation.kind") == "self" else None
 
 

@@ -976,23 +976,29 @@ def test_same_ticket_gates_read_the_initiative_itself(monkeypatch):
     import prepare_run
 
     initiative = prepare_run.load_types().get("initiative-strategy")
-    labels = ["initiative-autofix-rubric-pass"]
+    labels, kind = ["initiative-autofix-rubric-pass"], ["Initiative"]
     monkeypatch.setattr(prepare_run, "require_env", lambda: ("s", "u", "t"))
     monkeypatch.setattr(prepare_run, "get_issue", lambda *a, **k: {"fields": {
-        "status": {"name": "New"}, "labels": list(labels)}})
+        "status": {"name": "New"}, "labels": list(labels), "issuetype": {"name": kind[0]}}})
     monkeypatch.setattr(prepare_run, "find_strat_clones", lambda *a: pytest.fail("an Initiative has no clones"))
-    settings = {"jql": {"quality_labels": ["initiative-autofix-rubric-pass"], "excluded_statuses": ["Closed"]}}
+    settings = {"jql": {"issue_type": "Initiative", "quality_labels": ["initiative-autofix-rubric-pass"],
+                        "excluded_statuses": ["Closed"]}}
     # No required labels or target versions: release scope is not checked, and nothing is cloned.
-    assert prepare_run.expected_create_skip("RHOAIENG-1", settings, initiative) is None
+    assert prepare_run.expected_create_skip("RHAISTRAT-1", settings, initiative) is None
+    # RHAISTRAT also holds RFE strategies: a Feature given as RFE_KEY is skipped, never written over.
+    kind[0] = "Feature"
+    assert prepare_run.expected_create_skip("RHAISTRAT-1", settings, initiative) == \
+        "issue type: Feature, not Initiative"
+    kind[0] = "Initiative"
     labels[:] = ["other"]
-    assert prepare_run.expected_create_skip("RHOAIENG-1", settings, initiative) == "quality: no quality label"
+    assert prepare_run.expected_create_skip("RHAISTRAT-1", settings, initiative) == "quality: no quality label"
     labels[:] = ["initiative-autofix-rubric-pass"]
-    assert prepare_run.resume_point("RHOAIENG-1", {}, initiative) == ("create", None)
+    assert prepare_run.resume_point("RHAISTRAT-1", {}, initiative) == ("create", None)
     labels.append("strat-creator-auto-refined")
-    assert prepare_run.resume_point("RHOAIENG-1", {}, initiative) == ("refine", None)
+    assert prepare_run.resume_point("RHAISTRAT-1", {}, initiative) == ("refine", None)
     labels.append("strat-creator-rubric-pass")
-    assert prepare_run.resume_point("RHOAIENG-1", {}, initiative) == \
-        (None, "RHOAIENG-1 already approved (rubric-pass)")
+    assert prepare_run.resume_point("RHAISTRAT-1", {}, initiative) == \
+        (None, "RHAISTRAT-1 already approved (rubric-pass)")
 
 
 @pytest.mark.parametrize("extra,error", [
@@ -1008,7 +1014,7 @@ def test_type_selection_is_checked_before_jira(monkeypatch, tmp_path, capsys, ex
     (tmp_path / "target" / ".context/architecture-context/LATEST_VERSION").write_text("rhoai-9.9\n")
     monkeypatch.setattr(prepare_run, "require_env", lambda: pytest.fail("read Jira"))
     env = {"STRAT_RUN_ID": "r", "STRAT_STATE_DIR": str(tmp_path / "state"),
-           "TARGET_REPO_DIR": str(tmp_path / "target"), "RFE_KEY": "RHOAIENG-1", **extra}
+           "TARGET_REPO_DIR": str(tmp_path / "target"), "RFE_KEY": "RHAISTRAT-1", **extra}
     assert prepare_run.main(["prepare_run.py", "single"], env) == 1
     assert error in capsys.readouterr().err
 

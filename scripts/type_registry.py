@@ -288,9 +288,12 @@ class TypeRegistry:
     def __contains__(self, name):
         return name in self._types
 
-    def detect(self, item_id):
+    def detect(self, item_id, issue_type=None):
         """The one type that owns ``item_id`` (``local_id_pattern`` full match first, then key
-        prefix, then local prefix); ``None`` when nothing matches; ``RegistryError`` when two do."""
+        prefix, then local prefix); ``None`` when nothing matches; ``RegistryError`` when two do.
+        Two types may share a key prefix (RHAISTRAT: rfe-strategy's Features, initiative-strategy's
+        Initiatives); ``issue_type``, the ticket's Jira issue type or a callable returning it (called
+        only on such a tie), then keeps the types whose ``identity.jira.issue_type`` it is."""
         if not isinstance(item_id, str) or not item_id:
             return None
         for rung in (
@@ -299,6 +302,11 @@ class TypeRegistry:
             lambda d: item_id.startswith(d.local_prefix),
         ):
             matches = [d for d in self if rung(d)]
+            if len(matches) > 1 and issue_type is not None:
+                wanted = issue_type() if callable(issue_type) else issue_type
+                matches = [d for d in matches if d.get("identity.jira.issue_type", None) == wanted]
+                if not matches:
+                    return None
             if len(matches) == 1:
                 return matches[0]
             if len(matches) > 1:

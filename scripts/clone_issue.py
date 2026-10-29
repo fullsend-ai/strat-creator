@@ -25,6 +25,7 @@ from jira_utils import (
     create_issue_link,
     get_issue,
     get_project_versions,
+    issue_type_name,
     require_env,
 )
 from strat_side_effects import OWNER_PREFIX
@@ -111,7 +112,7 @@ def main():
                         help="Issue type in target project (default: Feature)")
     args = parser.parse_args()
 
-    owner = _TYPES.detect(args.source_key)
+    owner = _TYPES.detect(args.source_key, issue_type=lambda: issue_type_name(args.source_key, get_issue))
     if owner and owner.get("inputs.0.relation.kind", None) == "self":
         print(f"Error: {args.source_key} is a {owner.name} item, which runs on its own ticket; "
               "refusing to clone it.", file=sys.stderr)

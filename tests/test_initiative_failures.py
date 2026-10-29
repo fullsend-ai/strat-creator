@@ -106,13 +106,13 @@ class TestRetry:
 
     def test_a_503_then_200_returns(self, monkeypatch):
         calls, sleeps = self._jira(monkeypatch, 503)
-        assert jira_utils.api_call_with_retry("s", "/issue/RHOAIENG-1", "u", "t") == {"ok": True}
+        assert jira_utils.api_call_with_retry("s", "/issue/RHAISTRAT-1", "u", "t") == {"ok": True}
         assert len(calls) == 2 and sleeps == [1]
 
     def test_three_503s_raise(self, monkeypatch):
         calls, sleeps = self._jira(monkeypatch, 503, 503, 503)
         with pytest.raises(urllib.error.HTTPError) as error:
-            jira_utils.api_call_with_retry("s", "/issue/RHOAIENG-1", "u", "t")
+            jira_utils.api_call_with_retry("s", "/issue/RHAISTRAT-1", "u", "t")
         assert error.value.code == 503
         assert len(calls) == 3 and sleeps == [1, 4, 16]
 
@@ -120,22 +120,22 @@ class TestRetry:
 class TestDuplicate:
 
     def test_a_second_lock_takes_nothing(self, jira):
-        _initiative(jira, "RHOAIENG-3000")
-        first = _run("lock_issues.py", "lock", "RHOAIENG-3000", jira=jira)
-        second = _run("lock_issues.py", "lock", "RHOAIENG-3000", jira=jira)
-        assert (first.returncode, first.stdout.split()) == (0, ["RHOAIENG-3000"])
+        _initiative(jira, "RHAISTRAT-3000")
+        first = _run("lock_issues.py", "lock", "RHAISTRAT-3000", jira=jira)
+        second = _run("lock_issues.py", "lock", "RHAISTRAT-3000", jira=jira)
+        assert (first.returncode, first.stdout.split()) == (0, ["RHAISTRAT-3000"])
         # batch-jql reads stdout as the keys it owns: empty means "already locked", nothing to do.
         assert (second.returncode, second.stdout.strip()) == (0, "")
-        assert f"BLOCKED RHOAIENG-3000 — has label(s): {LOCK}" in second.stderr
+        assert f"BLOCKED RHAISTRAT-3000 — has label(s): {LOCK}" in second.stderr
 
 
 class TestPartialFailure:
 
     def test_one_missing_initiative_fails_the_run_not_the_others(self, jira, art_dir):
-        _initiative(jira, "RHOAIENG-3101")  # RHOAIENG-3100 does not exist and sorts first
-        before = jira.get("RHOAIENG-3101")["fields"]
+        _initiative(jira, "RHAISTRAT-3101")  # RHAISTRAT-3100 does not exist and sorts first
+        before = jira.get("RHAISTRAT-3101")["fields"]
         tasks = art_dir / "artifacts" / "strat-tasks"
-        for key in ("RHOAIENG-3100", "RHOAIENG-3101"):
+        for key in ("RHAISTRAT-3100", "RHAISTRAT-3101"):
             (tasks / f"{key}.md").write_text(
                 f"---\nstrat_id: {key}\ntitle: t\nsource_initiative: {key}\njira_key: {key}\npriority: Major\n"
                 "status: Refined\ntype: initiative-strategy\n---\n\n## Business Need (from Initiative)\n\nGrow.\n\n"
@@ -143,12 +143,12 @@ class TestPartialFailure:
 
         result = _run("push_refined_strategies.py", "--artifacts-dir", str(tasks), jira=jira)
         assert result.returncode == 1
-        assert "ERROR: push failed for RHOAIENG-3100" in result.stderr
+        assert "ERROR: push failed for RHAISTRAT-3100" in result.stderr
         assert "Pushed 1/2 strategies to Jira (0 skipped, 1 failed)" in result.stdout
-        after = jira.get("RHOAIENG-3101")["fields"]
+        after = jira.get("RHAISTRAT-3101")["fields"]
         assert "strat-creator-auto-refined" in after["labels"]
         assert (after["summary"], after["description"]) == (before["summary"], before["description"])
-        assert [a["filename"] for a in after["attachment"]] == ["RHOAIENG-3101-strategy.md"]
+        assert [a["filename"] for a in after["attachment"]] == ["RHAISTRAT-3101-strategy.md"]
 
 
 class TestRecovery:
@@ -157,11 +157,11 @@ class TestRecovery:
         """The job died after push_refined_strategies, before its review and after_script: the lock and
         auto-refined stay on the Initiative. Discovery skips it until unlock, then takes it again, because
         auto-refined is not a skip label."""
-        _initiative(jira, "RHOAIENG-3200", LOCK, "strat-creator-auto-refined")
-        _initiative(jira, "RHOAIENG-3201")
-        assert _discover(jira) == ["RHOAIENG-3201"]
+        _initiative(jira, "RHAISTRAT-3200", LOCK, "strat-creator-auto-refined")
+        _initiative(jira, "RHAISTRAT-3201")
+        assert _discover(jira) == ["RHAISTRAT-3201"]
 
-        unlock = _run("lock_issues.py", "unlock", "RHOAIENG-3200", jira=jira)
+        unlock = _run("lock_issues.py", "unlock", "RHAISTRAT-3200", jira=jira)
         assert unlock.returncode == 0, unlock.stderr
-        assert LOCK not in jira.get("RHOAIENG-3200")["fields"]["labels"]
-        assert _discover(jira) == ["RHOAIENG-3200", "RHOAIENG-3201"]
+        assert LOCK not in jira.get("RHAISTRAT-3200")["fields"]["labels"]
+        assert _discover(jira) == ["RHAISTRAT-3200", "RHAISTRAT-3201"]

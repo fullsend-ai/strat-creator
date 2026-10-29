@@ -50,13 +50,10 @@ def test_rfe_strategy_meets_the_decomposer_contract():
 
 
 def test_initiative_strategy_gaps_are_known():
-    # Same ticket: an RHOAIENG Initiative is never selected by the decomposer's JQL, its key fails
-    # every RHAISTRAT id check, and its overflow attachment name is not the one fetch_strategy reads.
+    # Same ticket, now in RHAISTRAT (AISDLC-461): the project, key and attachment name fit; the
+    # decomposer's JQL still selects Features with a Target Version only, so an Initiative is never picked.
     # Labels and the template already fit.
     assert handoff_gaps(type_registry.load().get("initiative-strategy")) == {
-        "project",
         "issue_type",
         "target_version",
-        "id_pattern",
-        "attachment",
     }

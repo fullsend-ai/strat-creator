@@ -191,8 +191,12 @@ def expected_create_skip(rfe, settings, desc):
     """
     server, user, token = require_env()
     fields = get_issue(server, user, token, rfe,
-                       fields=["status", "labels", TARGET_VERSION_FIELD]).get("fields", {})
+                       fields=["status", "labels", "issuetype", TARGET_VERSION_FIELD]).get("fields", {})
     jql = settings.get("jql", {})
+    # A same-ticket type's project may hold other issue types too (RHAISTRAT: Features).
+    issue_type = (fields.get("issuetype") or {}).get("name", "")
+    if jql.get("issue_type") and issue_type != jql["issue_type"]:
+        return f"issue type: {issue_type}, not {jql['issue_type']}"
     status = (fields.get("status") or {}).get("name", "")
     if status in set(jql.get("excluded_statuses", [])):
         return f"RFE status: {status}"

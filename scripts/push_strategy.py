@@ -33,6 +33,7 @@ from jira_utils import (
     attachment_sort_key,
     build_rfe_reference,
     get_issue,
+    issue_type_name,
     markdown_to_adf,
     require_env,
     set_fields_verified,
@@ -405,7 +406,7 @@ def main():
 
     staff_input_section = extract_staff_input_section(local_content)
 
-    desc = _TYPES.detect(args.issue_key)
+    desc = _TYPES.detect(args.issue_key, issue_type=lambda: issue_type_name(args.issue_key, get_issue))
     if desc and desc.get("inputs.0.relation.kind") == "self":
         _push_same_ticket(server, user, token, args.issue_key,
                           strategy_section, staff_input_section)

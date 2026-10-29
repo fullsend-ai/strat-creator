@@ -51,14 +51,14 @@ class TestRemoveDraftPrefix:
         assert issue["fields"]["summary"] == "Model serving autoscaler"
 
     def test_initiative_summary_is_never_touched(self, jira):
-        jira.create("RHOAIENG-702", "[DRAFT] Initiative owned by rfe-creator",
+        jira.create("RHAISTRAT-702", "[DRAFT] Initiative owned by rfe-creator",
                      "Initiative body.", issue_type="Initiative")
 
-        result = _run(jira, ["RHOAIENG-702"])
+        result = _run(jira, ["RHAISTRAT-702"])
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "[SKIP] initiative-strategy has no summary prefix" in result.stdout
 
-        issue = jira.get("RHOAIENG-702")
+        issue = jira.get("RHAISTRAT-702")
         assert issue["fields"]["summary"] == "[DRAFT] Initiative owned by rfe-creator"
 
     def test_missing_env_vars_exits_with_code_2(self, jira):

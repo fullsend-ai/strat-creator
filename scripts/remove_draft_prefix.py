@@ -16,7 +16,7 @@ import argparse
 import sys
 
 import type_registry
-from jira_utils import get_issue, require_env, update_summary
+from jira_utils import get_issue, issue_type_name, require_env, update_summary
 
 # conventions.summary_prefix of the default work type: added at create, removed here at signoff.
 # For now: one type's prefix; resolve it from the issue key once a type with its own prefix lands.
@@ -31,7 +31,7 @@ def main():
     parser.add_argument("issue_key", help="Jira issue key (e.g. RHAISTRAT-1500)")
     args = parser.parse_args()
 
-    owner = _TYPES.detect(args.issue_key)
+    owner = _TYPES.detect(args.issue_key, issue_type=lambda: issue_type_name(args.issue_key, get_issue))
     if owner and owner.get("conventions.summary_prefix", None) is None:
         print(f"[SKIP] {owner.name} has no summary prefix -- {args.issue_key} summary unchanged")
         return

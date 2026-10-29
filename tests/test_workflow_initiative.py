@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / ".fullsend/shared"))
 STATE = ROOT / "scripts/strat_pipeline_state.py"
-KEY = "RHOAIENG-41"
+KEY = "RHAISTRAT-41"
 
 
 def module(name, path):
@@ -77,11 +77,16 @@ def test_reviewer_scope_follows_the_assigned_keys_type():
     assert scope.assignment(f"{scope.MARKER}{KEY}\n") == KEY
     with pytest.raises(scope.ScopeError):
         scope.assignment(f"{scope.MARKER}RHAIRFE-1\n")
-    own = {"key": KEY, "source_rfe": KEY}
+    # RHAISTRAT keys are both types': the task file's type: stamp picks the Initiative's rules.
+    initiative = scope.work_type(KEY, "initiative-strategy")
+    assert initiative.name == "initiative-strategy" and scope.work_type(KEY).name == "rfe-strategy"
+    own = {"key": KEY, "type": initiative, "source_rfe": KEY}
     scope.check_report(own, f"### {KEY}: Title\nFine.\n")
     with pytest.raises(scope.ScopeError, match="another strategy key"):
-        scope.check_report(own, f"### {KEY}: Title\nLike RHOAIENG-42.\n")
-    # An RFE strategy may cite engineering tickets: RHOAIENG is no RFE-side key.
+        scope.check_report(own, f"### {KEY}: Title\nLike RHAISTRAT-42.\n")
+    with pytest.raises(scope.ScopeError, match="Return one assessment"):
+        scope.check_report(own, "### ISTRAT-41: Title\nFine.\n")
+    # An RFE strategy may cite engineering tickets.
     scope.check_report({"key": "RHAISTRAT-1", "source_rfe": "RHAIRFE-1"},
                        "### RHAISTRAT-1: Title\nFrom RHAIRFE-1, see RHOAIENG-42.\n")
 
@@ -108,7 +113,7 @@ def test_ci_checks_the_type_and_its_single_key():
     config = module("initiative_config", ROOT / ".fullsend/ci/fullsend-config.py")
     base = {"CI_PIPELINE_SOURCE": "web", "STRAT_TYPE": "initiative-strategy"}
     assert config.validate({**base, "RFE_KEY": KEY})["type"] == "initiative-strategy"
-    for env, error in (({"RFE_KEY": "RHAIRFE-1"}, "RFE_KEY=RHOAIENG-N"), ({"RFE_KEY": "RHOAIENG-01"}, "RHOAIENG-N"),
+    for env, error in (({"RFE_KEY": "RHAIRFE-1"}, "RFE_KEY=RHAISTRAT-N"), ({"RFE_KEY": "RHAISTRAT-01"}, "RHAISTRAT-N"),
                        ({"STRAT_KEY": "RHAISTRAT-1"}, "single or batch mode only"),
                        ({"STRAT_TYPE": "nope"}, "STRAT_TYPE must be one of")):
         with pytest.raises(ValueError, match=error):
@@ -122,12 +127,12 @@ def test_validator_checks_keys_against_the_run_type():
     checker = validator.Checker()
     validator.check_keys(checker, result, {"type": "initiative-strategy"})
     assert checker.failures == []
-    result["strategies"][0]["strat"] = "RHOAIENG-42"
+    result["strategies"][0]["strat"] = "RHAISTRAT-42"
     validator.check_keys(checker, result, {"type": "initiative-strategy"})
-    assert checker.failures == [f"RHOAIENG-42 is not written on its own ticket {KEY}"]
+    assert checker.failures == [f"RHAISTRAT-42 is not written on its own ticket {KEY}"]
     checker = validator.Checker()
-    validator.check_keys(checker, result, {})  # an RFE run: neither key is an RFE or a STRAT
-    assert len(checker.failures) == 4  # 3 input keys, 1 strategy key
+    validator.check_keys(checker, result, {})  # an RFE run: RHAISTRAT-41 is no RFE (RHAISTRAT-42 may be a STRAT)
+    assert len(checker.failures) == 3  # the input, acquired and pair keys
 
 
 def test_initiative_results_publish_under_their_own_folder(tmp_path):
@@ -141,3 +146,16 @@ def test_initiative_results_publish_under_their_own_folder(tmp_path):
     assert not (tmp_path / "RHAISTRAT").exists()
     with pytest.raises(ValueError, match="invalid publication folder"):
         publisher.organize_identified_run(tmp_path, "r2", "../RHAISTRAT")
+
+
+def test_write_guard_takes_an_initiative_as_its_own_input(monkeypatch):
+    """RHAISTRAT holds Initiatives too: their writes are owned on the ticket itself, not via a Cloners link."""
+    import jira_utils
+    import strat_side_effects as effects
+    owner = effects.owner_label("r1")
+    monkeypatch.setattr(jira_utils, "get_issue", lambda *a, **k: {"fields": {
+        "issuelinks": [], "labels": [owner, "strat-creator-processing"]}})
+    data = {"run_id": "r1", "lock_owner": "r1", "acquired_keys": [KEY], "type": "initiative-strategy"}
+    effects.check_owner("s", "u", "t", KEY, data)
+    with pytest.raises(effects.UncertainWrite, match="no unique source RFE"):
+        effects.check_owner("s", "u", "t", KEY, {**data, "type": "rfe-strategy"})

@@ -198,11 +198,21 @@ SCHEMAS.update({f"{desc.name}-{name[len('strat-'):]}": spec
                 for desc in _TYPES if desc is not _TYPE for name, spec in _strat_schemas(desc).items()})
 
 
+def _owner(item_id):
+    """The type that owns ``item_id``, else rfe-strategy. A key two types share (RHAISTRAT) is
+    rfe-strategy's here: an Initiative strategy's task file carries its ``type:`` stamp, and the two
+    types' review schemas are the same."""
+    try:
+        return _TYPES.detect(item_id) or _TYPE
+    except type_registry.RegistryError:
+        return _TYPE
+
+
 def typed_schema(schema_type, path, data=None):
     """The schema a strategy file at ``path`` validates against. ``strat-task`` and ``strat-review``
     name the kind; the file's type picks the schema: its frontmatter ``type:`` (in ``data``, else in
     the file on disk), else the type that owns the id its file name starts with
-    (``TypeRegistry.detect``: ``RHOAIENG-1.md`` and ``RHOAIENG-1-review.md`` are initiative-strategy).
+    (``_owner``: ``ISTRAT-1.md`` is initiative-strategy; an unstamped ``RHAISTRAT-1.md`` is rfe-strategy's).
     rfe-strategy, a type with no schemas here and every other name keep ``schema_type``, so an
     rfe-strategy file validates exactly as before.
     For now: the stamp, then the file name — not resolve()'s whole ladder (no --type, no directory
@@ -215,10 +225,7 @@ def typed_schema(schema_type, path, data=None):
             data = read_frontmatter(path)[0] if os.path.isfile(path) else {}
         except (yaml.YAMLError, UnicodeDecodeError, OSError):
             data = {}  # no signal; the read or write that follows reports the file, as before
-    name = data.get("type")
-    if not name:
-        desc = _TYPES.detect(os.path.splitext(os.path.basename(path))[0])
-        name = desc.name if desc else _TYPE.name
+    name = data.get("type") or _owner(os.path.splitext(os.path.basename(path))[0]).name
     typed = f"{name}-{schema_type[len('strat-'):]}"
     return typed if typed in SCHEMAS else schema_type
 
@@ -228,7 +235,7 @@ def source_key(meta, strat_id):
     rfe-strategy's ``source_rfe``, initiative-strategy's ``source_initiative``). The type is picked as in
     typed_schema: the ``type:`` stamp, else the type that owns the id, else rfe-strategy."""
     name = meta.get("type")
-    desc = _TYPES.get(name) if name in _TYPES else (_TYPES.detect(strat_id) or _TYPE)
+    desc = _TYPES.get(name) if name in _TYPES else _owner(strat_id)
     return meta.get(desc.get("inputs.0.source_ref_field")) or ""
 
 

@@ -1,13 +1,12 @@
 # types/initiative-strategy/type.yaml — the initiative-strategy work-item type: a strategy for an RHAI Initiative
-# (an RHOAIENG Initiative written by rfe-creator's `initiative` type), produced on the SAME ticket. The twin of
+# (an RHAISTRAT Initiative written by rfe-creator's `initiative` type), produced on the SAME ticket. The twin of
 # rfe-strategy (AISDLC-60). Contract: types/_schema/type.schema.json.
 #
 # Provenance differs from rfe-strategy: no initiative pipeline runs yet, so nothing here is a live literal — every
 # value is AUTHORED. Values shared with rfe-strategy (labels, dirs, stages, rubric, eval) are the station's and are
 # copied, not decided here. Values marked `open question` wait for the Initiative owners (AISDLC-301):
-#   Same ticket or clone. This file follows the agreed direction (Initiatives run RFE Creator and Strategy
-#       Creator on the same Jira ticket): relation.kind: self and identity = the input's own binding. A clone would
-#       need a target binding for Initiative strategies; none exists today.
+#   Same ticket or clone: answered (AISDLC-461, 2026-10-28): the strategy goes on the RHAISTRAT Initiative itself,
+#       so relation.kind: self and identity = the input's own binding.
 #   Review dimensions: which apply to Initiatives (rfe-creator's initiative type reviews feasibility + alignment).
 #       All four are listed until decided — the twin's list is decided by omission.
 #   Sign-off: human sign-off stays (the signoff stage is present). On the shared ticket the summary and description
@@ -22,9 +21,9 @@ kind: strategy
 identity:
   tracker: jira
   jira:
-    project: RHOAIENG                                   # open question (same ticket): the derived record IS the Initiative
-    issue_type: Initiative                              # rfe-creator types/initiative/type.yaml identity.jira (its PUBLISHED binding)
-    key_prefixes: ["RHOAIENG-"]
+    project: RHAISTRAT                                  # the derived record IS the Initiative (AISDLC-461, 2026-10-28: Initiatives live in RHAISTRAT)
+    issue_type: Initiative                              # rfe-creator types/initiative/type.yaml identity.jira (fullsend-ai/rfe-creator#274)
+    key_prefixes: ["RHAISTRAT-"]                        # shared with rfe-strategy's Features: the issue type tells them apart (TypeRegistry.detect)
   local_prefix: "ISTRAT-"                               # local drafts before a key exists; authored; the reporters glob it
   local_id_pattern: '^ISTRAT-\d+$'                      # ONE backslash
   id_field: strat_id
@@ -33,11 +32,11 @@ identity:
 inputs:
   - from_type: initiative                               # rfe-creator's type name, carried as data — the stations import nothing from each other
     jira:
-      project: RHOAIENG
+      project: RHAISTRAT
       issue_type: Initiative
-      key_prefixes: ["RHOAIENG-"]
+      key_prefixes: ["RHAISTRAT-"]
     relation:
-      kind: self                                        # open question (see header); the alternative is `clones` plus a target binding
+      kind: self                                        # AISDLC-461: the strategy is written on the Initiative itself
     source_ref_field: source_initiative
     removed_context_marker:                             # rfe-creator initiative conventions.comment_prefix + removed_context_preamble — a CONSUMED contract (R7)
       comment_prefix: "[Initiative Creator]"
@@ -50,8 +49,8 @@ inputs:
 # for the strategy side; no script reads produces yet. An Epic (hierarchy level 1) may have an Initiative (level 2, as a
 # Feature) as its parent, so the Epics hang under the Initiative itself. The strategy headings the decomposer
 # parses are in pipeline.prompts.template, and the attachment it reads first is pipeline.body_overflow.attachment.
-# epic-creator reads only RHAISTRAT Features today; AISDLC-61 widens its intake, its attachment match and its id
-# patterns to RHOAIENG Initiatives.
+# epic-creator reads only RHAISTRAT Features today; AISDLC-61 widens its intake to RHAISTRAT Initiatives (same project,
+# key and attachment name since AISDLC-461).
 produces:
   - type: epic                                          # epic-creator's type, carried as data: (RHAI, Epic), submit.py TARGET_PROJECT / TARGET_ISSUE_TYPE
     relation: { kind: parent, dependency_link_type: Blocks }   # submit.py create_issue(parent_key=<strategy key>); Blocks between sibling Epics (DEPENDENCY_LINK_TYPE)
@@ -98,8 +97,8 @@ schema:
   task:
     status_enum: [Draft, Ready, Refined, Reviewed]
     extra_fields:
-      source_initiative: { type: string, required: true, pattern: '^(INIT-\d+|RHOAIENG-\d+)$' }   # the input's id grammar: its key prefix plus rfe-creator's initiative local prefix INIT-
-      jira_key: { type: string, required: false, pattern: '^RHOAIENG-\d+$', default: null }
+      source_initiative: { type: string, required: true, pattern: '^(INIT-\d+|RHAISTRAT-\d+)$' }   # the input's id grammar: its key prefix plus rfe-creator's initiative local prefix INIT-
+      jira_key: { type: string, required: false, pattern: '^RHAISTRAT-\d+$', default: null }
       workflow: { type: string, required: false, enum: [local, ci], default: null }
       latest_diff: { type: string, required: false, default: null }
       refine_count: { type: int, required: false }      # no default on purpose (ADR-0001), as for rfe-strategy

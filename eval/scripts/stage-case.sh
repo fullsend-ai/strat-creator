@@ -36,7 +36,7 @@ RFE_KEY="$(_field rfe_key)"
 # ; as well, so STRAT-[0-9]* happily accepts "STRAT-1/../../outside".
 [ -n "$RFE_KEY" ] || { log "FATAL: rfe_key missing in $INPUT"; exit 1; }
 # Both are <PROJECT>-<n> keys: an rfe-strategy case is STRAT-<n> from RHAIRFE-<n>, an
-# initiative-strategy case is RHOAIENG-<n> on the Initiative itself (build_dataset.py --type).
+# initiative-strategy case is RHAISTRAT-<n> on the Initiative itself (build_dataset.py --type).
 [[ "$STRAT_ID" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || {
   log "FATAL: strat_id must be <PROJECT>-<n>, got '$STRAT_ID'"; exit 1; }
 [[ "$RFE_KEY" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || {

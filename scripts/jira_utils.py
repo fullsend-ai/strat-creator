@@ -225,6 +225,7 @@ def build_jql_from_config(config_path):
         cfg = yaml.safe_load(f)
     jql_cfg = cfg.get("jql", {})
     project = jql_cfg.get("project", _TYPE.get("inputs.0.jira.project"))
+    issue_type = jql_cfg.get("issue_type")  # a project two types share (RHAISTRAT: Features, Initiatives)
     required = jql_cfg.get("required_labels", [])
     target_versions = jql_cfg.get("target_versions", [])
     quality = jql_cfg.get("quality_labels", [])
@@ -233,6 +234,8 @@ def build_jql_from_config(config_path):
     order = jql_cfg.get("order_by", "key ASC")
 
     clauses = [f'project = {project}']
+    if issue_type:
+        clauses.append(f'issuetype = "{issue_type}"')
     label_clause = " OR ".join(f'labels = "{label}"' for label in required)
     version_clause = ""
     if target_versions:
@@ -334,7 +337,8 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
         if not skip_labels:
             return set()
         label_clause = " OR ".join(f'labels = "{label}"' for label in skip_labels)
-        jql = f"project = {d.get('inputs.0.jira.project')} AND ({label_clause})"
+        jql = (f"project = {d.get('inputs.0.jira.project')} AND issuetype = \"{d.get('inputs.0.jira.issue_type')}\""
+               f" AND ({label_clause})")
         return {issue["key"] for issue in search_issues(server, user, token, jql, fields=["key"])}
     if d.get("inputs.0.relation.kind") != "clones":
         raise ValueError(f"{d.name}: the already-processed check follows a clones relation, not "
@@ -398,6 +402,17 @@ def get_issue(server, user, token, key, fields=None):
     if fields:
         path += f"?fields={','.join(fields)}"
     return api_call_with_retry(server, path, user, token)
+
+
+def issue_type_name(key, get=None):
+    """The Jira issue type of ``key``, None without Jira credentials: ``TypeRegistry.detect(key,
+    issue_type=...)`` settles a key prefix two types share with it (RHAISTRAT: Features and
+    Initiatives). ``get`` is the caller's ``get_issue``."""
+    server, user, token = require_env()
+    if not all([server, user, token]):
+        return None
+    fields = (get or get_issue)(server, user, token, key, fields=["issuetype"]).get("fields") or {}
+    return (fields.get("issuetype") or {}).get("name")
 
 
 def get_comments(server, user, token, issue_key):
