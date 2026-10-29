@@ -468,12 +468,35 @@ def _mark(args, progress, data):
                         if p["rfe"] in deferred}
         if not args.skipped:
             refined_now = {k for k in refined_now if pushable(k)}
-        covered = set(pushed(progress)) | refined_now
-        progress["push"] = {"done_at": now(), "skipped": bool(args.skipped), "strategies": sorted(covered)}
-        from strat_freshness import record
+        covered = set(pushed(progress))
+        failures = []
+        from strat_freshness import StaleTicket, batch_deferred, record
+        from strat_side_effects import HumanGateChanged
         for pair in (progress.get("create") or {}).get("strategies", []):
             if pair["strat"] in refined_now:
-                record(Path.cwd(), data, progress, "push", pair["strat"], pair["rfe"])
+                try:
+                    record(Path.cwd(), data, progress, "push", pair["strat"], pair["rfe"])
+                except (StaleTicket, HumanGateChanged) as error:
+                    if (data["mode"] != "batch"
+                            or isinstance(error, StaleTicket) and error.rfe != pair["rfe"]):
+                        raise
+                    failures.append((pair, error))
+                    covered.discard(pair["strat"])
+                else:
+                    covered.add(pair["strat"])
+        # Only successful snapshots enter coverage. A typed error is a claim,
+        # not permission to exclude a ticket; independently reconcile all inputs
+        # before saving, including changes after an earlier snapshot succeeded.
+        progress["push"] = {"done_at": now(), "skipped": bool(args.skipped), "strategies": sorted(covered)}
+        if data["mode"] == "batch":
+            progress["deferred"] = batch_deferred(Path.cwd(), data, progress)
+            deferred = {v["key"] for v in progress["deferred"]}
+            for pair, error in failures:
+                if pair["rfe"] not in deferred:
+                    raise error
+            excluded = {p["strat"] for p in (progress.get("create") or {}).get("strategies", [])
+                        if p["rfe"] in deferred}
+            progress["push"]["strategies"] = sorted(covered - excluded)
         recorded = "push"
     else:
         die(f"cannot mark {args.step!r}")

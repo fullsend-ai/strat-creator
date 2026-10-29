@@ -255,6 +255,20 @@ it fit. Unaffected creation records are retained and retries recheck deferrals.
 Internal review recording preserves typed freshness errors for batch recovery;
 unrelated verification errors remain fatal CLI errors.
 
+Push recording uses the same per-ticket recovery rule. Only successful push
+snapshots enter coverage, and a final independent input check must prove any
+excluded tickets before progress is saved. Shared and unrelated errors remain
+fatal. Change evidence accepts exact ASCII Jira keys and matching returned
+issue identities; both changelog GETs use the normal bounded read retries.
+
+Publication accepts canonical ticket artifact paths only for completed pairs.
+Task, review and report/provenance identities remain checked. Optional original
+metadata must match its ticket/source, and a saved review comment must match
+the verified review. Raw Jira descriptions/comments need no new metadata
+format. A STRAT original is also bound into review provenance when present;
+adding, removing or changing it after composition invalidates that review.
+The batch ticket and skip tables remain permitted summary outputs.
+
 ### Reviewer ticket scope
 
 The four forked reviewer Skills require exactly one strategy key. They select

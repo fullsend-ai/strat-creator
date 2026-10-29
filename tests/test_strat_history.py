@@ -51,7 +51,7 @@ def test_paginated_history_is_fetched_without_gaps(monkeypatch):
     rows = [row(i, change("description", str(i), str(i + 1))) for i in range(5)]
     calls = []
 
-    def api(server, path, user, token):
+    def api(server, path, user, token, *args):
         calls.append(path)
         if "expand=" in path:
             return {"changelog": {"total": 5, "startAt": 0, "histories": rows[:1]}}
@@ -132,7 +132,7 @@ def test_cursor_reads_only_last_page_when_expansion_is_truncated(monkeypatch):
 
     calls = []
 
-    def api(server, path, user, token):
+    def api(server, path, user, token, *args):
         calls.append(path)
         if "expand=" in path:
             return {"changelog": {"total": 1000, "startAt": 0, "histories": []}}
@@ -163,7 +163,7 @@ def test_missing_or_out_of_order_history_page_is_not_proof(monkeypatch, page):
 
     monkeypatch.setattr(jira_utils, "require_env", lambda: ("http://fixture", "admin", "admin"))
 
-    def api(server, path, user, token):
+    def api(server, path, user, token, *args):
         return {"changelog": {"total": 2, "startAt": 0, "histories": []}} if "expand=" in path else page
 
     monkeypatch.setattr(jira_utils, "api_call", api)
@@ -180,7 +180,7 @@ def test_other_strategy_cannot_supply_sme_history_proof(monkeypatch, tmp_path):
     monkeypatch.setattr(
         jira_utils,
         "get_issue",
-        lambda *args, **kwargs: {
+        lambda *args, **kwargs: {"key": "RHAISTRAT-1",
             "fields": {
                 "labels": [],
                 "status": {"name": "Open"},
@@ -200,7 +200,7 @@ def test_other_strategy_cannot_supply_sme_history_proof(monkeypatch, tmp_path):
     monkeypatch.setattr(
         jira_utils,
         "get_issue",
-        lambda *args, **kwargs: {
+        lambda *args, **kwargs: {"key": "RHAISTRAT-1",
             "fields": {
                 "labels": [],
                 "status": {"name": "Open"},
@@ -225,7 +225,7 @@ def test_new_gate_needs_a_successful_host_inventory(monkeypatch,tmp_path,invento
 
     monkeypatch.setattr(history,"histories",lambda key:[])
     monkeypatch.setattr(jira_utils,"require_env",lambda:("http://fixture","admin","admin"))
-    monkeypatch.setattr(jira_utils,"get_issue",lambda *a,**kw:{"fields":{
+    monkeypatch.setattr(jira_utils,"get_issue",lambda *a,**kw:{"key":"RHAISTRAT-1","fields":{
         "labels":["strat-creator-human-sign-off"],"status":{"name":"Open"},
         "issuelinks":[{"type":{"name":"Cloners"},"outwardIssue":{"key":"RHAIRFE-1"}}]}})
     base={"live":True,"strategy_history":{},"clone_inventory":{}}
@@ -244,7 +244,7 @@ def test_formatting_only_sme_history_is_not_independent_proof(monkeypatch,tmp_pa
     monkeypatch.setattr(history,"histories",lambda key:[] if key.startswith("RHAIRFE-") else
                         [row(1,change("description",before,after))])
     monkeypatch.setattr(jira_utils,"require_env",lambda:("http://fixture","admin","admin"))
-    monkeypatch.setattr(jira_utils,"get_issue",lambda *a,**kw:{"fields":{
+    monkeypatch.setattr(jira_utils,"get_issue",lambda *a,**kw:{"key":"RHAISTRAT-1","fields":{
         "labels":[],"status":{"name":"Open"},
         "issuelinks":[{"type":{"name":"Cloners"},"outwardIssue":{"key":"RHAIRFE-1"}}]}})
     base={"live":True,"strategy_history":{"RHAISTRAT-1":{

@@ -14,10 +14,12 @@ ACTIVE_STATUSES = {"Closed", "Resolved", "In Progress", "Review", "Release Pendi
 
 
 def histories(key, *, latest=False):
-    from jira_utils import api_call, require_env
+    from jira_utils import api_call_with_retry, require_env
 
+    if not isinstance(key, str) or not re.fullmatch(r"(?:RHAIRFE|RHAISTRAT)-[0-9]+", key):
+        raise ValueError("invalid Jira history key")
     server, user, token = require_env()
-    log = api_call(server, f"/issue/{key}?fields=summary&expand=changelog", user, token)["changelog"]
+    log = api_call_with_retry(server, f"/issue/{key}?fields=summary&expand=changelog", user, token)["changelog"]
     rows, total = log["histories"], log["total"]
     if not isinstance(rows, list) or type(total) is not int or total < 0:
         raise ValueError("malformed Jira history")
@@ -25,7 +27,7 @@ def histories(key, *, latest=False):
         rows = []
         offset = max(total - 1, 0) if latest else 0
         while offset < total:
-            page = api_call(server, f"/issue/{key}/changelog?startAt={offset}&maxResults=100", user, token)
+            page = api_call_with_retry(server, f"/issue/{key}/changelog?startAt={offset}&maxResults=100", user, token)
             values = page["values"]
             if page["startAt"] != offset or not values:
                 raise ValueError("incomplete Jira history")
@@ -160,11 +162,19 @@ def proves_change(root, data, progress, rfe):
 
     try:
         base = data["freshness"]
+        pairs = (progress.get("create") or {}).get("strategies", [])
+        if not isinstance(pairs, list) or any(
+            not isinstance(p, dict) or not isinstance(p.get("strat"), str)
+            or not re.fullmatch(r"(?:RHAISTRAT|STRAT)-[0-9]+", p["strat"])
+            or not isinstance(p.get("rfe"), str) or not re.fullmatch(r"RHAIRFE-[0-9]+", p["rfe"])
+            for p in pairs
+        ):
+            raise ValueError("invalid creation mapping for change evidence")
         if any(rfe_change(v) for v in since(histories(rfe), base.get("rfe_history", {}).get(rfe))):
             return True
         # Creation may encounter a gate before it can bind a human snapshot.
         # Candidate mappings discover keys; only Jira and host anchors prove drift.
-        for pair in (progress.get("create") or {}).get("strategies", []):
+        for pair in pairs:
             key = pair["strat"]
             if pair["rfe"] != rfe or not isinstance(key, str) or not key.startswith("RHAISTRAT-"):
                 continue
@@ -174,7 +184,10 @@ def proves_change(root, data, progress, rfe):
             if prepared is None and not base.get("live"):
                 continue  # An agent cursor does not establish a prepared live run.
             env = require_env()
-            fields = get_issue(*env, key, fields=["issuelinks", "labels", "status"])["fields"]
+            issue = get_issue(*env, key, fields=["issuelinks", "labels", "status"])
+            if issue.get("key") != key:
+                raise ValueError("Jira change-evidence identity differs from requested key")
+            fields = issue["fields"]
             linked = {
                 link[side]["key"]
                 for link in fields["issuelinks"]

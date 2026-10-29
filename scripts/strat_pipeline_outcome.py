@@ -17,8 +17,9 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from artifact_utils import read_frontmatter_validated
-from review_composition import _verify_review
+import yaml
+from artifact_utils import read_frontmatter, read_frontmatter_validated
+from review_composition import ROLES, _verify_review
 
 RECEIPT = "tmp/strat-completion.json"
 CONTRACT = "strat-business-validation-v1"
@@ -104,6 +105,55 @@ def creation_complete(data, progress):
         create.get("done_at") is None and pending and pending <= excluded)
 
 
+def publication_paths(pairs):
+    """Canonical ticket outputs for verified completed pairs, plus batch tables.
+
+    Content identity is checked by task frontmatter and review/input provenance;
+    raw Jira originals and delivered reports do not all have frontmatter.
+    """
+    paths = {"artifacts/strat-skipped.md", "artifacts/strat-tickets.md"}
+    for pair in pairs:
+        key, rfe = pair["strat"], pair["rfe"]
+        paths.update({f"artifacts/strat-tasks/{key}.md",
+                      f"artifacts/strat-originals/{rfe}.md",
+                      f"artifacts/strat-originals/{rfe}-comments.md",
+                      f"artifacts/strat-originals/{key}.md"})
+        paths.update(f"artifacts/strat-reviews/{key}-review{suffix}"
+                     for suffix in (".md", "-provenance.json", "-scorer.md", "-comment.md",
+                                    *(f"-{role}.md" for role in ROLES)))
+    return paths
+
+
+def verify_optional_identity(root, pair, listed, verdict):
+    """Check identities when optional originals carry metadata, and derived text.
+
+    Native Jira descriptions/comments are plain Markdown, not a new mandatory
+    frontmatter format. Do not infer ticket ownership from arbitrary body text.
+    """
+    key, rfe = pair["strat"], pair["rfe"]
+    for name, subject in ((f"{rfe}.md", rfe), (f"{rfe}-comments.md", rfe), (f"{key}.md", key)):
+        relative = f"artifacts/strat-originals/{name}"
+        if relative not in listed:
+            continue
+        try:
+            fm, _ = read_frontmatter(regular(root, relative))
+        except yaml.YAMLError:
+            # Native Jira Markdown may contain horizontal rules around text
+            # that is not YAML. Optional metadata is not a new input format.
+            fm = {}
+        for field in ("jira_key", "issue_key", "strat_id", "rfe_id"):
+            if field in fm and fm[field] != subject:
+                raise ValueError(f"original artifact identity mismatch: {relative}")
+        if "source_rfe" in fm and fm["source_rfe"] != rfe:
+            raise ValueError(f"original artifact source identity mismatch: {relative}")
+    comment = f"artifacts/strat-reviews/{key}-review-comment.md"
+    if comment in listed:
+        from publish_review import review_comment
+        expected = review_comment(regular(root, f"artifacts/strat-reviews/{key}-review.md"), verdict)
+        if regular(root, comment).read_text() != expected:
+            raise ValueError(f"review comment identity/content mismatch: {key}")
+
+
 def _business_errors(root, data, progress, result):
     """Validate batch contents after the caller verified these inputs/progress.
 
@@ -136,6 +186,9 @@ def _business_errors(root, data, progress, result):
         check(deferred == progress.get("deferred", []), "result deferrals disagree with saved progress")
         if not isinstance(pairs, list) or not isinstance(skips, list):
             raise ValueError("invalid create inventory")
+        if any(not isinstance(p, dict) or not isinstance(p.get("strat"), str)
+               or not re.fullmatch(r"(?:RHAISTRAT|STRAT)-[0-9]+", p["strat"]) for p in pairs):
+            raise ValueError("invalid strategy key in create inventory")
         keys = [p["strat"] for p in pairs]
         rfes = [p["rfe"] for p in pairs]
         check(len(keys) == len(set(keys)) and len(rfes) == len(set(rfes)), "create mapping is not one strategy per RFE")
@@ -158,8 +211,9 @@ def _business_errors(root, data, progress, result):
         listed = result["artifacts"]
         if not isinstance(listed, list):
             raise ValueError("invalid artifact inventory")
+        allowed = publication_paths(p for p in pairs if p["rfe"] not in excluded)
         for relative in listed:
-            check(relative.startswith("artifacts/"), "listed output is outside artifacts")
+            check(relative in allowed, "artifact is outside the completed ticket inventory")
             regular(root, relative)
         excluded_keys = set(excluded) | {p["strat"] for p in pairs if p["rfe"] in excluded}
         for relative in listed:
@@ -198,6 +252,7 @@ def _business_errors(root, data, progress, result):
                 f"{key}: recorded review has another composition session",
             )
             decision = manifest["decision"]
+            verify_optional_identity(root, pair, listed, decision)
             check(
                 isinstance(review, dict)
                 and review.get("recommendation") == decision["recommendation"]

@@ -75,10 +75,16 @@ def report_verdict(scope, role, report):
 
 def snapshot(root, key):
     scope = inputs(root, key)
-    return scope, {"strategy": {"path": str(scope["strategy"].relative_to(root)),
-                                "sha256": digest(scope["strategy"].read_bytes().decode())},
-                   "rfe": {"path": str(scope["rfe"].relative_to(root)),
-                           "sha256": digest(scope["rfe"].read_bytes().decode())}}
+    source = {"strategy": {"path": str(scope["strategy"].relative_to(root)),
+                           "sha256": digest(scope["strategy"].read_bytes().decode())},
+              "rfe": {"path": str(scope["rfe"].relative_to(root)),
+                      "sha256": digest(scope["rfe"].read_bytes().decode())}}
+    original = scope["strategy"].parent.parent / "strat-originals" / f"{key}.md"
+    if original.exists() or original.is_symlink():
+        original = regular(root, original)
+        source["strategy_original"] = {"path": str(original.relative_to(root)),
+                                       "sha256": digest(original.read_bytes().decode())}
+    return scope, source
 
 
 def begin(root, key, scorer):

@@ -348,10 +348,10 @@ def record(root, data, progress, phase, key, rfe):
         try:
             verify_staff(markdown, human["staff"])
         except ValueError as error:
-            if phase == "create":
+            if phase in ("create", "push"):
                 # A typed scope claim still needs independent Jira change proof
-                # before batch creation may defer this candidate.
-                raise StaleTicket(rfe, f"freshness: create SME input differs from live Jira: {key}") from error
+                # before batch recovery may defer this ticket.
+                raise StaleTicket(rfe, f"freshness: {phase} SME input differs from live Jira: {key}") from error
             raise
     if phase == "create":
         saved["targets"][key] = {"rfe": rfe, "human": human}
