@@ -26,6 +26,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -33,6 +34,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures" / "workflow-smoke"
+sys.path.insert(0, str(ROOT / "scripts"))  # strat_freshness, when this file runs alone
 DEFAULT_PROMPT = "Run the agent task"  # fullsend's prompt when there is no feedback
 
 pytestmark = pytest.mark.skipif(
