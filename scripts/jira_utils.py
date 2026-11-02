@@ -415,6 +415,11 @@ def issue_type_name(key, get=None):
     return (fields.get("issuetype") or {}).get("name")
 
 
+def myself(server, user, token):
+    """The Jira account these credentials authenticate as (/myself)."""
+    return make_request(f"{server.rstrip('/')}/rest/api/2/myself", user, token)
+
+
 def get_comments(server, user, token, issue_key):
     """GET all comments for an issue, handling pagination."""
     comments = []

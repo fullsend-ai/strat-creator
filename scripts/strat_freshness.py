@@ -165,11 +165,15 @@ def _type(work_type):
     return work_type or type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
 
 
-def own_comment(body, work_type):
-    """A comment this station posts (its comment prefix opens it), e.g. the review summary."""
+def own_comment(comment, work_type, me):
+    """A comment this station posted, e.g. the review summary: its comment prefix opens it and this
+    job's own Jira account wrote it, so a person's comment under the prefix still counts as input."""
     from jira_utils import adf_to_markdown
+    body, author = comment["body"], comment.get("author") or {}
     text = adf_to_markdown(body) if isinstance(body, dict) else str(body or "")
-    return text.lstrip("*_ ").startswith(work_type.get("conventions.comment_prefix"))
+    # accountId on Jira Cloud; the emulator's comment authors carry only email and name.
+    mine = any(author.get(k) and author.get(k) == me.get(k) for k in ("accountId", "emailAddress", "name"))
+    return mine and text.lstrip("*_ ").startswith(work_type.get("conventions.comment_prefix"))
 
 
 def jira_rfe(key, work_type=None):
@@ -178,7 +182,7 @@ def jira_rfe(key, work_type=None):
     A same-ticket type's input is also its strategy, which this run labels and
     comments on: those labels and comments are this station's own output, not input.
     """
-    from jira_utils import get_comments, get_issue, require_env
+    from jira_utils import get_comments, get_issue, myself, require_env
     work_type = _type(work_type)
     server, user, token = require_env()
     if not all((server, user, token)):
@@ -188,8 +192,9 @@ def jira_rfe(key, work_type=None):
     fields["labels"] = sorted(x for x in checked_labels(fields.get("labels"))
                               if x != "strat-creator-processing" and not x.startswith("strat-creator-owner-")
                               and not (own and x.startswith(own)))
+    me = myself(server, user, token) if work_type.same_ticket else None
     comments = [{"id": str(c["id"]), "body": c["body"]} for c in get_comments(server, user, token, key)
-                if not (work_type.same_ticket and own_comment(c["body"], work_type))]
+                if not (me and own_comment(c, work_type, me))]
     return digest({"fields": fields, "comments": comments})
 
 

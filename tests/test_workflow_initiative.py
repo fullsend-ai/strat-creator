@@ -97,15 +97,21 @@ def test_freshness_ignores_only_a_same_ticket_runs_own_labels_and_comments(monke
     import strat_freshness
     import type_registry
     work_type = type_registry.load().get(name)
-    labels, comments = ["initiative-autofix-rubric-pass"], [{"id": "1", "body": "Owner note"}]
+    bot, owner = {"accountId": "bot"}, {"accountId": "owner"}
+    labels, comments = ["initiative-autofix-rubric-pass"], [{"id": "1", "body": "Owner note", "author": owner}]
     monkeypatch.setattr(jira_utils, "require_env", lambda: ("s", "u", "t"))
     monkeypatch.setattr(jira_utils, "get_issue", lambda *a, **k: {"fields": {"labels": list(labels)}})
     monkeypatch.setattr(jira_utils, "get_comments", lambda *a: list(comments))
+    monkeypatch.setattr(jira_utils, "myself", lambda *a: bot)
     before = strat_freshness.jira_rfe(KEY, work_type)
     labels.append("strat-creator-rubric-pass")
-    comments.append({"id": "2", "body": jira_utils.markdown_to_adf("*[Strat Creator]* Strategy Review — APPROVE")})
+    review = jira_utils.markdown_to_adf("*[Strat Creator]* Strategy Review — APPROVE")
+    comments.append({"id": "2", "body": review, "author": bot})
     assert (strat_freshness.jira_rfe(KEY, work_type) == before) is ignored
-    comments.append({"id": "3", "body": "A human changed the ask"})
+    comments.append({"id": "3", "body": "A human changed the ask", "author": owner})
+    assert strat_freshness.jira_rfe(KEY, work_type) != before
+    comments.pop()
+    comments.append({"id": "4", "body": "[Strat Creator] A changed ask under the bot's prefix", "author": owner})
     assert strat_freshness.jira_rfe(KEY, work_type) != before
 
 
