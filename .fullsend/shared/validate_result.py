@@ -213,7 +213,9 @@ def review_verdict(c, strat, fm):
     return verdict.lower(), needs_attention
 
 
-def check_artifacts(c, result, repo):
+def check_artifacts(c, result, repo, run):
+    from type_registry import run_type
+    source_field = run_type(run).source_field  # source_rfe, or an Initiative's source_initiative
     for rel in result["artifacts"]:
         c.check(".." not in rel.split("/") and regular_file(repo, rel) is not None,
                 f"listed artifact {rel} is not a regular file in the repository")
@@ -230,7 +232,7 @@ def check_artifacts(c, result, repo):
         if not c.check(review is not None, f"artifacts/strat-reviews/{s['strat']}-review.md is missing"):
             continue
         task_fm, _ = read_frontmatter(task)
-        c.check(task_fm.get("strat_id") == s["strat"] and task_fm.get("source_rfe") == s["rfe"],
+        c.check(task_fm.get("strat_id") == s["strat"] and task_fm.get(source_field) == s["rfe"],
                 f"{s['strat']} task frontmatter does not match {s['rfe']}")
         review_fm, _ = read_frontmatter(review)
         c.check(review_fm.get("recommendation") == s["recommendation"],
@@ -310,7 +312,7 @@ def validate(result_path, repo, schema_path, run_path, env):
     check_coverage(c, result)
     check_create_skips(c, result, run)
     check_progress(c, result, repo, run)
-    check_artifacts(c, result, repo)
+    check_artifacts(c, result, repo, run)
     try:
         verify_completion(repo.resolve(), result_path)
     except (OSError, ValueError, KeyError, TypeError) as error:

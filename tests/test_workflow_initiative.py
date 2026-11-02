@@ -135,6 +135,21 @@ def test_validator_checks_keys_against_the_run_type():
     assert len(checker.failures) == 3  # the input, acquired and pair keys
 
 
+def test_validator_reads_an_initiative_tasks_own_source_field(repo):
+    validator = module("initiative_artifacts", ROOT / ".fullsend/shared/validate_result.py")
+    review = repo / f"artifacts/strat-reviews/{KEY}-review.md"
+    review.parent.mkdir(parents=True)
+    review.write_text("---\nrecommendation: approve\nneeds_attention: false\n---\nReview.\n")
+    result = {"artifacts": [f"artifacts/strat-tasks/{KEY}.md", f"artifacts/strat-reviews/{KEY}-review.md"],
+              "strategies": [{"rfe": KEY, "strat": KEY, "recommendation": "approve", "needs_attention": False}]}
+    checker = validator.Checker()
+    validator.check_artifacts(checker, result, repo, {"type": "initiative-strategy"})
+    assert not any("frontmatter" in f for f in checker.failures), checker.failures
+    checker = validator.Checker()
+    validator.check_artifacts(checker, result, repo, {})  # an RFE run reads source_rfe, which this task lacks
+    assert f"{KEY} task frontmatter does not match {KEY}" in checker.failures
+
+
 def test_initiative_results_publish_under_their_own_folder(tmp_path):
     publisher = module("initiative_publisher", ROOT / ".fullsend/shared/publish/push-results.py")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
