@@ -60,9 +60,12 @@ STRATEGY_ATTACHMENT_TEMPLATE = _TYPE.get("pipeline.body_overflow.attachment")
 ATTACHMENT_NOTICE_MARKER = "exceeds Jira's description size limit"
 
 
-def _same_ticket_type(key):
-    """The type of ``key`` when the ticket is its own input (relation self), else None."""
-    desc = _TYPES.detect(key, issue_type=lambda: issue_type_name(key, get_issue))
+def _same_ticket_type(key, fields=None):
+    """The type of ``key`` when the ticket is its own input (relation self), else None. ``fields``
+    is an issue fetch that included ``issuetype``, saving a second GET."""
+    issue_type = ((lambda: (fields.get("issuetype") or {}).get("name")) if fields is not None
+                  else (lambda: issue_type_name(key, get_issue)))
+    desc = _TYPES.detect(key, issue_type=issue_type)
     return desc if desc and desc.get("inputs.0.relation.kind") == "self" else None
 
 
@@ -99,7 +102,7 @@ def pull_strategy(server, user, token, strat_key, local_dir=WORKSPACE, *, pipeli
     # Fetch the STRAT issue
     issue = get_issue(server, user, token, strat_key,
                       fields=["summary", "description", "labels",
-                              "priority", "issuelinks", "attachment"])
+                              "priority", "issuelinks", "attachment", "issuetype"])
     fields = issue.get("fields", {})
 
     # Validate post-CI labels
@@ -119,7 +122,7 @@ def pull_strategy(server, user, token, strat_key, local_dir=WORKSPACE, *, pipeli
 
     # A ticket that is its own input: the description is the input's (its
     # owner's), and the strategy is only in the newest attachment.
-    same_ticket = _same_ticket_type(strat_key)
+    same_ticket = _same_ticket_type(strat_key, fields)
     work_type = same_ticket or _TYPE
     if same_ticket:
         heading = same_ticket.get("pipeline.section_ownership.0.heading")
