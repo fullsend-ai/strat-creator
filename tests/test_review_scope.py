@@ -194,6 +194,22 @@ def test_assigned_assessment_or_explicit_error_can_return(batch):
     scope.check_report(batch[1], "REVIEW_SCOPE_ERROR: source unavailable")
 
 
+@pytest.mark.parametrize("mode", ["artifacts", "local"])
+@pytest.mark.parametrize("cited_in", ["strategy", "rfe"])
+def test_related_rfe_cited_by_the_assigned_inputs_can_be_assessed(tmp_path, mode, cited_in):
+    strategy(tmp_path, "RHAISTRAT-1", "RHAIRFE-1", mode=mode)
+    strategy(tmp_path, "RHAISTRAT-3", "RHAIRFE-3", mode=mode)
+    inputs = scope.inputs(tmp_path, "RHAISTRAT-1")
+    path = inputs[cited_in]
+    path.write_text(path.read_text() + "Builds on prior work in RHAIRFE-2.\n")
+    scope.check_report(inputs, "### RHAISTRAT-1: Feature\nRHAIRFE-1 extends RHAIRFE-2.")
+    # Citations elsewhere in the batch do not widen this review's scope.
+    for report in ["### RHAISTRAT-1: Feature\nAlso see RHAIRFE-3.",
+                   "### RHAISTRAT-1: Feature\nRHAIRFE-2 and RHAISTRAT-3."]:
+        with pytest.raises(scope.ScopeError):
+            scope.check_report(inputs, report)
+
+
 def test_fullsend_bundles_the_same_scope_implementation_and_hooks():
     plugin = ROOT / ".fullsend/plugins/strat-pipeline"
     for path in plugin.rglob("*"):

@@ -147,8 +147,18 @@ def check_report(scope, report):
         raise ScopeError(f"Return one assessment headed '### {key}: <title>'.")
     if set(TARGET.findall(report)) != {key}:
         raise ScopeError("Assessment contains another strategy key.")
-    if set(SOURCE.findall(report)) - {scope["source_rfe"]}:
+    if set(SOURCE.findall(report)) - cited_rfes(scope):
         raise ScopeError("Assessment contains an unrelated source RFE.")
+
+
+def cited_rfes(scope):
+    # A faithful assessment may quote RFEs that the assigned strategy or its
+    # frozen source RFE cite. RFEs absent from those inputs remain unrelated.
+    allowed = {scope["source_rfe"]}
+    for name in ("strategy", "rfe"):
+        if scope.get(name):
+            allowed.update(SOURCE.findall(scope[name].read_bytes().decode()))
+    return allowed
 
 
 def guard(event):
