@@ -113,11 +113,12 @@ def rfe_num(rfe_key):
 
 def load_latest_triples(data_repo):
     """Return {rfe_key: dict} for the LATEST run that has a complete on-disk triple."""
-    runs = sorted(glob.glob(os.path.join(data_repo, "2026*", "pipeline-data.json")))
+    # Timestamped batch runs (20260411-143000/) and Workflow runs (run-<id>/, which publish only).
+    runs = sorted(glob.glob(os.path.join(data_repo, "2026*", "pipeline-data.json"))
+                  + glob.glob(os.path.join(data_repo, "run-*", "pipeline-data.json")))
     best = {}
     for pj in runs:
         run_dir = os.path.dirname(pj)
-        ts = os.path.basename(run_dir)
         try:
             with open(pj, encoding="utf-8") as fh:
                 d = json.load(fh)
@@ -126,6 +127,10 @@ def load_latest_triples(data_repo):
             # one and emit stale reference scores, so make the skip visible.
             print(f"  WARN: skipping unreadable run metadata {pj}: {e}", file=sys.stderr)
             continue
+        # Latest by time, as digits: the folder's timestamp, else a Workflow run's generated_at.
+        stamp = os.path.basename(run_dir) if not os.path.basename(run_dir).startswith("run-") else (
+            d.get("generated_at", "") if isinstance(d, dict) else "")
+        ts = re.sub(r"[^0-9]", "", str(stamp))[:14]
         items = d if isinstance(d, list) else (d.get("strategies") or d.get("data") or [])
         if not isinstance(items, list):
             continue

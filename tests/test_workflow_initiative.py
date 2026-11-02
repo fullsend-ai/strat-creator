@@ -185,3 +185,18 @@ def test_stale_ticket_scope_follows_the_run_type(repo):
     assert strat_freshness.source_rfe(repo, "RHAIRFE-1", rfe_run) == "RHAIRFE-1"
     with pytest.raises(ValueError, match="outside acquired"):  # an RFE run reads source_rfe, which it lacks
         strat_freshness.source_rfe(repo, KEY, rfe_run)
+
+
+def test_the_eval_reads_workflow_runs_latest_first(tmp_path):
+    """Workflow runs publish to run-<id>/ (no timestamp in the name); the eval orders them by generated_at."""
+    builder = module("initiative_build_dataset", ROOT / "eval/scripts/build_dataset.py")
+    for folder, generated_at, total in (("20261101-090000", None, 5), ("run-b", "2026-11-02T08:00:00", 9),
+                                        ("run-a", "2026-11-01T08:00:00", 7)):
+        run = tmp_path / folder
+        entry = {"source_rfe": KEY, "strat_id": KEY, "scores": {"total": total}}
+        for sub, name in (("strat-originals", KEY), ("strat-tasks", KEY), ("strat-reviews", f"{KEY}-review")):
+            (run / sub).mkdir(parents=True)
+            (run / sub / f"{name}.md").write_text("x\n")
+        data = [entry] if generated_at is None else {"generated_at": generated_at, "strategies": [entry]}
+        (run / "pipeline-data.json").write_text(json.dumps(data))
+    assert builder.load_latest_triples(str(tmp_path))[KEY]["entry"]["scores"]["total"] == 9
