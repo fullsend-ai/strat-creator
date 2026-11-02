@@ -13,12 +13,16 @@ You are signing off on a strategy that has passed CI review, marking it as featu
 an RFE or an Initiative whose strategy lives on the Initiative itself; the scripts tell them apart by issue type. If no key is provided, ask the
 user for one. `RHAISTRAT-NNNN` below stands for whichever key you were given.
 
-Resolve the work type from the key, adding `--type <type>` if `$ARGUMENTS` has one, and use the type it prints as
-`<type>` below. If it exits non-zero, show its error and stop.
+Resolve the work type from the local strategy file's `type:` stamp, adding `--type <type>` if `$ARGUMENTS` has one,
+and use the type it prints as `<type>` below. A key alone cannot tell the two types apart, so the file decides:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py resolve RHAISTRAT-NNNN
+python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py resolve --artifact local/strat-tasks/RHAISTRAT-NNNN.md RHAISTRAT-NNNN
 ```
+
+If it prints `TYPE AMBIGUOUS` and the file exists without a `type:` line, `<type>` is `rfe-strategy`: Initiative
+strategy files are always stamped, so an unstamped one is an RFE strategy pulled before types existed. If the file
+does not exist, continue to Step 1, which stops. On any other non-zero exit, show its error and stop.
 
 ## Step 1: Validate Pre-Conditions
 

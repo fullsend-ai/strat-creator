@@ -609,3 +609,17 @@ def test_vendored_skill_scripts_find_the_types(tmp_path):
         process = subprocess.run([sys.executable, str(scripts / argv[0]), *argv[1:]], cwd=tmp_path,
                                  env={**os.environ, "PYTHONPATH": ""}, capture_output=True, text=True, timeout=30)
         assert process.returncode == 0, process.stderr
+
+
+def test_signoff_resolves_the_type_from_the_local_file(tmp_path):
+    """A RHAISTRAT key is claimed by both types; the sign-off skill lets the file's stamp decide."""
+    skill = (REPO / ".claude/skills/strategy-signoff/SKILL.md").read_text()
+    assert "resolve --artifact local/strat-tasks/RHAISTRAT-NNNN.md RHAISTRAT-NNNN" in skill
+    tasks = tmp_path / "local" / "strat-tasks"
+    tasks.mkdir(parents=True)
+    for name in ("rfe-strategy", "initiative-strategy"):
+        path = tasks / f"RHAISTRAT-{len(name)}.md"
+        path.write_text(f"---\ntype: {name}\nstrat_id: {path.stem}\n---\nx\n")
+        process = subprocess.run([sys.executable, str(REPO / "scripts/type_registry.py"), "resolve",
+                                  "--artifact", str(path), path.stem], capture_output=True, text=True)
+        assert process.returncode == 0 and f"TYPE RESOLVED: {name}" in process.stdout, process.stdout
