@@ -594,3 +594,18 @@ def test_reporters_read_each_types_source_field():
     spec.loader.exec_module(module)
     task = {"meta": {"type": "initiative-strategy", "source_initiative": "RHAISTRAT-3", "title": "t"}, "body": ""}
     assert module.extract_strategy("RHAISTRAT-3", task, None, None)["source_rfe"] == "RHAISTRAT-3"
+
+
+def test_vendored_skill_scripts_find_the_types(tmp_path):
+    """vendor.py copies a skill's scripts to .claude/skills/<skill>/scripts/ and types/ to the
+    target root; the registry, imported by most skill scripts, must find types/ from there."""
+    target = tmp_path / "target"
+    target.mkdir()
+    subprocess.run([sys.executable, str(REPO / ".fullsend/shared/vendor.py"), str(REPO), str(target), "0" * 40],
+                   check=True, capture_output=True, text=True)
+    scripts = target / ".claude/skills/strategy-create/scripts"
+    assert not scripts.is_symlink()
+    for argv in (["fetch_issue.py", "--help"], ["type_registry.py", "list"]):
+        process = subprocess.run([sys.executable, str(scripts / argv[0]), *argv[1:]], cwd=tmp_path,
+                                 env={**os.environ, "PYTHONPATH": ""}, capture_output=True, text=True, timeout=30)
+        assert process.returncode == 0, process.stderr

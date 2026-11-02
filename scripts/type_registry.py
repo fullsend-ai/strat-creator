@@ -55,9 +55,13 @@ from pathlib import Path
 
 import yaml
 
-PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_ROOT = PLUGIN_ROOT / "types"
 DESCRIPTOR_FILENAME = "type.yaml"
+# The nearest ancestor holding types/: the checkout (scripts/), or a repo vendor.py copied a
+# skill's scripts into (.claude/skills/<skill>/scripts/, with types/ at the repo root).
+PLUGIN_ROOT = next((p for p in Path(__file__).resolve().parents
+                    if (p / "types" / "rfe-strategy" / DESCRIPTOR_FILENAME).is_file()),
+                   Path(__file__).resolve().parent.parent)
+DEFAULT_ROOT = PLUGIN_ROOT / "types"
 # Dev/test drop-in roots (os.pathsep-separated directories each holding <name>/type.yaml), the
 # same seam as rfe-creator's RFE_CREATOR_EXTRA_TYPES.
 # For now: no CI allowlist for drop-ins (rfe-creator's RFE_CREATOR_EXTRA_TYPES_ALLOWLIST); add it
