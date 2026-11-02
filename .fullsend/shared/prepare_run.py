@@ -265,7 +265,7 @@ def main(argv, env):
         return 1
     desc = types.get(type_name)
     if desc.same_ticket and (mode == "resume" or env.get("CONFIG_FILE")):
-        # ponytail: resume walks Cloners links and CONFIG_FILE names RFE configs; add them when a
+        # Not yet: resume walks Cloners links and CONFIG_FILE names RFE configs; add them when a
         # same-ticket type needs one.
         print(f"prepare-run: {type_name} runs in single or default-JQL batch mode only", file=sys.stderr)
         return 1

@@ -741,7 +741,8 @@ class TestPushSameTicket:
         jira.create("RHAISTRAT-1202", "Never pushed", "## Objective\n\nGrow.", issue_type="Initiative")
         local_file = art_dir / "artifacts" / "strat-tasks" / "RHAISTRAT-1201.md"
         for staff in ("", f"{STAFF_INPUT_HEADING}\n\nUse the shared scheduler."):
-            local_file.write_text("---\ntype: initiative-strategy\nstrat_id: RHAISTRAT-1201\nsource_initiative: RHAISTRAT-1201\n---\n\n"
+            local_file.write_text("---\ntype: initiative-strategy\nstrat_id: RHAISTRAT-1201\n"
+                                  "source_initiative: RHAISTRAT-1201\n---\n\n"
                                   f"{STRATEGY_HEADING}\n\nThe how.\n\n{staff}")
             assert _run(jira, "RHAISTRAT-1201", local_file).returncode == 0
 

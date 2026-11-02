@@ -39,7 +39,7 @@ inputs:                                                 # rfe-creator's RESERVED
       issue_type: Feature Request                       # CLAUDE.md:91 — prose only: the discovery JQL has no issuetype clause (jira_utils.py:214)
       key_prefixes: ["RHAIRFE-"]                        # jira_utils.py:256,:276 startswith("RHAIRFE"); pull_strategy.py:64,:154; push_strategy.py:205; artifact_utils.py:152 r"^(RFE-\d+|RHAIRFE-\d+)$" (source_rfe)
     relation:
-      kind: clones                                      # strategy-create/SKILL.md:97 "clone it into the RHAISTRAT project"; clone_issue.py:2-5 — open question: same-ticket initiatives need one new enum value (self); not added until ruled
+      kind: clones                                      # strategy-create/SKILL.md:97 "clone it into the RHAISTRAT project"; clone_issue.py:2-5; same-ticket Initiatives use the enum value self (initiative-strategy)
       link_type: Cloners                                # CLAUDE.md:86; jira_utils.py:251,:271; pull_strategy.py:59,:149; find_strat_for_rfe.py:42
       direction: derived_is_inward                      # rfe-creator fixture value; the consumers search BOTH directions (find_strat_for_rfe.py:44-47; jira_utils.py:253-259)
     source_ref_field: source_rfe                        # artifact_utils.py:149-153 (strat-task, required); pull_strategy.py:201
