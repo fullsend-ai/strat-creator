@@ -88,3 +88,28 @@ def test_missing_managed_input_refuses_hook_launch(tmp_path, monkeypatch, relati
         module.guard(event)
     monkeypatch.delenv("STRAT_MANAGED_RUN")
     assert module.guard(event) is None
+
+
+@pytest.mark.parametrize("journaled", [True, False])
+def test_same_ticket_run_reconciles_its_own_verdict_label(tmp_path, monkeypatch, journaled):
+    """An Initiative is both the write target and the strategy: after this run labels it
+    needs-attention, a retried write passes; the label from anyone else still stops it."""
+    import jira_utils
+    from strat_side_effects import CONTRACT, HumanGateChanged, digest, owner_label
+
+    monkeypatch.chdir(tmp_path)
+    data = {"run_id": "run-1", "lock_owner": "run-1", "type": "initiative-strategy",
+            "acquired_keys": ["RHAISTRAT-1"]}
+    labels = [owner_label("run-1"), "strat-creator-processing", "strat-creator-needs-attention"]
+    monkeypatch.setattr(jira_utils, "get_issue", lambda *a, **k: {"fields": {"labels": labels}})
+    if journaled:
+        identity = {"server_hash": digest("https://jira.invalid"), "kind": "add-labels", "target": "RHAISTRAT-1",
+                    "payload_hash": digest(["strat-creator-needs-attention"])}
+        effect = tmp_path / "tmp/strat-effects" / (digest(identity) + ".json")
+        effect.parent.mkdir(parents=True)
+        effect.write_text(json.dumps({"contract": CONTRACT, "run_id": "run-1", "identity": identity,
+                                      "status": "verified"}))
+        assert check_owner("https://jira.invalid", None, None, "RHAISTRAT-1", data) == "RHAISTRAT-1"
+    else:
+        with pytest.raises(HumanGateChanged):
+            check_owner("https://jira.invalid", None, None, "RHAISTRAT-1", data)

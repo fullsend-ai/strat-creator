@@ -239,7 +239,10 @@ def check_owner(server, user, token, target, data, *, expected_rfe=None):
     if owners != {owner_label(data["lock_owner"])} or "strat-creator-processing" not in labels:
         raise UncertainWrite("missing or conflicting Jira lock ownership")
     if labels & HUMAN_GATES:
-        raise HumanGateChanged(f"human gate stops source RFE writes: {target}")
+        if not type_registry.run_type(data).same_ticket:
+            raise HumanGateChanged(f"human gate stops source RFE writes: {target}")
+        # The source is also the strategy, so this run's own verdict label is reconciled as on a clone.
+        check_human_gates(server, target, sorted(labels), data)
     # A human intervention must not conceal a simultaneous ownership or link
     # failure. Establish the acquired source and its owner before classifying it.
     if strategy_labels is not None:
