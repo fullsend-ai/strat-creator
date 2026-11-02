@@ -222,8 +222,8 @@ Do NOT use the Agent tool for reviews. Use the Skill tool — the reviewer skill
 - **`strategy-scope-review`**: Is the strategy right-sized? Does the effort match the scope?
 - **`strategy-architecture-review`** (if architecture context available — `pipeline.dimensions[3].condition.context_exists`): Are dependencies correctly identified? Are integration patterns correct?
 
-Each reviewer resolves only the exact assigned strategy file and its
-`source_rfe`. A local file for a different ticket does not change its mode.
+Each reviewer resolves only the exact assigned strategy file and its source
+(`source_rfe`, or an Initiative strategy's `source_initiative`). A local file for a different ticket does not change its mode.
 The loaded strat-creator/strat-pipeline plugin blocks other ticket reads and
 checks each completed assessment's target. If any return begins with
 `REVIEW_SCOPE_ERROR:`, lacks the assigned heading, or includes another strategy
