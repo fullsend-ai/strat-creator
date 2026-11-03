@@ -28,6 +28,21 @@ from jira_utils import (
 )
 from strat_side_effects import OWNER_PREFIX
 
+# RFE-lifecycle labels describe the source RFE and mean nothing on a STRAT.
+RFE_LABEL_PREFIX = "rfe-creator-"
+
+
+def clone_labels(labels):
+    """Source labels to copy onto the clone.
+
+    Drops pipeline lock/ownership labels and rfe-creator-* labels, which
+    agents could otherwise confuse with strat-creator-* gate labels.
+    """
+    return [label for label in labels
+            if label != "strat-creator-processing"
+            and not label.startswith(OWNER_PREFIX)
+            and not label.startswith(RFE_LABEL_PREFIX)]
+
 
 def _resolve_parent_outcome(server, user, token, source_fields):
     """Return the source RFE's parent key if it's a valid, non-Closed Outcome."""
@@ -100,8 +115,7 @@ def main():
     priority_obj = fields.get("priority")
     priority = priority_obj.get("name", "Major") if isinstance(
         priority_obj, dict) else "Major"
-    labels = [label for label in fields.get("labels", [])
-              if label != "strat-creator-processing" and not label.startswith(OWNER_PREFIX)]
+    labels = clone_labels(fields.get("labels", []))
     components = [c["name"] for c in fields.get("components", [])
                   if isinstance(c, dict) and "name" in c]
     affects_versions = [v["name"] for v in fields.get("versions", [])

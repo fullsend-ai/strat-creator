@@ -3,6 +3,10 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+
+import clone_issue  # noqa: E402
+
 SCRIPT = os.path.join(os.path.dirname(__file__), "..", "scripts", "clone_issue.py")
 
 
@@ -71,6 +75,20 @@ class TestCloneIssue:
         clone_labels = clone["fields"].get("labels", [])
         assert "strat-creator-3.5" in clone_labels
         assert "tech-reviewed" in clone_labels
+
+    def test_rfe_creator_and_processing_labels_are_not_copied(self, jira):
+        jira.create("RHAIRFE-1010", "Flagged RFE", "Description.",
+                     labels=["rfe-creator-needs-attention",
+                             "rfe-creator-autofix-rubric-pass",
+                             "strat-creator-processing", "foo"])
+
+        result = _run(jira, ["RHAIRFE-1010", "--target-project", "RHAISTRAT"])
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        clone = jira.get(result.stdout.strip())
+        clone_labels = [label for label in clone["fields"].get("labels", [])
+                        if not label.startswith("strat-creator-clone-")]
+        assert clone_labels == ["foo"]
 
     def test_components_and_affects_versions_are_copied(self, jira):
         jira.create("RHAIRFE-1002", "Pipeline orchestration",
@@ -243,3 +261,12 @@ class TestCloneIssue:
         result = _run(jira, ["RHAIRFE-1000", "--target-project", "RHAISTRAT"],
                        env_override=env)
         assert result.returncode == 2
+
+
+class TestCloneLabels:
+
+    def test_strips_rfe_creator_processing_and_owner_labels(self):
+        labels = ["rfe-creator-needs-attention", "rfe-creator-autofix-rubric-pass",
+                  "strat-creator-processing", "strat-creator-owner-abc", "foo",
+                  "strat-creator-3.5"]
+        assert clone_issue.clone_labels(labels) == ["foo", "strat-creator-3.5"]

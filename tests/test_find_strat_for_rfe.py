@@ -4,6 +4,12 @@ import os
 import subprocess
 import sys
 
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+
+import find_strat_for_rfe  # noqa: E402
+
 SCRIPT = os.path.join(
     os.path.dirname(__file__), "..", "scripts", "find_strat_for_rfe.py")
 
@@ -53,6 +59,24 @@ class TestFindStratForRfe:
         match = next(item for item in data if item["key"] == "RHAISTRAT-3000")
         assert "status" in match
         assert isinstance(match["labels"], list)
+        assert match["gate_label"] == "strat-creator-rubric-pass"
+        assert match["gate_labels_present"] == ["strat-creator-rubric-pass"]
+
+    def test_json_mode_ignores_rfe_creator_lookalike_labels(self, jira):
+        jira.create("RHAIRFE-3010", "Inherited labels RFE", "Description.")
+        jira.create("RHAISTRAT-3010", "Inherited labels strategy",
+                     "Description.",
+                     labels=["rfe-creator-needs-attention",
+                             "rfe-creator-autofix-rubric-pass"])
+        _create_cloners_link(jira, "RHAISTRAT-3010", "RHAIRFE-3010")
+
+        result = _run(jira, ["RHAIRFE-3010", "--json"])
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        match = next(item for item in json.loads(result.stdout)
+                     if item["key"] == "RHAISTRAT-3010")
+        assert match["gate_label"] is None
+        assert match["gate_labels_present"] == []
 
     def test_text_mode_output_format(self, jira):
         jira.create("RHAIRFE-3001", "Text mode RFE", "Description.")
@@ -121,3 +145,43 @@ class TestFindStratForRfe:
 
         result = _run(jira, ["RHAIRFE-3000"], env_override=env)
         assert result.returncode == 2
+
+
+class TestFindStratClonesGateData:
+    """Missing or malformed gate data must fail closed, not look ungated."""
+
+    def _stub(self, monkeypatch, strat_data):
+        def fake_get_issue(server, user, token, key, fields=None):
+            if key == "RHAIRFE-1":
+                return {"fields": {"issuelinks": [{
+                    "type": {"name": "Cloners"},
+                    "inwardIssue": {"key": "RHAISTRAT-1"}}]}}
+            return strat_data
+        monkeypatch.setattr(find_strat_for_rfe, "get_issue", fake_get_issue)
+
+    def test_missing_labels_field_raises(self, monkeypatch):
+        self._stub(monkeypatch, {"fields": {"status": {"name": "New"}}})
+        with pytest.raises(ValueError, match="RHAISTRAT-1"):
+            find_strat_for_rfe.find_strat_clones("s", "u", "t", "RHAIRFE-1")
+
+    def test_missing_fields_object_raises(self, monkeypatch):
+        self._stub(monkeypatch, {})
+        with pytest.raises(ValueError, match="RHAISTRAT-1"):
+            find_strat_for_rfe.find_strat_clones("s", "u", "t", "RHAIRFE-1")
+
+    def test_explicit_empty_labels_is_ungated(self, monkeypatch):
+        self._stub(monkeypatch,
+                   {"fields": {"status": {"name": "New"}, "labels": []}})
+        results = find_strat_for_rfe.find_strat_clones(
+            "s", "u", "t", "RHAIRFE-1")
+        assert results[0]["labels"] == []
+        assert results[0]["gate_label"] is None
+        assert results[0]["gate_labels_present"] == []
+
+    def test_main_exits_2_on_missing_labels(self, monkeypatch, capsys):
+        self._stub(monkeypatch, {"fields": {"status": {"name": "New"}}})
+        monkeypatch.setattr(find_strat_for_rfe, "require_env",
+                            lambda: ("s", "u", "t"))
+        monkeypatch.setattr(sys, "argv", ["find_strat_for_rfe", "RHAIRFE-1"])
+        assert find_strat_for_rfe.main() == 2
+        assert capsys.readouterr().out == ""

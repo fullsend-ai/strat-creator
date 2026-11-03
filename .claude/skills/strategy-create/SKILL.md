@@ -165,7 +165,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/find_strat_for_rfe.py RHAIRFE-NNNN --json
 
 **IMPORTANT**: Do NOT manually parse issuelinks to find STRATs. Always use this script — it guarantees only real Cloners links are returned and prevents misattribution.
 
-The script returns a JSON array of RHAISTRAT clones with their status and labels, or `[]` if none exist. Exit code 0 means clones found, 1 means none.
+The script returns a JSON array of RHAISTRAT clones with their status, labels and exact-match pipeline gate state (`gate_label`, `gate_labels_present`), or `[]` if none exist. Exit code 0 means clones found, 1 means none.
 
 **If the script returns `[]` (no clones)**: Go to Path B (create new STRAT).
 
@@ -177,10 +177,10 @@ From the script output, filter out any with status **Closed**, **Resolved**, **I
 
 **Multiple open STRATs**: After filtering, if **more than one** RHAISTRAT remains in early states (e.g., New, Open), **skip this RFE** — multiple open STRATs means ambiguity that requires human resolution. Append to `artifacts/strat-skipped.md` with reason: `multiple open STRATs: RHAISTRAT-NNNN, RHAISTRAT-MMMM`. Print `[SKIP] RHAIRFE-NNNN — multiple open STRATs found, requires human decision`. If exactly one remains, import it.
 
-**Pipeline label gate**: From the script output, check each remaining STRAT candidate's labels. If the STRAT has either `strat-creator-rubric-pass` or `strat-creator-needs-attention`, **skip this RFE** — the STRAT has already been processed by the pipeline:
+**Pipeline label gate**: From the script output, check each remaining STRAT candidate's `gate_label` field. It is computed by an exact match against `strat-creator-rubric-pass` and `strat-creator-needs-attention` — act only on that field and do NOT interpret the `labels` list yourself. Lookalikes such as `rfe-creator-needs-attention` (inherited from the source RFE) are not gate labels. If `gate_label` is not null, **skip this RFE** — the STRAT has already been processed by the pipeline:
 - Do NOT import the STRAT
-- Append to `artifacts/strat-skipped.md` with reason and run info (same format as Step 2a): `RHAISTRAT-NNNN already processed (label: <label>)`
-- Print `[SKIP] RHAIRFE-NNNN — RHAISTRAT-NNNN already has <label>`
+- Append to `artifacts/strat-skipped.md` with reason and run info (same format as Step 2a): `RHAISTRAT-NNNN already processed (label: <gate_label>)`
+- Print `[SKIP] RHAIRFE-NNNN — RHAISTRAT-NNNN already has <gate_label>`
 - Continue to the next RFE
 
 If all STRAT candidates for this RFE are skipped by the label gate, move to the next RFE (do NOT fall through to Path B).

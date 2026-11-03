@@ -14,7 +14,12 @@ Output (text mode):
     RHAISTRAT-1578 status=New labels=strat-creator-rubric-pass,...
 
 Output (json mode):
-    [{"key": "RHAISTRAT-1284", "status": "New", "labels": [...]}]
+    [{"key": "RHAISTRAT-1284", "status": "New", "labels": [...],
+      "gate_label": "strat-creator-rubric-pass",
+      "gate_labels_present": ["strat-creator-rubric-pass"]}]
+
+    gate_label/gate_labels_present come from strat_label_gate.py's exact
+    match; gate_label is null when no pipeline gate label is present.
 
 Exit codes:
     0 — found one or more STRAT clones
@@ -30,6 +35,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 from jira_utils import get_issue, require_env
+from strat_label_gate import pipeline_label_gate
 
 
 def find_strat_clones(server, user, token, rfe_key):
@@ -54,10 +60,19 @@ def find_strat_clones(server, user, token, rfe_key):
     for key in strat_keys:
         strat_data = get_issue(server, user, token, key,
                                fields=["status", "labels"])
-        fields = strat_data.get("fields", {})
+        fields = strat_data.get("fields")
+        if not isinstance(fields, dict):
+            raise ValueError(f"{key}: Jira response has no fields object")
         status = fields.get("status", {}).get("name", "Unknown")
-        labels = fields.get("labels", [])
-        results.append({"key": key, "status": status, "labels": labels})
+        # No default: a missing labels field must fail the gate, not pass it.
+        labels = fields.get("labels")
+        try:
+            gate = pipeline_label_gate(labels)
+        except ValueError as error:
+            raise ValueError(f"{key}: {error}") from error
+        results.append({"key": key, "status": status, "labels": labels,
+                        "gate_label": gate["gate_label"],
+                        "gate_labels_present": gate["gate_labels_present"]})
 
     return results
 
@@ -76,7 +91,11 @@ def main():
               file=sys.stderr)
         return 2
 
-    results = find_strat_clones(server, user, token, args.rfe_key)
+    try:
+        results = find_strat_clones(server, user, token, args.rfe_key)
+    except ValueError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
 
     if not results:
         if args.json:
