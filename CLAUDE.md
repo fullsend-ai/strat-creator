@@ -72,6 +72,8 @@ python3 scripts/state.py clean
 
 Gate logic (label checks, skip conditions) is duplicated across all three skills: `strategy-create`, `strategy-refine`, and `strategy-review`. When changing a gate, update all three skills to keep them consistent.
 
+The exact-match pipeline label set is defined in `scripts/strat_label_gate.py` (reused by `scripts/find_strat_for_rfe.py`). Changes to the gate labels or match semantics belong there; the three skills still hold the skip conditions, which must stay consistent with it.
+
 There is one recovery exception: in a host-prepared run, `strategy-review`
 first verifies an already composed current-run review and reconciles its
 publication. This may finish a publication that applied the verdict label

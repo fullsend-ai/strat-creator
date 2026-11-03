@@ -3,6 +3,10 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+
+import clone_issue  # noqa: E402
+
 SCRIPT = os.path.join(os.path.dirname(__file__), "..", "scripts", "clone_issue.py")
 
 
@@ -257,3 +261,12 @@ class TestCloneIssue:
         result = _run(jira, ["RHAIRFE-1000", "--target-project", "RHAISTRAT"],
                        env_override=env)
         assert result.returncode == 2
+
+
+class TestCloneLabels:
+
+    def test_strips_rfe_creator_processing_and_owner_labels(self):
+        labels = ["rfe-creator-needs-attention", "rfe-creator-autofix-rubric-pass",
+                  "strat-creator-processing", "strat-creator-owner-abc", "foo",
+                  "strat-creator-3.5"]
+        assert clone_issue.clone_labels(labels) == ["foo", "strat-creator-3.5"]

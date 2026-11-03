@@ -4,6 +4,12 @@ import os
 import subprocess
 import sys
 
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+
+import find_strat_for_rfe  # noqa: E402
+
 SCRIPT = os.path.join(
     os.path.dirname(__file__), "..", "scripts", "find_strat_for_rfe.py")
 
@@ -139,3 +145,43 @@ class TestFindStratForRfe:
 
         result = _run(jira, ["RHAIRFE-3000"], env_override=env)
         assert result.returncode == 2
+
+
+class TestFindStratClonesGateData:
+    """Missing or malformed gate data must fail closed, not look ungated."""
+
+    def _stub(self, monkeypatch, strat_data):
+        def fake_get_issue(server, user, token, key, fields=None):
+            if key == "RHAIRFE-1":
+                return {"fields": {"issuelinks": [{
+                    "type": {"name": "Cloners"},
+                    "inwardIssue": {"key": "RHAISTRAT-1"}}]}}
+            return strat_data
+        monkeypatch.setattr(find_strat_for_rfe, "get_issue", fake_get_issue)
+
+    def test_missing_labels_field_raises(self, monkeypatch):
+        self._stub(monkeypatch, {"fields": {"status": {"name": "New"}}})
+        with pytest.raises(ValueError, match="RHAISTRAT-1"):
+            find_strat_for_rfe.find_strat_clones("s", "u", "t", "RHAIRFE-1")
+
+    def test_missing_fields_object_raises(self, monkeypatch):
+        self._stub(monkeypatch, {})
+        with pytest.raises(ValueError, match="RHAISTRAT-1"):
+            find_strat_for_rfe.find_strat_clones("s", "u", "t", "RHAIRFE-1")
+
+    def test_explicit_empty_labels_is_ungated(self, monkeypatch):
+        self._stub(monkeypatch,
+                   {"fields": {"status": {"name": "New"}, "labels": []}})
+        results = find_strat_for_rfe.find_strat_clones(
+            "s", "u", "t", "RHAIRFE-1")
+        assert results[0]["labels"] == []
+        assert results[0]["gate_label"] is None
+        assert results[0]["gate_labels_present"] == []
+
+    def test_main_exits_2_on_missing_labels(self, monkeypatch, capsys):
+        self._stub(monkeypatch, {"fields": {"status": {"name": "New"}}})
+        monkeypatch.setattr(find_strat_for_rfe, "require_env",
+                            lambda: ("s", "u", "t"))
+        monkeypatch.setattr(sys, "argv", ["find_strat_for_rfe", "RHAIRFE-1"])
+        assert find_strat_for_rfe.main() == 2
+        assert capsys.readouterr().out == ""

@@ -9,7 +9,6 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 import strat_label_gate  # noqa: E402
-from clone_issue import clone_labels  # noqa: E402
 from strat_label_gate import pipeline_label_gate  # noqa: E402
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "..", "scripts", "strat_label_gate.py")
@@ -156,12 +155,3 @@ class TestMainFetch:
         self._stub(monkeypatch, {})
         assert strat_label_gate.main(["RHAISTRAT-3115"]) == 1
         assert capsys.readouterr().out == ""
-
-
-class TestCloneLabels:
-
-    def test_strips_rfe_creator_processing_and_owner_labels(self):
-        labels = ["rfe-creator-needs-attention", "rfe-creator-autofix-rubric-pass",
-                  "strat-creator-processing", "strat-creator-owner-abc", "foo",
-                  "strat-creator-3.5"]
-        assert clone_labels(labels) == ["foo", "strat-creator-3.5"]

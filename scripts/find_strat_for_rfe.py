@@ -60,10 +60,16 @@ def find_strat_clones(server, user, token, rfe_key):
     for key in strat_keys:
         strat_data = get_issue(server, user, token, key,
                                fields=["status", "labels"])
-        fields = strat_data.get("fields", {})
+        fields = strat_data.get("fields")
+        if not isinstance(fields, dict):
+            raise ValueError(f"{key}: Jira response has no fields object")
         status = fields.get("status", {}).get("name", "Unknown")
-        labels = fields.get("labels", [])
-        gate = pipeline_label_gate(labels)
+        # No default: a missing labels field must fail the gate, not pass it.
+        labels = fields.get("labels")
+        try:
+            gate = pipeline_label_gate(labels)
+        except ValueError as error:
+            raise ValueError(f"{key}: {error}") from error
         results.append({"key": key, "status": status, "labels": labels,
                         "gate_label": gate["gate_label"],
                         "gate_labels_present": gate["gate_labels_present"]})
@@ -85,7 +91,11 @@ def main():
               file=sys.stderr)
         return 2
 
-    results = find_strat_clones(server, user, token, args.rfe_key)
+    try:
+        results = find_strat_clones(server, user, token, args.rfe_key)
+    except ValueError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
 
     if not results:
         if args.json:
