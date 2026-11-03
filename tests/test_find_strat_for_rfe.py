@@ -53,6 +53,24 @@ class TestFindStratForRfe:
         match = next(item for item in data if item["key"] == "RHAISTRAT-3000")
         assert "status" in match
         assert isinstance(match["labels"], list)
+        assert match["gate_label"] == "strat-creator-rubric-pass"
+        assert match["gate_labels_present"] == ["strat-creator-rubric-pass"]
+
+    def test_json_mode_ignores_rfe_creator_lookalike_labels(self, jira):
+        jira.create("RHAIRFE-3010", "Inherited labels RFE", "Description.")
+        jira.create("RHAISTRAT-3010", "Inherited labels strategy",
+                     "Description.",
+                     labels=["rfe-creator-needs-attention",
+                             "rfe-creator-autofix-rubric-pass"])
+        _create_cloners_link(jira, "RHAISTRAT-3010", "RHAIRFE-3010")
+
+        result = _run(jira, ["RHAIRFE-3010", "--json"])
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        match = next(item for item in json.loads(result.stdout)
+                     if item["key"] == "RHAISTRAT-3010")
+        assert match["gate_label"] is None
+        assert match["gate_labels_present"] == []
 
     def test_text_mode_output_format(self, jira):
         jira.create("RHAIRFE-3001", "Text mode RFE", "Description.")

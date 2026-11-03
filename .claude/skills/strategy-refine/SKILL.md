@@ -60,17 +60,26 @@ Each file also contains the business need from the source RFE. This business nee
 
 ## Pipeline Label Gate
 
-Read the strategy's frontmatter to get the `jira_key`. If `jira_key` is not null, fetch the STRAT's labels from Jira:
+Read the strategy's frontmatter to get the `jira_key`. If `jira_key` is not null, run the scripted gate check:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_issue.py RHAISTRAT-NNNN --fields labels --markdown
+python3 ${CLAUDE_SKILL_DIR}/scripts/strat_label_gate.py RHAISTRAT-NNNN
 ```
 
-If the STRAT has either `strat-creator-rubric-pass` or `strat-creator-needs-attention` in its labels, **stop** — it has already been processed by the pipeline:
-- Do NOT refine it
-- Print `[SKIP] RHAISTRAT-NNNN — already has <label>, skipping refinement`
+It prints `{"key": ..., "eligible": ..., "gate_label": ..., "gate_labels_present": [...]}`.
+Act only on this JSON — do NOT read or interpret the label list yourself. The
+script matches `strat-creator-rubric-pass` and `strat-creator-needs-attention`
+exactly; lookalikes such as `rfe-creator-needs-attention` (inherited from the
+source RFE) are not gate labels and never stop refinement. Exit 2 means Jira
+credentials are missing: read the labels via MCP and rerun with
+`--labels <comma-separated labels>`. Any other non-zero exit stops refinement.
 
-For an explicit CI reprocess request only, an existing `rubric-pass` may be
+If `eligible` is `false`, **stop** — it has already been processed by the pipeline:
+- Do NOT refine it
+- Print `[SKIP] RHAISTRAT-NNNN — already has <gate_label>, skipping refinement`
+
+For an explicit CI reprocess request only, a STRAT whose `gate_labels_present`
+is exactly `["strat-creator-rubric-pass"]` may be
 reviewed again if this command succeeds for the exact strategy:
 
 ```bash

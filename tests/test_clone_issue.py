@@ -72,6 +72,20 @@ class TestCloneIssue:
         assert "strat-creator-3.5" in clone_labels
         assert "tech-reviewed" in clone_labels
 
+    def test_rfe_creator_and_processing_labels_are_not_copied(self, jira):
+        jira.create("RHAIRFE-1010", "Flagged RFE", "Description.",
+                     labels=["rfe-creator-needs-attention",
+                             "rfe-creator-autofix-rubric-pass",
+                             "strat-creator-processing", "foo"])
+
+        result = _run(jira, ["RHAIRFE-1010", "--target-project", "RHAISTRAT"])
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        clone = jira.get(result.stdout.strip())
+        clone_labels = [label for label in clone["fields"].get("labels", [])
+                        if not label.startswith("strat-creator-clone-")]
+        assert clone_labels == ["foo"]
+
     def test_components_and_affects_versions_are_copied(self, jira):
         jira.create("RHAIRFE-1002", "Pipeline orchestration",
                      "Orchestrate ML pipelines.",
