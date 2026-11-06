@@ -166,10 +166,10 @@ def adopt(root, directory, session, key, launch, agent, caller_session, report):
         raise ValueError("Pending reviewer launch identity disagrees")
     if not session["owner"] or caller_session != session["owner"]["session_id"]:
         raise ValueError("Delivered review belongs to another caller/session")
-    if not isinstance(report, str) or not report:
-        raise ValueError("Missing delivered report text")
     role = launch["role"]
     try:
+        if not isinstance(report, str) or not report:
+            raise ValueError("Missing delivered report text")
         store(root, directory, session, key, role, agent, launch["tool_use_id"], report)
     except ValueError:
         # An invalid latest delivery must not leave this reviewer's earlier report standing.
@@ -212,11 +212,14 @@ def deliver(event):
                 # Buffer under the same lock the launch handler takes, so a delivery
                 # cannot slip between its launch check and the reconcile there.
                 # Nothing is trusted yet: every check runs when the launch arrives.
-                if (session["owner"] and event.get("session_id") == session["owner"]["session_id"]
-                        and isinstance(report, str) and report):
-                    save(directory / session["session_id"] / "pending-deliveries" / f"{agent}.json",
-                         {"agent_id": agent, "session_id": event["session_id"],
-                          "last_assistant_message": report})
+                if session["owner"] and event.get("session_id") == session["owner"]["session_id"]:
+                    buffered = directory / session["session_id"] / "pending-deliveries" / f"{agent}.json"
+                    if isinstance(report, str) and report:
+                        save(buffered, {"agent_id": agent, "session_id": event["session_id"],
+                                        "last_assistant_message": report})
+                    elif buffered.is_file():
+                        # An authenticated empty later delivery invalidates the earlier buffered one.
+                        buffered.unlink()
                 continue
             launch = json.loads(regular(root, launch_path).read_text())
             adopt(root, directory, session, key, launch, agent, event.get("session_id"), report)

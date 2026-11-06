@@ -327,6 +327,46 @@ def test_invalid_correction_clears_the_reviewers_earlier_delivery(target):
     assert not (root / "tmp/review-composition" / key / started["session_id"] / "feasibility.json").exists()
 
 
+@pytest.mark.parametrize("empty", ["", None])
+def test_empty_later_delivery_clears_the_reviewers_captured_report(target, empty):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
+    launch, stop = interactive(reports["feasibility"])
+    composition.capture(launch)
+    composition.capture(stop)
+    path = root / "tmp/review-composition" / key / started["session_id"] / "feasibility.json"
+    assert path.exists()
+    with pytest.raises(ValueError, match="Missing delivered report"):
+        composition.capture({**stop, "stop_hook_active": True, "last_assistant_message": empty})
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("empty", ["", None])
+def test_empty_later_delivery_clears_the_buffered_delivery_before_launch(target, empty):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
+    session = root / "tmp/review-composition" / key / started["session_id"]
+    launch, stop = interactive(reports["feasibility"])
+    buffered = session / "pending-deliveries" / f"{launch['tool_response']['agentId']}.json"
+    composition.capture(stop)
+    assert buffered.exists()
+    composition.capture({**stop, "stop_hook_active": True, "last_assistant_message": empty})
+    assert not buffered.exists()
+    assert "pending" in composition.capture(launch)
+    assert not (session / "feasibility.json").exists()
+
+
+def test_empty_delivery_from_another_session_does_not_clear_a_buffered_delivery(target):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
+    session = root / "tmp/review-composition" / key / started["session_id"]
+    launch, stop = interactive(reports["feasibility"])
+    composition.capture(stop)
+    composition.capture({**stop, "session_id": "another-session", "last_assistant_message": ""})
+    assert "captured" in composition.capture(launch)
+    assert (session / "feasibility.json").exists()
+
+
 def test_subagent_stop_without_any_composition_session_is_ignored():
     event = json.loads((Path(__file__).parent / "fixtures/native-hooks/subagent-stop.json").read_text())
     assert composition.capture(event) is None
