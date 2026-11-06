@@ -15,6 +15,9 @@ from review_scope import TARGET, check_report, inputs, safe_path
 
 ROLES = ("feasibility", "testability", "scope", "architecture")
 POLICY = "numeric-only-v1"
+AGENT = re.compile(r"[a-zA-Z0-9_-]+")
+# A delivered assessment carries its target heading or a Recommendation field.
+REPORT = re.compile(r"^(?:###\s+(?:RHAISTRAT|STRAT)-[0-9]+:|\*\*Recommendation\*\*:)", re.M)
 
 
 def digest(content):
@@ -131,7 +134,63 @@ def owner(event):
     return {"session_id": session, "agent_id": event.get("agent_id")}
 
 
+def store(root, directory, session, key, role, agent_id, tool_use_id, report):
+    """Validate one delivered report and save it for this role/session."""
+    scope, source = snapshot(root, key)
+    if session["inputs"] != source:
+        raise ValueError("Review inputs changed during assessment")
+    verdict = report_verdict(scope, role, report)
+    saved = {"key": key, "role": role, "session_id": session["session_id"], "caller": session["owner"],
+             "agent_id": agent_id, "tool_use_id": tool_use_id,
+             "sha256": digest(report), "recommendation": verdict, "text": report}
+    path = directory / session["session_id"] / f"{role}.json"
+    if path.exists() and json.loads(regular(root, path).read_text()) != saved:
+        raise ValueError("Multiple different assessments for one role/session")
+    save(path, saved)
+
+
+def deliver(event):
+    """Capture a forked reviewer's report when it completes after its Skill call returned.
+
+    Interactive sessions return a launch receipt from the Skill call and deliver
+    the report later. Only a reviewer agent recorded at launch for the bound
+    caller can fill its role; other subagents are ignored.
+    """
+    agent = event.get("agent_id")
+    if not isinstance(agent, str) or not AGENT.fullmatch(agent):
+        return
+    root = Path(event["cwd"]).resolve()
+    base = root / "tmp/review-composition"
+    if not base.is_dir():
+        return
+    for pointer in sorted(base.glob("*/active.json")):
+        key = pointer.parent.name
+        if not TARGET.fullmatch(key):
+            continue
+        with locked(root, key) as directory:
+            _, session = active(root, directory)
+            launch_path = directory / session["session_id"] / "launches" / f"{agent}.json"
+            if not launch_path.exists() and not launch_path.is_symlink():
+                continue
+            if session["complete"]:
+                return
+            launch = json.loads(regular(root, launch_path).read_text())
+            if (launch.get("key") != key or launch.get("session_id") != session["session_id"]
+                    or launch.get("agent_id") != agent or launch.get("role") not in ROLES
+                    or not launch.get("tool_use_id") or launch.get("caller") != session["owner"]):
+                raise ValueError("Pending reviewer launch identity disagrees")
+            if not session["owner"] or event.get("session_id") != session["owner"]["session_id"]:
+                raise ValueError("Delivered review belongs to another caller/session")
+            report = event.get("last_assistant_message")
+            if not isinstance(report, str) or not report:
+                raise ValueError("Missing delivered report text")
+            store(root, directory, session, key, launch["role"], agent, launch["tool_use_id"], report)
+            return
+
+
 def capture(event):
+    if event.get("hook_event_name") == "SubagentStop":
+        return deliver(event)
     if event.get("hook_event_name") != "PostToolUse":
         return
     root = Path(event["cwd"]).resolve()
@@ -186,17 +245,23 @@ def capture(event):
                 or response.get("commandName", "").split(":")[-1] != skill):
             raise ValueError("No successful forked Skill receipt")
         report = response.get("result")
-        if not isinstance(report, str) or not report:
+        if not isinstance(report, str):
             raise ValueError("Missing delivered report text")
         role = matching[0]
-        verdict = report_verdict(scope, role, report)
-        saved = {"key": key, "role": role, "session_id": session["session_id"], "caller": session["owner"],
-                 "agent_id": response["agentId"], "tool_use_id": event["tool_use_id"],
-                 "sha256": digest(report), "recommendation": verdict, "text": report}
-        path = directory / session["session_id"] / f"{role}.json"
-        if path.exists() and json.loads(regular(root, path).read_text()) != saved:
-            raise ValueError("Multiple different assessments for one role/session")
-        save(path, saved)
+        if not report.startswith("REVIEW_SCOPE_ERROR:") and not REPORT.search(report):
+            # Launch receipt only: the fork delivers its report at SubagentStop.
+            agent = response["agentId"]
+            if not isinstance(agent, str) or not AGENT.fullmatch(agent) or not event.get("tool_use_id"):
+                raise ValueError("Forked reviewer identity is unavailable")
+            launch = {"key": key, "role": role, "session_id": session["session_id"],
+                      "caller": session["owner"], "agent_id": agent, "tool_use_id": event["tool_use_id"]}
+            path = directory / session["session_id"] / "launches" / f"{agent}.json"
+            if path.exists() and json.loads(regular(root, path).read_text()) != launch:
+                raise ValueError("Forked reviewer was launched for another role/call")
+            save(path, launch)
+            return (f"Review composition: the {role} report for {key} is pending. It is captured when "
+                    "the forked reviewer delivers it. Wait for all four reviewer reports before compose.")
+        store(root, directory, session, key, role, response["agentId"], event["tool_use_id"], report)
 
 
 def rendered(key, scores, decision, reports, scorer):
@@ -362,12 +427,16 @@ def main():
         sub.add_parser(command).add_argument("key")
     sub.add_parser("hook")
     args = parser.parse_args()
+    event = {}
     try:
         root = Path.cwd().resolve()
         if args.command == "hook":
             event = json.load(sys.stdin)
             sys.path.insert(0, str(Path(event["cwd"]) / "scripts"))
-            capture(event)
+            message = capture(event)
+            if message:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": event["hook_event_name"],
+                                                         "additionalContext": message}}))
             return 0
         sys.path.insert(0, str(Path(__file__).parent / "assess-strat"))
         if args.command == "begin":
@@ -380,6 +449,11 @@ def main():
         print(json.dumps(result))
         return 0
     except Exception as error:
+        if isinstance(event, dict) and event.get("hook_event_name") == "SubagentStop":
+            # Never hold the reviewer open: the scope hook owns report correction.
+            # Nothing was captured, so composition still stops on the missing role.
+            print(json.dumps({"systemMessage": f"Review composition: {error}"}))
+            return 0
         print(f"Review composition: {error}", file=sys.stderr)
         return 2
 

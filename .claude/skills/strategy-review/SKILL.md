@@ -202,6 +202,9 @@ With --scores-from, substitute the supplied directory here too. This command
 checks the score source and prepared review. Loaded plugin PostToolUse hooks bind
 this session to the actual caller and save each delivered Skill result. Hook
 capture is required; standalone Skill text without the plugin is insufficient.
+In an interactive session a Skill call may return only a launch receipt; the
+hook records that reviewer and captures its report when the fork delivers it.
+Wait until all four reports have been delivered before Step 7.
 Run begin in its own Bash call; do not launch two begin sessions in one call.
 Do not substitute transcripts, earlier scorer feedback or invented reports.
 
