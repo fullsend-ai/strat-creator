@@ -34,8 +34,16 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+import type_registry
 from jira_utils import get_issue, require_env
 from strat_label_gate import pipeline_label_gate
+
+# The default work type's relation: the link type and the derived (RHAISTRAT-) key prefix.
+# For now: one type; resolve per call from rfe_key (type_registry.resolve(ids=[rfe_key])) once a
+# second clones type ships. A self relation (initiative-strategy) has no clone to find.
+_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+LINK_TYPE = _TYPE.get("inputs.0.relation.link_type")
+STRAT_PREFIX = _TYPE.write_prefix
 
 
 def find_strat_clones(server, user, token, rfe_key):
@@ -45,12 +53,12 @@ def find_strat_clones(server, user, token, rfe_key):
 
     strat_keys = []
     for link in links:
-        if link.get("type", {}).get("name") != "Cloners":
+        if link.get("type", {}).get("name") != LINK_TYPE:
             continue
         for direction in ("outwardIssue", "inwardIssue"):
             issue = link.get(direction, {})
             key = issue.get("key", "")
-            if key.startswith("RHAISTRAT-"):
+            if key.startswith(STRAT_PREFIX):
                 strat_keys.append(key)
 
     if not strat_keys:

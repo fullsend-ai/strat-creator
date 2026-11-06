@@ -16,6 +16,8 @@ esac
 export FULLSEND_MODE="${FULLSEND_MODE:-$expected_mode}"
 [[ "$FULLSEND_MODE" == "$expected_mode" ]] || { echo 'Agent and FULLSEND_MODE disagree' >&2; exit 2; }
 export CONFIG_FILE="${CONFIG_FILE:-}" RFE_FILTER="${RFE_FILTER:-}"
+# The work-item type (types/<type>/type.yaml); empty is rfe-strategy.
+export STRAT_TYPE="${STRAT_TYPE:-}"
 export STRAT_REPROCESS_KEY= FULLSEND_WORK_ITEM_KEY=
 if [[ "$FULLSEND_MODE" == reprocess ]]; then
   export STRAT_REPROCESS_KEY="${STRAT_KEY:-}" FULLSEND_WORK_ITEM_KEY="${STRAT_KEY:-}"

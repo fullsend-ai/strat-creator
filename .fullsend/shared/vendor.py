@@ -9,7 +9,7 @@ target repository before fullsend uploads it:
   .claude/skills/   every skill; the skills' scripts symlinks are dereferenced
   .claude/agents/strat-scorer.md
   .claude/agents/strat-reviewer.md
-  scripts/  config/  workflows/
+  scripts/  config/  workflows/  types/
 
 Only regular files are copied; a symlink is followed only when it resolves
 inside the clone. A marker file, .strat-creator-vendor.json, lists what was
@@ -26,7 +26,7 @@ import shutil
 import sys
 from pathlib import Path
 
-TREES = (".claude/skills", "scripts", "config", "workflows")
+TREES = (".claude/skills", "scripts", "config", "workflows", "types")
 FILES = (".claude/agents/strat-scorer.md", ".claude/agents/strat-reviewer.md")
 MARKER = ".strat-creator-vendor.json"
 SKIP_PARTS = {"__pycache__", ".pytest_cache"}

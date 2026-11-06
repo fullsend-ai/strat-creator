@@ -46,7 +46,7 @@
         "required": ["rfe", "strat", "recommendation", "needs_attention"],
         "properties": {
           "rfe": {"$ref": "#/$defs/rfe_key"},
-          "strat": {"type": "string", "pattern": "^(RHAISTRAT|STRAT)-[0-9]+$"},
+          "strat": {"type": "string", "pattern": "^[A-Z][A-Z0-9]*-[0-9]+$"},
           "recommendation": {"type": "string", "enum": ["approve", "revise", "reject"]},
           "needs_attention": {"type": "boolean"}
         }
@@ -75,7 +75,7 @@
     }
   },
   "$defs": {
-    "rfe_key": {"type": "string", "pattern": "^RHAIRFE-[0-9]+$"},
+    "rfe_key": {"type": "string", "pattern": "^[A-Z][A-Z0-9]*-[0-9]+$", "$comment": "validate_result.py checks the run type's exact keys"},
     "rfe_keys": {"type": "array", "items": {"$ref": "#/$defs/rfe_key"}, "uniqueItems": true}
   }
 }

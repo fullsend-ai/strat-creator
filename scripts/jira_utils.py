@@ -23,7 +23,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import type_registry  # sibling module: scripts/ is on sys.path wherever jira_utils is
 from strat_side_effects import check_owner, digest, perform
+
+# The work-item type whose values this module reads: the default, rfe-strategy (today's only
+# production type). Every _TYPE read below used to
+# be a literal here; tests/test_type_registry_pins.py pins the ones that still are.
+# For now: one module-wide default; build_jql_from_type and find_processed_rfe_ids take another
+# type's descriptor (list-rfe-ids.py --type), the rest follows when a caller needs it.
+_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 ssl_ctx = ssl.create_default_context()
 try:
@@ -215,7 +224,8 @@ def build_jql_from_config(config_path):
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
     jql_cfg = cfg.get("jql", {})
-    project = jql_cfg.get("project", "RHAIRFE")
+    project = jql_cfg.get("project", _TYPE.get("inputs.0.jira.project"))
+    issue_type = jql_cfg.get("issue_type")  # a project two types share (RHAISTRAT: Features, Initiatives)
     required = jql_cfg.get("required_labels", [])
     target_versions = jql_cfg.get("target_versions", [])
     quality = jql_cfg.get("quality_labels", [])
@@ -224,6 +234,8 @@ def build_jql_from_config(config_path):
     order = jql_cfg.get("order_by", "key ASC")
 
     clauses = [f'project = {project}']
+    if issue_type:
+        clauses.append(f'issuetype = "{issue_type}"')
     label_clause = " OR ".join(f'labels = "{label}"' for label in required)
     version_clause = ""
     if target_versions:
@@ -254,49 +266,51 @@ def build_jql_from_config(config_path):
     return jql
 
 
-def _extract_rfe_keys_from_issues(issues):
-    """Extract RHAIRFE keys from Cloners links on a list of RHAISTRAT issues."""
-    rfe_keys = set()
-    for issue in issues:
-        links = issue.get("fields", {}).get("issuelinks", [])
-        for link in links:
-            if link.get("type", {}).get("name") != "Cloners":
-                continue
-            outward = link.get("outwardIssue", {})
-            inward = link.get("inwardIssue", {})
-            rfe_key = None
-            if outward and outward.get("key", "").startswith("RHAIRFE"):
-                rfe_key = outward["key"]
-            elif inward and inward.get("key", "").startswith("RHAIRFE"):
-                rfe_key = inward["key"]
-            if rfe_key:
-                rfe_keys.add(rfe_key)
-    return rfe_keys
+def build_jql_from_type(descriptor=None):
+    """The intake JQL of ``descriptor`` (default rfe-strategy), from the settings file its
+    ``discovery.settings`` names."""
+    d = descriptor or _TYPE
+    return build_jql_from_config(os.path.join(_REPO, d.get("discovery.settings")))
 
 
-def _count_rfe_clones_from_issues(issues):
-    """Count RHAISTRAT clones per RHAIRFE key from Cloners links."""
-    counts = collections.Counter()
+def _linked_input_key(link, desc=None):
+    """The input-side key on one issue link of the descriptor's relation type, else None.
+
+    Both link directions are searched (inputs[0].relation.direction is advisory; the live data
+    has links created from either side). ``desc`` is the work type, default rfe-strategy.
+    """
+    d = desc or _TYPE
+    if link.get("type", {}).get("name") != d.get("inputs.0.relation.link_type"):
+        return None
+    prefix = d.get("inputs.0.jira.key_prefixes.0")
+    for side in ("outwardIssue", "inwardIssue"):
+        key = (link.get(side) or {}).get("key", "")
+        if key.startswith(prefix):
+            return key
+    return None
+
+
+def _linked_input_keys(issues, desc=None):
     for issue in issues:
-        links = issue.get("fields", {}).get("issuelinks", [])
-        for link in links:
-            if link.get("type", {}).get("name") != "Cloners":
-                continue
-            outward = link.get("outwardIssue", {})
-            inward = link.get("inwardIssue", {})
-            rfe_key = None
-            if outward and outward.get("key", "").startswith("RHAIRFE"):
-                rfe_key = outward["key"]
-            elif inward and inward.get("key", "").startswith("RHAIRFE"):
-                rfe_key = inward["key"]
-            if rfe_key:
-                counts[rfe_key] += 1
-    return counts
+        for link in issue.get("fields", {}).get("issuelinks", []):
+            key = _linked_input_key(link, desc)
+            if key:
+                yield key
+
+
+def _extract_rfe_keys_from_issues(issues, desc=None):
+    """Input (source) keys linked from a list of this type's issues."""
+    return set(_linked_input_keys(issues, desc))
+
+
+def _count_rfe_clones_from_issues(issues, desc=None):
+    """Count this type's issues per input key, one per relation link."""
+    return collections.Counter(_linked_input_keys(issues, desc))
 
 
 def find_processed_rfe_ids(server, user, token, skip_labels,
                            excluded_strat_statuses=None,
-                           strat_project="RHAISTRAT"):
+                           strat_project=None, desc=None):
     """Find RHAIRFE IDs that should be excluded from batching.
 
     Excludes RFEs whose RHAISTRAT clones either:
@@ -308,7 +322,28 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
     is un-excluded so the replacement clone can be processed. This
     handles the case where an old clone was closed/rejected and a new
     one was created as a replacement.
+
+    ``desc`` is the work type (default rfe-strategy): ``strat_project`` defaults to its
+    identity.jira.project and its inputs[0].relation is the link walked. A ``self`` relation (the
+    strategy lives on the input ticket) has no link to walk: processed is every input-project issue
+    that carries a skip label, from one search.
+    For now: clones and self only; any other relation is refused before Jira is queried, until
+    that type's "already processed" rule is decided.
     """
+    d = desc or _TYPE
+    if d.get("inputs.0.relation.kind") == "self":
+        # For now: skip labels only, no status clause (excluded_strat_statuses is empty in
+        # config/initiative-settings.yaml); add one when a self type sets statuses.
+        if not skip_labels:
+            return set()
+        label_clause = " OR ".join(f'labels = "{label}"' for label in skip_labels)
+        jql = (f"project = {d.get('inputs.0.jira.project')} AND issuetype = \"{d.get('inputs.0.jira.issue_type')}\""
+               f" AND ({label_clause})")
+        return {issue["key"] for issue in search_issues(server, user, token, jql, fields=["key"])}
+    if d.get("inputs.0.relation.kind") != "clones":
+        raise ValueError(f"{d.name}: the already-processed check follows a clones relation, not "
+                         f"{d.get('inputs.0.relation.kind')!r}; pass --include-processed")
+    strat_project = strat_project or d.get("identity.jira.project")
     processed = set()
 
     if skip_labels:
@@ -316,14 +351,14 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
         jql = f"project = {strat_project} AND ({label_clause})"
         issues = search_issues(server, user, token, jql,
                                fields=["issuelinks"])
-        processed |= _extract_rfe_keys_from_issues(issues)
+        processed |= _extract_rfe_keys_from_issues(issues, d)
 
     if excluded_strat_statuses:
         status_clause = ", ".join(f'"{s}"' for s in excluded_strat_statuses)
         jql = f"project = {strat_project} AND status IN ({status_clause})"
         issues = search_issues(server, user, token, jql,
                                fields=["issuelinks"])
-        processed |= _extract_rfe_keys_from_issues(issues)
+        processed |= _extract_rfe_keys_from_issues(issues, d)
 
     if processed and excluded_strat_statuses:
         sc = ", ".join(f'"{s}"' for s in excluded_strat_statuses)
@@ -331,7 +366,7 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
                     f"AND status NOT IN ({sc})")
         open_issues = search_issues(server, user, token, open_jql,
                                     fields=["issuelinks", "labels"])
-        open_counts = _count_rfe_clones_from_issues(open_issues)
+        open_counts = _count_rfe_clones_from_issues(open_issues, d)
 
         unlabeled_rfes = set()
         if skip_labels:
@@ -344,7 +379,7 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
                 ) & skip_set)
             ]
             unlabeled_rfes = _extract_rfe_keys_from_issues(
-                truly_unlabeled)
+                truly_unlabeled, d)
         else:
             unlabeled_rfes = set(open_counts)
 
@@ -367,6 +402,22 @@ def get_issue(server, user, token, key, fields=None):
     if fields:
         path += f"?fields={','.join(fields)}"
     return api_call_with_retry(server, path, user, token)
+
+
+def issue_type_name(key, get=None):
+    """The Jira issue type of ``key``, None without Jira credentials: ``TypeRegistry.detect(key,
+    issue_type=...)`` settles a key prefix two types share with it (RHAISTRAT: Features and
+    Initiatives). ``get`` is the caller's ``get_issue``."""
+    server, user, token = require_env()
+    if not all([server, user, token]):
+        return None
+    fields = (get or get_issue)(server, user, token, key, fields=["issuetype"]).get("fields") or {}
+    return (fields.get("issuetype") or {}).get("name")
+
+
+def myself(server, user, token):
+    """The Jira account these credentials authenticate as (/myself)."""
+    return make_request(f"{server.rstrip('/')}/rest/api/2/myself", user, token)
 
 
 def get_comments(server, user, token, issue_key):
@@ -1160,12 +1211,29 @@ def adf_to_markdown(node, list_depth=0):
 
 # ─── Content Processing ──────────────────────────────────────────────────────
 
+def _bare(pattern):
+    """'^(A|B)$' or '^A$' -> 'A|B' / 'A': the alternatives without anchors or group parens."""
+    return pattern.strip("^$()")
+
+
+# A title heading keyed by an input id or one of this type's ids: the input's id grammar
+# (schema.task.extra_fields.source_rfe), then this type's local and tracker grammars.
+_TITLE_KEY_RE = re.compile(
+    r"^#\s+("
+    + _bare(_TYPE.get(f"schema.task.extra_fields.{_TYPE.get('inputs.0.source_ref_field')}.pattern"))
+    + "|" + _bare(_TYPE.local_id_pattern)
+    + "|" + _TYPE.write_prefix + r"\d+"
+    + "):"
+)
+
+
 def strip_metadata(markdown):
     """Remove artifact metadata and revision notes from RFE markdown.
 
     Strips content that should not be pushed to Jira:
     - YAML frontmatter (--- delimited block at start of file)
-    - Title headings (# RFE-NNN: / # RHAIRFE-NNN: / # STRAT-NNN: / # RHAISTRAT-NNN:)
+    - Title headings keyed by an input or strategy id (`# RHAIRFE-NNN:`, `# RHAISTRAT-NNN:`,
+      the local forms) — see _TITLE_KEY_RE
       — title is in frontmatter and Jira's summary field
     - Legacy inline metadata lines (now in frontmatter):
       **Jira Key**, **Size**, **Split from**, **Priority**, **Source RFE**
@@ -1189,8 +1257,7 @@ def strip_metadata(markdown):
 
     for line in lines:
         # Skip title heading — duplicates Summary
-        if re.match(r'^#\s+(RFE-\d+|RHAIRFE-\d+|STRAT-\d+|RHAISTRAT-\d+):',
-                    line):
+        if _TITLE_KEY_RE.match(line):
             continue
 
         # Skip metadata lines (legacy inline format, now in frontmatter)

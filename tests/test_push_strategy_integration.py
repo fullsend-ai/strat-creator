@@ -695,3 +695,61 @@ class TestPushLargeStrategy:
         assert "exceeds Jira's description size limit" in md
         assert "RHAISTRAT-1108-strategy.md" in md
         assert "Technical Approach" not in md
+
+
+class TestPushSameTicket:
+    """initiative-strategy runs on the Initiative itself (relation self): its summary and description are
+    rfe-creator's, so a push only adds an append-only {key}-strategy.md attachment."""
+
+    def test_two_pushes_add_two_attachments_and_leave_the_ticket(self, jira, art_dir):
+        jira.create("RHAISTRAT-1200", "An Initiative", "## Objective\n\nGrow the platform.",
+                    issue_type="Initiative")
+        before = jira.get("RHAISTRAT-1200")["fields"]
+        local_file = art_dir / "artifacts" / "strat-tasks" / "RHAISTRAT-1200.md"
+        staff = f"{STAFF_INPUT_HEADING}\n\nUse the shared scheduler."
+
+        for strategy, staff_input in (("First", ""), ("Second", staff)):
+            local_file.write_text(
+                "---\ntype: initiative-strategy\nstrat_id: RHAISTRAT-1200\nsource_initiative: RHAISTRAT-1200\n---\n\n"
+                "## Business Need (from Initiative)\n\nGrow the platform.\n\n"
+                f"{STRATEGY_HEADING}\n\n{strategy} strategy.\n\n{staff_input}")
+            result = _run(jira, "RHAISTRAT-1200", local_file)
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            assert "as attachment RHAISTRAT-1200-strategy.md" in result.stdout
+
+        after = jira.get("RHAISTRAT-1200")["fields"]
+        assert (after["summary"], after["description"]) == (before["summary"], before["description"])
+        # The emulator moves `updated` on any issue PUT (a same-value description write too) but not on an attachment.
+        assert after["updated"] == before["updated"]
+        attachments = sorted(after["attachment"], key=push_strategy.attachment_sort_key)
+        assert [a["filename"] for a in attachments] == ["RHAISTRAT-1200-strategy.md"] * 2
+        first, second = (_download_attachment(a) for a in attachments)
+        assert first.startswith(f"{STRATEGY_HEADING}\n\nFirst strategy.")
+        assert push_strategy.STAFF_INPUT_TEMPLATE in first
+        assert "Grow the platform" not in first
+        assert "Second strategy." in second and "Use the shared scheduler." in second
+        assert not (art_dir / "artifacts" / "strat-originals" / "RHAISTRAT-1200-pre-push.md").exists()
+
+    def test_create_restarts_from_the_newest_attachment(self, jira, art_dir):
+        """strategy-create's Same-Ticket step 4 saves the newest {key}-strategy.md, so a re-run keeps the Staff input
+        an owner pushed; a ticket without one gets the templates. This runs the skill's own snippet."""
+        skill_dir = os.path.join(PROJECT_ROOT, ".claude", "skills", "strategy-create")
+        skill = open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8").read()
+        block = next(b for b in skill.split("```bash\n")[1:] if "download_attachment" in b)
+        code = block.split('python3 -c "\n', 1)[1].split('\n" <KEY>', 1)[0].replace("${CLAUDE_SKILL_DIR}", skill_dir)
+        jira.create("RHAISTRAT-1201", "Pushed twice", "## Objective\n\nGrow.", issue_type="Initiative")
+        jira.create("RHAISTRAT-1202", "Never pushed", "## Objective\n\nGrow.", issue_type="Initiative")
+        local_file = art_dir / "artifacts" / "strat-tasks" / "RHAISTRAT-1201.md"
+        for staff in ("", f"{STAFF_INPUT_HEADING}\n\nUse the shared scheduler."):
+            local_file.write_text("---\ntype: initiative-strategy\nstrat_id: RHAISTRAT-1201\n"
+                                  "source_initiative: RHAISTRAT-1201\n---\n\n"
+                                  f"{STRATEGY_HEADING}\n\nThe how.\n\n{staff}")
+            assert _run(jira, "RHAISTRAT-1201", local_file).returncode == 0
+
+        for key, imported in (("RHAISTRAT-1201", True), ("RHAISTRAT-1202", False)):
+            dest = art_dir / f"{key}-strategy.md"
+            result = subprocess.run([sys.executable, "-c", code, key, f"{key}-strategy.md", str(dest)],
+                                    env=_env(jira), capture_output=True, text=True, cwd=PROJECT_ROOT)
+            assert result.returncode == 0, result.stderr
+            assert (result.stdout == f"[IMPORT] {key}-strategy.md\n") is imported and dest.exists() is imported
+        assert "Use the shared scheduler." in (art_dir / "RHAISTRAT-1201-strategy.md").read_text()

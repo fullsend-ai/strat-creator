@@ -70,6 +70,8 @@ def test_scope_hook_reads_title_delimiters_with_vendored_helpers(tmp_path, bundl
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     shutil.copyfile(ROOT / "scripts/artifact_utils.py", scripts / "artifact_utils.py")
+    shutil.copyfile(ROOT / "scripts/type_registry.py", scripts / "type_registry.py")
+    shutil.copytree(ROOT / "types", tmp_path / "types")
     transcript = tmp_path / "agent-title.jsonl"
     transcript.write_text(json.dumps({"type": "user", "message": {
         "content": "REVIEW_SCOPE_TARGET: RHAISTRAT-1\n"}}) + "\n")

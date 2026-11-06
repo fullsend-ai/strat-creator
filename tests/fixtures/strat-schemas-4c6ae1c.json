@@ -1,0 +1,173 @@
+{
+  "strat-task": {
+    "jira_key": {
+      "default": null,
+      "pattern": "^RHAISTRAT-\\d+$",
+      "required": false,
+      "type": "string"
+    },
+    "latest_diff": {
+      "default": null,
+      "required": false,
+      "type": "string"
+    },
+    "priority": {
+      "enum": [
+        "Blocker",
+        "Critical",
+        "Major",
+        "Normal",
+        "Minor",
+        "Undefined"
+      ],
+      "required": true,
+      "type": "string"
+    },
+    "refine_count": {
+      "required": false,
+      "type": "int"
+    },
+    "source_rfe": {
+      "pattern": "^(RFE-\\d+|RHAIRFE-\\d+)$",
+      "required": true,
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "Draft",
+        "Ready",
+        "Refined",
+        "Reviewed"
+      ],
+      "required": true,
+      "type": "string"
+    },
+    "strat_id": {
+      "pattern": "^(STRAT-\\d+|RHAISTRAT-\\d+)$",
+      "required": true,
+      "type": "string"
+    },
+    "title": {
+      "required": true,
+      "type": "string"
+    },
+    "workflow": {
+      "default": null,
+      "enum": [
+        "local",
+        "ci"
+      ],
+      "required": false,
+      "type": "string"
+    }
+  },
+  "strat-review": {
+    "needs_attention": {
+      "default": false,
+      "required": true,
+      "type": "bool"
+    },
+    "recommendation": {
+      "enum": [
+        "approve",
+        "revise",
+        "reject"
+      ],
+      "required": true,
+      "type": "string"
+    },
+    "reviewers": {
+      "fields": {
+        "architecture": {
+          "enum": [
+            "approve",
+            "revise",
+            "reject"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "feasibility": {
+          "enum": [
+            "approve",
+            "revise",
+            "reject"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "approve",
+            "revise",
+            "reject"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "testability": {
+          "enum": [
+            "approve",
+            "revise",
+            "reject"
+          ],
+          "required": true,
+          "type": "string"
+        }
+      },
+      "required": true,
+      "type": "dict"
+    },
+    "scores": {
+      "fields": {
+        "architecture": {
+          "required": true,
+          "type": "int"
+        },
+        "feasibility": {
+          "required": true,
+          "type": "int"
+        },
+        "scope": {
+          "required": true,
+          "type": "int"
+        },
+        "testability": {
+          "required": true,
+          "type": "int"
+        },
+        "total": {
+          "required": true,
+          "type": "int"
+        }
+      },
+      "required": true,
+      "type": "dict"
+    },
+    "strat_id": {
+      "pattern": "^(STRAT-\\d+|RHAISTRAT-\\d+)$",
+      "required": true,
+      "type": "string"
+    }
+  },
+  "order": {
+    "strat-task": [
+      "strat_id",
+      "title",
+      "source_rfe",
+      "jira_key",
+      "priority",
+      "status",
+      "workflow",
+      "latest_diff",
+      "refine_count"
+    ],
+    "strat-review": [
+      "strat_id",
+      "recommendation",
+      "needs_attention",
+      "scores",
+      "reviewers"
+    ]
+  }
+}

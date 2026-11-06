@@ -1,0 +1,177 @@
+# types/initiative-strategy/type.yaml — the initiative-strategy work-item type: a strategy for an RHAI Initiative
+# (an RHAISTRAT Initiative written by rfe-creator's `initiative` type), produced on the SAME ticket. The twin of
+# rfe-strategy (AISDLC-60). Contract: types/_schema/type.schema.json.
+#
+# Provenance differs from rfe-strategy: no initiative pipeline runs yet, so nothing here is a live literal — every
+# value is AUTHORED. Values shared with rfe-strategy (labels, dirs, stages, rubric, eval) are the station's and are
+# copied, not decided here. Values marked `open question` wait for the Initiative owners (AISDLC-301):
+#   Same ticket or clone: answered (AISDLC-461, 2026-10-28): the strategy goes on the RHAISTRAT Initiative itself,
+#       so relation.kind: self and identity = the input's own binding.
+#   Review dimensions: which apply to Initiatives (rfe-creator's initiative type reviews feasibility + alignment).
+#       All four are listed until decided — the twin's list is decided by omission.
+#   Sign-off: human sign-off stays (the signoff stage is present). On the shared ticket the summary and description
+#       are rfe-creator's: strat-creator never writes them, so there is no [DRAFT] prefix, and the Business Need heading
+#       titles only the local task file's copy of the description. The auto-created lock guard is flagged where it is.
+# Selected by --type initiative-strategy or by its ids (type_registry.resolve); the default stays rfe-strategy.
+schema_version: 1
+type: initiative-strategy
+display: { entity: Initiative Strategy, entity_plural: Initiative Strategies }
+kind: strategy
+
+identity:
+  tracker: jira
+  jira:
+    project: RHAISTRAT                                  # the derived record IS the Initiative (AISDLC-461, 2026-10-28: Initiatives live in RHAISTRAT)
+    issue_type: Initiative                              # rfe-creator types/initiative/type.yaml identity.jira (fullsend-ai/rfe-creator#274)
+    key_prefixes: ["RHAISTRAT-"]                        # shared with rfe-strategy's Features: the issue type tells them apart (TypeRegistry.detect)
+  local_prefix: "ISTRAT-"                               # local drafts before a key exists; authored; the reporters glob it
+  local_id_pattern: '^ISTRAT-\d+$'                      # ONE backslash
+  id_field: strat_id
+  tracker_key_field: jira_key
+
+inputs:
+  - from_type: initiative                               # rfe-creator's type name, carried as data — the stations import nothing from each other
+    jira:
+      project: RHAISTRAT
+      issue_type: Initiative
+      key_prefixes: ["RHAISTRAT-"]
+    relation:
+      kind: self                                        # AISDLC-461: the strategy is written on the Initiative itself
+    source_ref_field: source_initiative
+    removed_context_marker:                             # rfe-creator initiative conventions.comment_prefix + removed_context_preamble — a CONSUMED contract (R7)
+      comment_prefix: "[Initiative Creator]"
+      phrase: "The following technical implementation details were removed from the Initiative description during review."
+    skip_if:                                            # "already processed", evaluated on the same ticket; the skip labels are in discovery.settings
+      single_open_unlabeled_override: false             # no clones -> nothing to re-import
+
+# The Epic Decomposer handoff: opendatahub-io/epic-creator, run by gitlab agentic-ci/epic-decomposer, decomposes a
+# signed-off strategy into RHAI Epics. The entry is the one rfe-creator's tests/fixtures/types/epic/type.yaml records
+# for the strategy side; no script reads produces yet. An Epic (hierarchy level 1) may have an Initiative (level 2, as a
+# Feature) as its parent, so the Epics hang under the Initiative itself. The strategy headings the decomposer
+# parses are in pipeline.prompts.template, and the attachment it reads first is pipeline.body_overflow.attachment.
+# epic-creator reads only RHAISTRAT Features today; AISDLC-61 widens its intake to RHAISTRAT Initiatives (same project,
+# key and attachment name since AISDLC-461).
+produces:
+  - type: epic                                          # epic-creator's type, carried as data: (RHAI, Epic), submit.py TARGET_PROJECT / TARGET_ISSUE_TYPE
+    relation: { kind: parent, dependency_link_type: Blocks }   # submit.py create_issue(parent_key=<strategy key>); Blocks between sibling Epics (DEPENDENCY_LINK_TYPE)
+    label_on_input: epic-creator-auto-decomposed        # submit.py STRAT_LABEL, set on the strategy's ticket, here the Initiative, once every Epic exists
+
+discovery:                                              # open question (batch beside event dispatch) as for rfe-strategy
+  settings: config/initiative-settings.yaml             # the intake gate, skip lists and batch size, in config/pipeline-settings.yaml's shape
+
+dirs:                                                   # shared with rfe-strategy: one artifacts tree, file names differ by key
+  tasks: artifacts/strat-tasks
+  originals: artifacts/strat-originals
+  reviews: artifacts/strat-reviews
+workspace: { root: local }
+files:
+  tickets: artifacts/strat-tickets.md
+  skipped: artifacts/strat-skipped.md
+index: { enabled: false }
+companions:
+  comments: true
+  removed_context: false
+
+conventions:                                            # the station's label vocabulary — one per station, shared with rfe-strategy
+  label_prefix: strat-creator
+  labels:
+    rubric_pass: strat-creator-rubric-pass
+    needs_attention: strat-creator-needs-attention
+    ignore: strat-creator-ignore
+    auto_created: strat-creator-auto-created
+    auto_refined: strat-creator-auto-refined
+    auto_revised: strat-creator-auto-revised
+    human_sign_off: strat-creator-human-sign-off
+    processing: strat-creator-processing
+  label_categories:
+    auto_created: provenance
+    auto_refined: provenance
+    auto_revised: provenance
+    rubric_pass: gate
+    needs_attention: escalation
+    ignore: exclusion
+    human_sign_off: gate
+  comment_prefix: "[Strat Creator]"                     # no summary_prefix: no [DRAFT] on the shared ticket, whose summary is rfe-creator's
+
+schema:
+  task:
+    status_enum: [Draft, Ready, Refined, Reviewed]
+    extra_fields:
+      source_initiative: { type: string, required: true, pattern: '^(INIT-\d+|RHAISTRAT-\d+)$' }   # the input's id grammar: its key prefix plus rfe-creator's initiative local prefix INIT-
+      jira_key: { type: string, required: false, pattern: '^RHAISTRAT-\d+$', default: null }
+      workflow: { type: string, required: false, enum: [local, ci], default: null }
+      latest_diff: { type: string, required: false, default: null }
+      refine_count: { type: int, required: false }      # no default on purpose (ADR-0001), as for rfe-strategy
+    priority:
+      enum: [Blocker, Critical, Major, Normal, Minor, Undefined]
+      map_to_tracker: {}
+  review:
+    score_fields: [feasibility, testability, scope, architecture]   # open question (see header)
+    total_field: total
+    recommendation_enum: [approve, revise, reject]
+    extra_fields:
+      reviewers:
+        type: dict
+        required: true
+        fields:
+          feasibility: { type: string, required: true, enum: [approve, revise, reject, pending] }
+          testability: { type: string, required: true, enum: [approve, revise, reject, pending] }
+          scope: { type: string, required: true, enum: [approve, revise, reject, pending] }
+          architecture: { type: string, required: true, enum: [approve, revise, reject, skipped, pending] }
+    verdict_rules:
+      approve: { total_min: 6, zeros_max: 0 }
+      revise: { total_min: 3, zeros_max: 1 }
+
+pipeline:
+  stages: [create, refine, review, pull, push, signoff] # human sign-off stays
+  context_sources:
+    - { name: architecture-context, bootstrap: scripts/fetch-architecture-context.sh, required: false }
+  scorer_agent: strat-scorer
+  prompts:
+    template: .claude/skills/strategy-refine/strat-template.md
+  dimensions:                                           # open question: decided by omission, never by addition
+    - { name: feasibility, prompt: .claude/skills/strategy-feasibility-review/SKILL.md, blocking: true }
+    - { name: testability, prompt: .claude/skills/strategy-testability-review/SKILL.md, blocking: true }
+    - { name: scope, prompt: .claude/skills/strategy-scope-review/SKILL.md, blocking: true }
+    - name: architecture
+      prompt: .claude/skills/strategy-architecture-review/SKILL.md
+      blocking: true
+      condition: { context_exists: .context/architecture-context }
+  rubric:                                               # rfe-strategy's rubric until an initiative rubric exists — open question
+    repo: self
+    path: scripts/assess-strat/agent_prompt.md
+    rubric_version: "93a3722cbd00076723679e3ec666a6e2fc15038791b69f670245671360d2e5f7"
+    export: artifacts/strat-rubric.md
+  lock:                                                 # open question: derived_required_label assumes a clone we created; on a shared ticket the guard needs rethinking
+    label: strat-creator-processing
+    blocking_labels: [strat-creator-processing, strat-creator-needs-attention, strat-creator-human-sign-off]
+    derived_required_label: strat-creator-auto-created
+    derived_blocking_labels: [strat-creator-needs-attention, strat-creator-human-sign-off]
+  body_overflow:                                        # on the shared ticket not an overflow but the strategy's only home: push_strategy.py writes strategy + Staff input here on every push; pull_strategy.py and strategy-create read the newest
+    on_error: CONTENT_LIMIT_EXCEEDED
+    attachment: "{issue_key}-strategy.md"
+    policy: append_only
+  section_ownership:                                    # the local task file's sections; the Initiative's description stays rfe-creator's
+    - { heading: "## Business Need (from Initiative)", owner: source }
+    - { heading: "## Strategy (AI Generated by Agentic SDLC Pipeline)", owner: pipeline }
+    - { heading: "## Staff Engineer / SME Input", owner: human }
+
+snapshot: { mode: none, processed_gate: inputs.0.skip_if }
+reporting:
+  criterion_labels: { feasibility: Feasibility, testability: Testability, scope: Scope, architecture: Architecture }
+eval:                                                   # rfe-strategy's eval with --type initiative-strategy (tests/test_eval_checks.py); thresholds copied until an Initiative baseline exists
+  config: eval/strat-refine-initiative.yaml
+  dataset: eval/dataset/initiative-cases                # eval/scripts/build_dataset.py --type initiative-strategy
+  timeout: 2700
+  thresholds:
+    files_exist: { min_pass_rate: 1.0 }
+    strategy_nonempty: { min_pass_rate: 1.0 }
+    frontmatter_valid: { min_pass_rate: 1.0 }
+    recommendation_consistency: { min_pass_rate: 1.0 }
+    architecture_context_used: { min_pass_rate: 0.7 }
+    feasibility_score: { min_mean: 1.0 }
+    testability_score: { min_mean: 1.0 }
+    scope_score: { min_mean: 1.5 }
+    architecture_score: { min_mean: 1.0 }
+    pipeline_total: { min_mean: 5.0 }
+    cost_budget: { min_pass_rate: 0.8 }

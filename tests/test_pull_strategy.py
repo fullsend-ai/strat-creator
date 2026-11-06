@@ -1,4 +1,5 @@
 """Integration tests for pull_strategy.py against jira-emulator."""
+import json
 import os
 import subprocess
 import sys
@@ -222,6 +223,7 @@ class TestPullWithRubricPass:
         assert data["status"] == "Refined"
         assert data["workflow"] == "local"
         assert data["title"] == "GPU time-slicing strategy"
+        assert data["type"] == "rfe-strategy"
 
 
 class TestPullWithNeedsAttention:
@@ -832,3 +834,70 @@ class TestPullRfeReconstruction:
         assert RFE_REFERENCE_MARKER not in content
         assert "Deploy vLLM with NVIDIA MPS" in content
         assert "attachment" in result.stdout.lower()
+
+
+class TestPullSameTicket:
+    """initiative-strategy runs on the Initiative itself (relation self): pull takes the Initiative's
+    description as the Business Need and the strategy from the newest {key}-strategy.md attachment."""
+
+    def test_an_unstamped_file_never_rewrites_an_initiative(self, jira, tmp_path):
+        jira.create("RHAISTRAT-2201", "An Initiative", "Grow the platform.",
+                    labels=["strat-creator-needs-attention"], issue_type="Initiative")
+        push_file = tmp_path / "RHAISTRAT-2201.md"
+        push_file.write_text(f"{STRATEGY_HEADING}\n\nA strategy.\n")
+        push = subprocess.run([sys.executable, os.path.join(PROJECT_ROOT, "scripts", "push_strategy.py"),
+                               "RHAISTRAT-2201", str(push_file)],
+                              env=_env(jira), capture_output=True, text=True, cwd=PROJECT_ROOT)
+        assert push.returncode == 1 and "type: initiative-strategy" in push.stderr, push.stderr
+        description = json.dumps(jira.get("RHAISTRAT-2201")["fields"]["description"])
+        assert "Grow the platform." in description and "A strategy." not in description
+
+    def test_a_managed_push_never_changes_the_initiative_sme_input(self, jira, tmp_path):
+        from strat_side_effects import owner_label
+        jira.create("RHAISTRAT-2202", "An Initiative", "Grow the platform.", issue_type="Initiative",
+                    labels=[owner_label("run-1"), "strat-creator-processing"])
+        push_script = os.path.join(PROJECT_ROOT, "scripts", "push_strategy.py")
+        (tmp_path / "tmp").mkdir()
+        (tmp_path / "tmp/strat-input.json").write_text(json.dumps({
+            "run_id": "run-1", "lock_owner": "run-1", "type": "initiative-strategy",
+            "acquired_keys": ["RHAISTRAT-2202"]}))
+
+        def push(sme, managed):
+            push_file = tmp_path / "RHAISTRAT-2202.md"
+            push_file.write_text(f"---\ntype: initiative-strategy\n---\n{STRATEGY_HEADING}\n\nA strategy.\n\n"
+                                 f"## Staff Engineer / SME Input\n\n{sme}\n")
+            return subprocess.run([sys.executable, push_script, "RHAISTRAT-2202", str(push_file)],
+                                  env=_env(jira), capture_output=True, text=True,
+                                  cwd=tmp_path if managed else PROJECT_ROOT)
+
+        assert push("Use the shared queue.", managed=False).returncode == 0  # a person's edit
+        assert push("Use the shared queue.", managed=True).returncode == 0
+        changed = push("Use a new queue.", managed=True)
+        assert changed.returncode != 0 and "cannot edit SME input" in changed.stderr, changed.stderr
+
+    def test_pulls_the_newest_pushed_attachment(self, jira, tmp_path):
+        jira.create("RHAISTRAT-2200", "An Initiative", "Grow the platform.",
+                    labels=["strat-creator-needs-attention"], issue_type="Initiative")
+        push_script = os.path.join(PROJECT_ROOT, "scripts", "push_strategy.py")
+        push_file = tmp_path / "RHAISTRAT-2200.md"
+        for version in ("First", "Second"):
+            push_file.write_text(f"---\ntype: initiative-strategy\n---\n{STRATEGY_HEADING}\n\n{version} strategy.\n")
+            push = subprocess.run([sys.executable, push_script, "RHAISTRAT-2200", str(push_file)],
+                                  env=_env(jira), capture_output=True, text=True, cwd=PROJECT_ROOT)
+            assert push.returncode == 0, push.stderr
+            time.sleep(0.05)
+
+        local_dir = tmp_path / "local"
+        result = _run(jira, "RHAISTRAT-2200", local_dir)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        data, body = read_frontmatter(str(local_dir / "strat-tasks" / "RHAISTRAT-2200.md"))
+        assert {k: data[k] for k in ("strat_id", "source_initiative", "jira_key", "type")} == {
+            "strat_id": "RHAISTRAT-2200", "source_initiative": "RHAISTRAT-2200",
+            "jira_key": "RHAISTRAT-2200", "type": "initiative-strategy"}
+        assert "source_rfe" not in data
+        heading = "## Business Need (from Initiative)"
+        assert body.strip().startswith(f"{heading}\n\nGrow the platform.\n\n{STRATEGY_HEADING}")
+        assert "Second strategy." in body and "First strategy." not in body
+        assert "## Staff Engineer / SME Input" in body
+        assert not (local_dir / "strat-originals").exists()

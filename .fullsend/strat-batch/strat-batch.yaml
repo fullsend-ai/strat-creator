@@ -59,6 +59,8 @@ env:
     CLAUDE_CODE_SUBAGENT_MODEL: claude-opus-4-6
   runner:
     STRAT_MODE: batch
+    # The work-item type (types/<type>/type.yaml); empty is rfe-strategy.
+    STRAT_TYPE: ${STRAT_TYPE}
     # The strat-creator commit this harness is pinned to (the same sha as the
     # harness URL a consumer installs). The pre-script clones and verifies it
     # on the host; STRAT_CREATOR_REPO may name a mirror (default: GitHub).

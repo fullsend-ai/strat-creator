@@ -6,11 +6,67 @@ use this module instead of regex-parsing markdown prose.
 Frontmatter is stored as YAML between --- delimiters at the top of markdown files.
 """
 
+import copy
 import os
 import re
 import sys
 
+import type_registry
 import yaml
+
+# The work-item type whose schemas and labels this module serves: the default, rfe-strategy. The
+# strat-task / strat-review schemas and the label vocabulary derive from its
+# descriptor; the rfe-* schemas are the upstream artifacts this station reads and stay literal.
+# Every other registered type's strategy schemas sit beside them under rfe-creator's names,
+# <type>-task / <type>-review, and a strategy file validates against its own type's (typed_schema).
+_TYPES = type_registry.load()
+_TYPE = _TYPES.get(type_registry.LEGACY_DEFAULT_TYPE)
+_LABELS = _TYPE.labels
+
+
+def _id_pattern(desc):
+    """``^(STRAT-\\d+|RHAISTRAT-\\d+)$``: the local id grammar OR'd with the tracker write prefix."""
+    return "^(" + desc.local_id_pattern.strip("^$") + "|" + desc.write_prefix + r"\d+)$"
+
+
+def _strat_schemas(desc):
+    """The ``strat-task`` / ``strat-review`` schemas from the descriptor: ``identity`` (id field and
+    grammar), ``schema.task`` (priority and status enums, extra fields) and ``schema.review``
+    (recommendation enum, score fields, total field, extra fields). Field order is today's: id and
+    title, the reference fields, the shared base (priority, status), then the type's own fields —
+    apply_defaults and the schema printer iterate in this order. Specs are deep-copied so SCHEMAS
+    never aliases registry data."""
+    task = desc.get("schema.task")
+    review = desc.get("schema.review")
+    extras = copy.deepcopy(task["extra_fields"])
+    refs = [desc.get("inputs.0.source_ref_field"), desc.tracker_key_field]
+    id_spec = {"type": "string", "required": True, "pattern": _id_pattern(desc)}
+    task_schema = {desc.id_field: dict(id_spec), "title": {"type": "string", "required": True}}
+    task_schema.update({name: extras.pop(name) for name in refs if name in extras})
+    task_schema["priority"] = {"type": "string", "required": True, "enum": list(task["priority"]["enum"])}
+    task_schema["status"] = {"type": "string", "required": True, "enum": list(task["status_enum"])}
+    task_schema.update(extras)
+    score_names = desc.score_fields + [review["total_field"]]
+    review_schema = {
+        desc.id_field: dict(id_spec),
+        "recommendation": {"type": "string", "required": True, "enum": list(review["recommendation_enum"])},
+        "needs_attention": {"type": "bool", "required": True, "default": False},
+        "scores": {"type": "dict", "required": True,
+                   "fields": {name: {"type": "int", "required": True} for name in score_names}},
+    }
+    review_schema.update(copy.deepcopy(review.get("extra_fields") or {}))
+    # rfe-creator PR 184's self-describing `type`, on strat-task only: optional with no default, so
+    # apply_defaults never writes it; a writer that passes it stamps the file it writes, and nothing
+    # back-fills the rest. Appended last, so the fields above keep their order. The enum is the
+    # conflict check: a file may declare only the type whose schema validates it. Review files stay
+    # unstamped: strategy-review and strategy-signoff attach them to Jira whole, and a checkout that
+    # predates the field refuses it.
+    # For now: no tracker_ref — identity.tracker_key_field (jira_key) is the tracker reference on
+    # every file that has a key; add rfe-creator's tracker_ref when a strat id can differ from its
+    # key (a submit/rename path) or a reader shared with rfe-creator needs that name.
+    task_schema["type"] = {"type": "string", "required": False, "enum": [desc.name]}
+    return {"strat-task": task_schema, "strat-review": review_schema}
+
 
 # ─── Schema Definitions ────────────────────────────────────────────────────────
 
@@ -136,125 +192,58 @@ SCHEMAS = {
             },
         },
     },
-    "strat-task": {
-        "strat_id": {
-            "type": "string",
-            "required": True,
-            "pattern": r"^(STRAT-\d+|RHAISTRAT-\d+)$",
-        },
-        "title": {
-            "type": "string",
-            "required": True,
-        },
-        "source_rfe": {
-            "type": "string",
-            "required": True,
-            "pattern": r"^(RFE-\d+|RHAIRFE-\d+)$",
-        },
-        "jira_key": {
-            "type": "string",
-            "required": False,
-            "pattern": r"^RHAISTRAT-\d+$",
-            "default": None,
-        },
-        "priority": {
-            "type": "string",
-            "required": True,
-            "enum": ["Blocker", "Critical", "Major", "Normal", "Minor",
-                     "Undefined"],
-        },
-        "status": {
-            "type": "string",
-            "required": True,
-            "enum": ["Draft", "Ready", "Refined", "Reviewed"],
-        },
-        "workflow": {
-            "type": "string",
-            "required": False,
-            "enum": ["local", "ci"],
-            "default": None,
-        },
-        "latest_diff": {
-            "type": "string",
-            "required": False,
-            "default": None,
-        },
-        # Count of productive (body-changing) refine passes. Optional with NO
-        # materialized default: absence must stay distinguishable from an
-        # explicit 0 so the dashboard can fall back for un-instrumented
-        # strategies. See ADR-0001 and docs/plans/001.
-        "refine_count": {
-            "type": "int",
-            "required": False,
-        },
-    },
-    "strat-review": {
-        "strat_id": {
-            "type": "string",
-            "required": True,
-            "pattern": r"^(STRAT-\d+|RHAISTRAT-\d+)$",
-        },
-        "recommendation": {
-            "type": "string",
-            "required": True,
-            "enum": ["approve", "revise", "reject"],
-        },
-        "needs_attention": {
-            "type": "bool",
-            "required": True,
-            "default": False,
-        },
-        "scores": {
-            "type": "dict",
-            "required": True,
-            "fields": {
-                "feasibility": {"type": "int", "required": True},
-                "testability": {"type": "int", "required": True},
-                "scope": {"type": "int", "required": True},
-                "architecture": {"type": "int", "required": True},
-                "total": {"type": "int", "required": True},
-            },
-        },
-        "reviewers": {
-            "type": "dict",
-            "required": True,
-            "fields": {
-                "feasibility": {
-                    "type": "string",
-                    "required": True,
-                    "enum": ["approve", "revise", "reject", "pending"],
-                },
-                "testability": {
-                    "type": "string",
-                    "required": True,
-                    "enum": ["approve", "revise", "reject", "pending"],
-                },
-                "scope": {
-                    "type": "string",
-                    "required": True,
-                    "enum": ["approve", "revise", "reject", "pending"],
-                },
-                "architecture": {
-                    "type": "string",
-                    "required": True,
-                    "enum": ["approve", "revise", "reject", "skipped", "pending"],
-                },
-            },
-        },
-    },
 }
+SCHEMAS.update(_strat_schemas(_TYPE))
+SCHEMAS.update({f"{desc.name}-{name[len('strat-'):]}": spec
+                for desc in _TYPES if desc is not _TYPE for name, spec in _strat_schemas(desc).items()})
+
+
+def _owner(item_id):
+    """The type that owns ``item_id``, else rfe-strategy. A key two types share (RHAISTRAT) is
+    rfe-strategy's here: an Initiative strategy's task file carries its ``type:`` stamp, and the two
+    types' review schemas are the same."""
+    try:
+        return _TYPES.detect(item_id) or _TYPE
+    except type_registry.RegistryError:
+        return _TYPE
+
+
+def typed_schema(schema_type, path, data=None):
+    """The schema a strategy file at ``path`` validates against. ``strat-task`` and ``strat-review``
+    name the kind; the file's type picks the schema: its frontmatter ``type:`` (in ``data``, else in
+    the file on disk), else the type that owns the id its file name starts with
+    (``_owner``: ``ISTRAT-1.md`` is initiative-strategy; an unstamped ``RHAISTRAT-1.md`` is rfe-strategy's).
+    rfe-strategy, a type with no schemas here and every other name keep ``schema_type``, so an
+    rfe-strategy file validates exactly as before.
+    For now: the stamp, then the file name — not resolve()'s whole ladder (no --type, no directory
+    rung: every type shares strat-tasks/ and strat-reviews/); add rungs when a file name stops
+    carrying its id."""
+    if schema_type not in ("strat-task", "strat-review"):
+        return schema_type
+    if data is None:
+        try:
+            data = read_frontmatter(path)[0] if os.path.isfile(path) else {}
+        except (yaml.YAMLError, UnicodeDecodeError, OSError):
+            data = {}  # no signal; the read or write that follows reports the file, as before
+    name = data.get("type") or _owner(os.path.splitext(os.path.basename(path))[0]).name
+    typed = f"{name}-{schema_type[len('strat-'):]}"
+    return typed if typed in SCHEMAS else schema_type
+
+
+def source_key(meta, strat_id):
+    """The ticket a strategy was made from, read from the field its type names (``inputs[0].source_ref_field``:
+    rfe-strategy's ``source_rfe``, initiative-strategy's ``source_initiative``). The type is picked as in
+    typed_schema: the ``type:`` stamp, else the type that owns the id, else rfe-strategy."""
+    name = meta.get("type")
+    desc = _TYPES.get(name) if name in _TYPES else _owner(strat_id)
+    return meta.get(desc.get("inputs.0.source_ref_field")) or ""
 
 
 # ─── Label Derivation ────────────────────────────────────────────────────────────
 
+# conventions.label_categories is keyed by label KEY; render it over conventions.labels.
 LABEL_CATEGORIES = {
-    "strat-creator-auto-created": "provenance",
-    "strat-creator-auto-refined": "provenance",
-    "strat-creator-auto-revised": "provenance",
-    "strat-creator-rubric-pass": "gate",
-    "strat-creator-needs-attention": "escalation",
-    "strat-creator-ignore": "exclusion",
-    "strat-creator-human-sign-off": "gate",
+    _LABELS[key]: category for key, category in _TYPE.get("conventions.label_categories").items()
 }
 
 
@@ -269,15 +258,16 @@ def compute_strat_labels(status, recommendation, reviewers=None):
     Returns a list of full-prefixed label strings
     (e.g. ["strat-creator-auto-created", "strat-creator-rubric-pass"]).
     """
-    labels = ["strat-creator-auto-created"]
+    labels = [_LABELS["auto_created"]]
 
+    # The post-refine statuses of schema.task.status_enum — a rule of this pipeline, not a binding.
     if status in ("Refined", "Reviewed"):
-        labels.append("strat-creator-auto-refined")
+        labels.append(_LABELS["auto_refined"])
 
     if recommendation == "approve":
-        labels.append("strat-creator-rubric-pass")
+        labels.append(_LABELS["rubric_pass"])
     elif recommendation in ("revise", "reject"):
-        labels.append("strat-creator-needs-attention")
+        labels.append(_LABELS["needs_attention"])
 
     return labels
 
@@ -491,6 +481,7 @@ def read_frontmatter_validated(path, schema_type):
     if not data:
         raise ValidationError(f"No frontmatter found in {path}")
 
+    schema_type = typed_schema(schema_type, path, data)
     _migrate_fields(data, schema_type)
     apply_defaults(data, schema_type)
     errors = validate(data, schema_type)
@@ -517,6 +508,7 @@ def write_frontmatter(path, data, schema_type):
     Raises:
         ValidationError: if data fails schema validation
     """
+    schema_type = typed_schema(schema_type, path, data)
     _migrate_fields(data, schema_type)
     apply_defaults(data, schema_type)
     errors = validate(data, schema_type)
@@ -563,6 +555,7 @@ def update_frontmatter(path, updates, schema_type):
         else:
             data[key] = value
 
+    schema_type = typed_schema(schema_type, path, data)
     _migrate_fields(data, schema_type)
     apply_defaults(data, schema_type)
     errors = validate(data, schema_type)
