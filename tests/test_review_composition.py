@@ -245,7 +245,7 @@ def test_interactive_launch_receipts_are_pending_until_reviewer_delivery(target,
     assert manifest["decision"] == {"recommendation": "approve", "needs_attention": False}
 
 
-def test_headless_delivery_before_skill_return_is_ignored_and_capture_is_unchanged(target):
+def test_headless_delivery_before_skill_return_is_buffered_and_capture_is_unchanged(target):
     root, key, rfe = target
     started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
     for role in composition.ROLES:
@@ -257,9 +257,85 @@ def test_headless_delivery_before_skill_return_is_ignored_and_capture_is_unchang
     assert composition.verify_review(root, key)["decision"]["needs_attention"] is True
 
 
+def test_delivery_before_launch_record_is_buffered_and_reconciled_on_launch(target):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (2, 2, 1, 2), {"feasibility": "approve", "testability": "revise",
+                                                            "scope": "reject", "architecture": "approve"},
+                               finish=False)
+    session = root / "tmp/review-composition" / key / started["session_id"]
+    for role in composition.ROLES:
+        launch, stop = interactive(reports[role], LAUNCH_RECEIPT)
+        assert composition.capture(stop) is None  # the fork finished before PostToolUse ran
+        assert not (session / f"{role}.json").exists()
+        assert "captured" in composition.capture(launch)
+        assert (session / f"{role}.json").exists()
+        assert not (session / "pending-deliveries" / f"{launch['tool_response']['agentId']}.json").exists()
+    composition.compose(root, key)
+    manifest = composition.verify_review(root, key)
+    for role, event in reports.items():
+        assert event["tool_response"]["result"] in (root / manifest["review"]["path"]).read_text()
+        assert manifest["reports"][role]["agent_id"] == event["tool_response"]["agentId"]
+
+
+def test_buffered_delivery_runs_every_check_when_the_launch_arrives(target):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
+    launch, stop = interactive(reports["feasibility"], LAUNCH_RECEIPT)
+    stop["last_assistant_message"] = stop["last_assistant_message"].rsplit("\n", 1)[0]
+    composition.capture(stop)
+    with pytest.raises(composition.ReportError, match="consistent Recommendation"):
+        composition.capture(launch)
+    assert not (root / "tmp/review-composition" / key / started["session_id"] / "feasibility.json").exists()
+    # The buffered text was consumed; the reviewer's corrected delivery now matches the launch.
+    _, corrected = interactive(reports["feasibility"], LAUNCH_RECEIPT)
+    composition.capture(corrected)
+    assert (root / "tmp/review-composition" / key / started["session_id"] / "feasibility.json").exists()
+
+
+def test_buffered_delivery_from_another_session_is_not_adopted(target):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
+    launch, stop = interactive(reports["feasibility"], LAUNCH_RECEIPT)
+    stop["session_id"] = "another-session"
+    composition.capture(stop)
+    assert "pending" in composition.capture(launch)
+    assert not (root / "tmp/review-composition" / key / started["session_id"] / "feasibility.json").exists()
+
+
+def test_reviewer_correction_replaces_its_own_earlier_delivery(target):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
+    launch, stop = interactive(reports["feasibility"])
+    composition.capture(launch)
+    composition.capture(stop)  # captured although the parallel scope hook may have blocked this stop
+    second = {**stop, "stop_hook_active": True,
+              "last_assistant_message": stop["last_assistant_message"] + "\nCorrected after the scope hook."}
+    composition.capture(second)
+    saved = json.loads((root / "tmp/review-composition" / key / started["session_id"] / "feasibility.json").read_text())
+    assert saved["text"] == second["last_assistant_message"]
+
+
+def test_invalid_correction_clears_the_reviewers_earlier_delivery(target):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
+    launch, stop = interactive(reports["feasibility"])
+    composition.capture(launch)
+    composition.capture(stop)
+    bad = {**stop, "stop_hook_active": True, "last_assistant_message": "### STRAT-9502: Another ticket"}
+    with pytest.raises(ValueError):
+        composition.capture(bad)
+    assert not (root / "tmp/review-composition" / key / started["session_id"] / "feasibility.json").exists()
+
+
 def test_subagent_stop_without_any_composition_session_is_ignored():
     event = json.loads((Path(__file__).parent / "fixtures/native-hooks/subagent-stop.json").read_text())
     assert composition.capture(event) is None
+
+
+MESSAGES = {"other_session": "another caller/session", "missing_heading": "Return one assessment headed",
+            "no_recommendation": "consistent Recommendation", "scope_error": "not a delivered assessment",
+            "other_target": "another strategy key|Return one assessment headed",
+            "inputs_changed": "inputs changed", "empty": "Missing delivered report text"}
 
 
 @pytest.mark.parametrize("fault", ["other_session", "missing_heading", "no_recommendation", "scope_error",
@@ -285,7 +361,7 @@ def test_bad_interactive_deliveries_do_not_become_source_reports(target, fault):
         path.write_text(path.read_text() + "Edited during review.\n")
     else:
         stop["last_assistant_message"] = ""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=MESSAGES[fault]):
         composition.capture(stop)
     assert not (root / "tmp/review-composition" / key / started["session_id"] / "feasibility.json").exists()
 
@@ -351,17 +427,28 @@ def test_hook_reports_pending_launch_and_never_blocks_reviewer_stop(target):
     assert process.returncode == 0, process.stderr
     output = json.loads(process.stdout)["hookSpecificOutput"]
     assert output["hookEventName"] == "PostToolUse" and "pending" in output["additionalContext"]
+    assert "**Recommendation**" in output["additionalContext"]
     bad = {**stop, "last_assistant_message": stop["last_assistant_message"].rsplit("\n", 1)[0]}
     process = _hook(root, bad)
     assert process.returncode == 0, process.stderr
+    # A fixable verdict error is returned to the reviewer once, as a blocking stop.
+    output = json.loads(process.stdout)
+    assert output["decision"] == "block" and "consistent Recommendation" in output["reason"]
+    process = _hook(root, {**bad, "stop_hook_active": True})
+    assert process.returncode == 0, process.stderr
     assert "consistent Recommendation" in json.loads(process.stdout)["systemMessage"]
+    # Other faults never hold the reviewer open.
+    process = _hook(root, {**stop, "session_id": "another-session"})
+    assert process.returncode == 0, process.stderr
+    assert "another caller/session" in json.loads(process.stdout)["systemMessage"]
     process = _hook(root, stop)
     assert process.returncode == 0, process.stderr
     assert (root / "tmp/review-composition" / key / started["session_id"] / "feasibility.json").exists()
 
 
-def test_capture_hook_is_registered_for_reviewer_delivery():
-    hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]
+@pytest.mark.parametrize("path", ["hooks/hooks.json", ".fullsend/plugins/strat-pipeline/hooks/hooks.json"])
+def test_capture_hook_is_registered_for_reviewer_delivery(path):
+    hooks = json.loads((ROOT / path).read_text())["hooks"]
     commands = [hook["command"] for entry in hooks["SubagentStop"]
                 if entry["matcher"] == "(^|:)strat-reviewer$" for hook in entry["hooks"]]
     assert any(command.endswith("review_scope.py\"") for command in commands)

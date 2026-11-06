@@ -61,6 +61,10 @@ def numeric_decision(scores):
     return {"recommendation": verdict, "needs_attention": verdict != "approve"}
 
 
+class ReportError(ValueError):
+    """A delivered report whose verdict fields the reviewer can correct itself."""
+
+
 def report_verdict(scope, role, report):
     check_report(scope, report)
     if report.startswith("REVIEW_SCOPE_ERROR:"):
@@ -71,8 +75,8 @@ def report_verdict(scope, role, report):
     verdicts = {value.strip() for value in values}
     if (len(verdicts) != 1 or not verdicts <= {"approve", "revise", "reject", "skipped"}
             or (verdicts == {"skipped"} and role != "architecture")):
-        raise ValueError("Report must contain one consistent Recommendation: approve, revise, reject "
-                         "(architecture may be skipped)")
+        raise ReportError("Report must contain one consistent Recommendation: approve, revise, reject "
+                          "(architecture may be skipped)")
     return next(iter(verdicts))
 
 
@@ -144,9 +148,35 @@ def store(root, directory, session, key, role, agent_id, tool_use_id, report):
              "agent_id": agent_id, "tool_use_id": tool_use_id,
              "sha256": digest(report), "recommendation": verdict, "text": report}
     path = directory / session["session_id"] / f"{role}.json"
-    if path.exists() and json.loads(regular(root, path).read_text()) != saved:
-        raise ValueError("Multiple different assessments for one role/session")
+    if path.exists():
+        existing = json.loads(regular(root, path).read_text())
+        # The scope hook runs in parallel and may reject a stop this capture
+        # already stored. The same reviewer's corrected delivery replaces its
+        # own earlier one; a different agent can never replace it.
+        if existing != saved and existing.get("agent_id") != agent_id:
+            raise ValueError("Multiple different assessments for one role/session")
     save(path, saved)
+
+
+def adopt(root, directory, session, key, launch, agent, caller_session, report):
+    """Check a delivered report against its pending launch and store it for the role."""
+    if (launch.get("key") != key or launch.get("session_id") != session["session_id"]
+            or launch.get("agent_id") != agent or launch.get("role") not in ROLES
+            or not launch.get("tool_use_id") or launch.get("caller") != session["owner"]):
+        raise ValueError("Pending reviewer launch identity disagrees")
+    if not session["owner"] or caller_session != session["owner"]["session_id"]:
+        raise ValueError("Delivered review belongs to another caller/session")
+    if not isinstance(report, str) or not report:
+        raise ValueError("Missing delivered report text")
+    role = launch["role"]
+    try:
+        store(root, directory, session, key, role, agent, launch["tool_use_id"], report)
+    except ValueError:
+        # An invalid latest delivery must not leave this reviewer's earlier report standing.
+        path = directory / session["session_id"] / f"{role}.json"
+        if path.is_file() and json.loads(path.read_text()).get("agent_id") == agent:
+            path.unlink()
+        raise
 
 
 def deliver(event):
@@ -154,37 +184,42 @@ def deliver(event):
 
     Interactive sessions return a launch receipt from the Skill call and deliver
     the report later. Only a reviewer agent recorded at launch for the bound
-    caller can fill its role; other subagents are ignored.
+    caller can fill its role; other subagents are ignored. A delivery that
+    precedes its launch record is buffered and adopted when the launch arrives.
     """
     agent = event.get("agent_id")
-    if not isinstance(agent, str) or not AGENT.fullmatch(agent):
+    if (not isinstance(agent, str) or not AGENT.fullmatch(agent)
+            or event.get("agent_type", "").split(":")[-1] != "strat-reviewer"):
         return
     root = Path(event["cwd"]).resolve()
     base = root / "tmp/review-composition"
     if not base.is_dir():
         return
+    report = event.get("last_assistant_message")
     for pointer in sorted(base.glob("*/active.json")):
         key = pointer.parent.name
         if not TARGET.fullmatch(key):
             continue
         with locked(root, key) as directory:
-            _, session = active(root, directory)
+            try:
+                _, session = active(root, directory)
+            except (ValueError, OSError):
+                continue  # One damaged key must not stop delivery for the others.
+            if session["complete"]:
+                continue
             launch_path = directory / session["session_id"] / "launches" / f"{agent}.json"
             if not launch_path.exists() and not launch_path.is_symlink():
+                # Buffer under the same lock the launch handler takes, so a delivery
+                # cannot slip between its launch check and the reconcile there.
+                # Nothing is trusted yet: every check runs when the launch arrives.
+                if (session["owner"] and event.get("session_id") == session["owner"]["session_id"]
+                        and isinstance(report, str) and report):
+                    save(directory / session["session_id"] / "pending-deliveries" / f"{agent}.json",
+                         {"agent_id": agent, "session_id": event["session_id"],
+                          "last_assistant_message": report})
                 continue
-            if session["complete"]:
-                return
             launch = json.loads(regular(root, launch_path).read_text())
-            if (launch.get("key") != key or launch.get("session_id") != session["session_id"]
-                    or launch.get("agent_id") != agent or launch.get("role") not in ROLES
-                    or not launch.get("tool_use_id") or launch.get("caller") != session["owner"]):
-                raise ValueError("Pending reviewer launch identity disagrees")
-            if not session["owner"] or event.get("session_id") != session["owner"]["session_id"]:
-                raise ValueError("Delivered review belongs to another caller/session")
-            report = event.get("last_assistant_message")
-            if not isinstance(report, str) or not report:
-                raise ValueError("Missing delivered report text")
-            store(root, directory, session, key, launch["role"], agent, launch["tool_use_id"], report)
+            adopt(root, directory, session, key, launch, agent, event.get("session_id"), report)
             return
 
 
@@ -259,8 +294,19 @@ def capture(event):
             if path.exists() and json.loads(regular(root, path).read_text()) != launch:
                 raise ValueError("Forked reviewer was launched for another role/call")
             save(path, launch)
+            buffered = path.parent.parent / "pending-deliveries" / f"{agent}.json"
+            if buffered.is_file():
+                # The reviewer finished before this launch was recorded; reconcile now.
+                delivery = json.loads(buffered.read_text())
+                buffered.unlink()
+                if delivery.get("agent_id") == agent:
+                    adopt(root, directory, session, key, launch, agent, delivery.get("session_id"),
+                          delivery.get("last_assistant_message"))
+                    return f"Review composition: the {role} report for {key} was delivered and captured."
             return (f"Review composition: the {role} report for {key} is pending. It is captured when "
-                    "the forked reviewer delivers it. Wait for all four reviewer reports before compose.")
+                    "the forked reviewer delivers it. Wait for all four reviewer reports before compose. "
+                    f"A delivered report starts with '### {key}: <title>' and has one "
+                    "'**Recommendation**: approve|revise|reject' line.")
         store(root, directory, session, key, role, response["agentId"], event["tool_use_id"], report)
 
 
@@ -450,9 +496,13 @@ def main():
         return 0
     except Exception as error:
         if isinstance(event, dict) and event.get("hook_event_name") == "SubagentStop":
-            # Never hold the reviewer open: the scope hook owns report correction.
+            # Only a verdict-field error is the reviewer's to correct, once; the scope
+            # hook owns heading/target errors. Other faults never hold the reviewer open.
             # Nothing was captured, so composition still stops on the missing role.
-            print(json.dumps({"systemMessage": f"Review composition: {error}"}))
+            if isinstance(error, ReportError) and not event.get("stop_hook_active"):
+                print(json.dumps({"decision": "block", "reason": f"Review composition: {error}"}))
+            else:
+                print(json.dumps({"systemMessage": f"Review composition: {error}"}))
             return 0
         print(f"Review composition: {error}", file=sys.stderr)
         return 2
