@@ -1,9 +1,13 @@
 """Tests for push_refined_strategies.py — deterministic post-refine push."""
+import json
 import os
 import subprocess
 import sys
 
+import pytest
+
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
 SCRIPT = os.path.join(PROJECT_ROOT, "scripts", "push_refined_strategies.py")
 FRONTMATTER_SCRIPT = os.path.join(PROJECT_ROOT, "scripts", "frontmatter.py")
 
@@ -177,3 +181,85 @@ class TestPushRefinedStrategies:
         )
         assert result.returncode == 0
         assert "No RHAISTRAT files found" in result.stdout
+
+
+PREPARED_KEYS = ["RHAISTRAT-2101", "RHAISTRAT-2102", "RHAISTRAT-2103"]
+
+
+@pytest.fixture
+def prepared(art_dir, monkeypatch):
+    """A prepared run's push loop with Jira writes replaced by recorders."""
+    import push_refined_strategies as push
+
+    (art_dir / "tmp").mkdir()
+    (art_dir / "tmp" / "strat-input.json").write_text(json.dumps({"run_id": "r1"}))
+    strat_dir = art_dir / "artifacts" / "strat-tasks"
+    for index, key in enumerate(PREPARED_KEYS):
+        _write_strategy(strat_dir / f"{key}.md", key, f"RHAIRFE-{2101 + index}", "Refined", jira_key=key)
+    for name in ("JIRA_SERVER", "JIRA_USER", "JIRA_TOKEN"):
+        monkeypatch.setenv(name, "https://fixture.invalid" if name == "JIRA_SERVER" else "admin")
+    monkeypatch.setattr(sys, "argv", ["push_refined_strategies.py", "--artifacts-dir", str(strat_dir)])
+    monkeypatch.setattr(push, "excluded_strategies", lambda: {})
+    calls = {"pushed": [], "labelled": []}
+    faults = {}
+
+    def push_strategy(key, path):
+        calls["pushed"].append(key)
+        return faults.get(key) != "push"
+
+    def add_labels(server, user, token, key, labels):
+        fault = faults.get(key)
+        if fault == "label":
+            raise RuntimeError("Jira returned 503")
+        if fault == "stale":
+            from strat_freshness import StaleTicket
+            raise StaleTicket("RHAIRFE-2102", "changed")
+        calls["labelled"].append(key)
+
+    monkeypatch.setattr(push, "push_strategy", push_strategy)
+    monkeypatch.setattr(push, "add_labels", add_labels)
+    return push, art_dir, calls, faults
+
+
+def _saved_outcomes(root):
+    return json.loads((root / "tmp" / "strat-push-outcomes.json").read_text())
+
+
+class TestPushOutcomes:
+
+    def test_all_pushed_are_recorded(self, prepared):
+        push, root, calls, _ = prepared
+        assert push.main() == 0
+        assert calls["labelled"] == PREPARED_KEYS
+        assert _saved_outcomes(root) == {"run_id": "r1",
+                                         "outcomes": dict.fromkeys(PREPARED_KEYS, "pushed")}
+
+    @pytest.mark.parametrize("fault", ["push", "label", "stale"])
+    def test_unrelated_failure_stops_and_keeps_earlier_outcomes(self, prepared, capsys, fault):
+        push, root, calls, faults = prepared
+        faults["RHAISTRAT-2102"] = fault
+        assert push.main() == 1
+        # The third ticket is not written once the run is known to fail.
+        assert calls["pushed"] == PREPARED_KEYS[:2]
+        assert calls["labelled"] == ["RHAISTRAT-2101"]
+        assert _saved_outcomes(root) == {"run_id": "r1", "outcomes": {
+            "RHAISTRAT-2101": "pushed", "RHAISTRAT-2102": "failed"}}
+        captured = capsys.readouterr()
+        assert "[STOP] RHAISTRAT-2102" in captured.err
+        assert "1 failed, 1 not attempted" in captured.out
+
+    def test_a_rerun_resets_earlier_outcomes(self, prepared):
+        push, root, _, faults = prepared
+        faults["RHAISTRAT-2101"] = "push"
+        assert push.main() == 1
+        assert _saved_outcomes(root)["outcomes"] == {"RHAISTRAT-2101": "failed"}
+        faults.clear()
+        assert push.main() == 0
+        assert _saved_outcomes(root)["outcomes"] == dict.fromkeys(PREPARED_KEYS, "pushed")
+
+    def test_standalone_run_saves_no_outcomes(self, prepared):
+        push, root, calls, _ = prepared
+        (root / "tmp" / "strat-input.json").unlink()
+        assert push.main() == 0
+        assert calls["labelled"] == PREPARED_KEYS
+        assert not (root / "tmp" / "strat-push-outcomes.json").exists()

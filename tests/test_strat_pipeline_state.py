@@ -168,6 +168,59 @@ def test_push_covers_only_what_the_push_script_pushes(repo):
     assert "push: RHAISTRAT-2 not recorded" in errors
 
 
+def _two_refined(repo):
+    data = json.loads((repo / "tmp" / "strat-input.json").read_text())
+    data["resume_points"] = {}
+    (repo / "tmp" / "strat-input.json").write_text(json.dumps(data))
+    _task(repo, "RHAISTRAT-1", "RHAIRFE-1")
+    _task(repo, "RHAISTRAT-2", "RHAIRFE-2")
+    _run(repo, "record-create")
+    _run(repo, "mark", "refine", "RHAISTRAT-1")
+    _run(repo, "mark", "refine", "RHAISTRAT-2")
+
+
+def _outcomes(repo, outcomes, run_id="r1"):
+    (repo / "tmp" / "strat-push-outcomes.json").write_text(
+        json.dumps({"run_id": run_id, "outcomes": outcomes}))
+
+
+@pytest.mark.parametrize("flags", [[], ["--partial"]])
+def test_push_covers_only_strategies_the_push_script_recorded_as_pushed(repo, flags):
+    _two_refined(repo)
+    _outcomes(repo, {"RHAISTRAT-1": "pushed", "RHAISTRAT-2": "failed"})
+    out = json.loads(_run(repo, "mark", "push", *flags).stdout)
+    assert out["strategies"] == ["RHAISTRAT-1"]
+    assert out.get("partial", False) is bool(flags)
+    _run(repo, "result")
+    errors = json.loads((repo / "output" / "agent-result.json").read_text())["errors"]
+    assert "push: RHAISTRAT-2 not recorded" in errors
+    assert "push: RHAISTRAT-1 not recorded" not in errors
+
+
+@pytest.mark.parametrize("outcomes", [None, "other-run"])
+def test_partial_push_without_this_runs_outcomes_covers_nothing(repo, outcomes):
+    _two_refined(repo)
+    if outcomes:
+        _outcomes(repo, {"RHAISTRAT-1": "pushed", "RHAISTRAT-2": "pushed"}, run_id=outcomes)
+    out = json.loads(_run(repo, "mark", "push", "--partial").stdout)
+    assert out == {"recorded": "push", "strategies": [], "partial": True}
+
+
+def test_partial_push_keeps_coverage_from_an_earlier_push(repo):
+    _two_refined(repo)
+    _outcomes(repo, {"RHAISTRAT-1": "pushed"})
+    _run(repo, "mark", "push", "--partial")
+    _outcomes(repo, {"RHAISTRAT-2": "failed"})
+    out = json.loads(_run(repo, "mark", "push", "--partial").stdout)
+    assert out["strategies"] == ["RHAISTRAT-1"]
+
+
+def test_push_rejects_skipped_and_partial_together(repo):
+    _two_refined(repo)
+    assert _run(repo, "mark", "push", "--skipped", "--partial", check=False).returncode != 0
+    assert json.loads(_run(repo, "read").stdout)["pushed"] == []
+
+
 def test_an_unexpected_create_skip_stays_pending(repo):
     data = json.loads((repo / "tmp" / "strat-input.json").read_text())
     data["expected_skips"] = [{"key": "RHAIRFE-2", "reason": "quality: no quality label"}]

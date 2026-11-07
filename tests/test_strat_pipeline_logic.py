@@ -127,6 +127,15 @@ def test_a_failed_push_holds_back_every_refined_review(tmp_path):
     assert out["result"] is None  # failed business action must fail the Workflow
 
 
+def test_a_partial_push_records_coverage_but_fails_and_holds_back_reviews(tmp_path):
+    out = _run(tmp_path, _full({"push": {"recorded": "push", "strategies": ["RHAISTRAT-1"], "partial": True},
+                                "write result": {"action": "failed", "check_exit": 0}}))
+    assert not [c for c in out["calls"] if c.startswith(("score", "review"))]
+    assert "push: no result" in out["logs"]
+    assert out["schemas"]["push"]["properties"]["partial"] == {"type": "boolean"}
+    assert out["result"] is None
+
+
 def test_retry_after_a_partial_create_pushes_the_new_strategy_before_its_review(tmp_path):
     # Attempt 1 created, refined, pushed and reviewed RHAISTRAT-1; RHAIRFE-2 stayed pending.
     out = _run(tmp_path, _full({"read input": _read(

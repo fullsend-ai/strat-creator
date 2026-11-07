@@ -12,7 +12,9 @@ Commands (run from the repository root):
   read                      input and progress as one JSON object
   record-create             strategies created for this run's RFEs
   refine-status             verified refinement readiness for this run
-  mark refine KEY | mark push [--skipped]   (push covers every refined strategy)
+  mark refine KEY | mark push [--skipped | --partial]
+                            (push covers each refined strategy the push script
+                            pushed; --partial after it exited nonzero)
   record-review KEY         verdict from the review file
   result [--failed STEP[:KEY]]...
                             validate and write result plus saved completion receipt
@@ -43,6 +45,7 @@ from artifact_utils import read_frontmatter, read_frontmatter_validated, update_
 INPUT = Path("tmp/strat-input.json")
 PROGRESS = Path("tmp/strat-progress.json")
 PROGRESS_LOCK = Path("tmp/strat-progress.lock")
+PUSH_OUTCOMES = Path("tmp/strat-push-outcomes.json")
 TASKS = Path("artifacts/strat-tasks")
 REVIEWS = Path("artifacts/strat-reviews")
 ORIGINALS = Path("artifacts/strat-originals")
@@ -158,6 +161,20 @@ def pushable(key):
     except Exception:
         return False
     return key.startswith("RHAISTRAT-") and fm.get("status") == "Refined" and fm.get("jira_key") == key
+
+
+def push_outcomes(run_id, *, required):
+    """Per-strategy outcomes push_refined_strategies.py saved for this run.
+
+    None when it saved none (only acceptable after it exited 0); after a
+    nonzero exit (`required`) a missing record means nothing is proven pushed.
+    """
+    if PUSH_OUTCOMES.is_file() and not PUSH_OUTCOMES.is_symlink():
+        saved = json.loads(PUSH_OUTCOMES.read_text())
+        if isinstance(saved, dict) and saved.get("run_id") == run_id \
+                and isinstance(saved.get("outcomes"), dict):
+            return saved["outcomes"]
+    return {} if required else None
 
 
 def review_only(data):
@@ -436,6 +453,8 @@ def cmd_mark(args):
     out = {"recorded": recorded}
     if recorded == "push":
         out["strategies"] = pushed(progress)
+        if args.partial:
+            out["partial"] = True
     print(json.dumps(out))
 
 
@@ -458,16 +477,23 @@ def _mark(args, progress, data):
     elif args.step == "push":
         # push_refined_strategies.py pushes every artifacts/strat-tasks/RHAISTRAT-*.md
         # whose frontmatter says status Refined with that jira_key, skips the rest,
-        # and exits nonzero if any push fails; so after a successful run those
-        # are exactly the strategies it pushed, excluding verified review-only
-        # imports. A strategy refined later (a
-        # retried create) needs a push of its own. A dry run pushes nothing.
+        # and stops with a nonzero exit at the first unrelated failure. In a
+        # prepared run it saves each strategy's outcome as it completes; only
+        # those pushed and labelled are covered, so a partial batch keeps the
+        # coverage it earned. Verified review-only imports are never pushed.
+        # A strategy refined later (a retried create) needs a push of its own.
+        # A dry run pushes nothing.
+        if args.skipped and args.partial:
+            die("mark push takes --skipped or --partial, not both")
         refined_now = set(progress.get("refine", {}))
         deferred = {v["key"] for v in progress.get("deferred", [])}
         refined_now -= {p["strat"] for p in (progress.get("create") or {}).get("strategies", [])
                         if p["rfe"] in deferred}
         if not args.skipped:
             refined_now = {k for k in refined_now if pushable(k)}
+            outcomes = push_outcomes(data["run_id"], required=args.partial)
+            if outcomes is not None:
+                refined_now = {k for k in refined_now if outcomes.get(k) == "pushed"}
         covered = set(pushed(progress))
         failures = []
         from strat_freshness import StaleTicket, batch_deferred, record
@@ -742,6 +768,9 @@ def main(argv=None):
     mark.add_argument("key", nargs="?")
     mark.add_argument("--skipped", action="store_true",
                       help="push: recorded as skipped (dry run)")
+    mark.add_argument("--partial", action="store_true",
+                      help="push: the push script exited nonzero; cover only the "
+                           "strategies its saved outcomes list as pushed")
     mark.set_defaults(func=cmd_mark)
     review = sub.add_parser("record-review")
     review.add_argument("key")
