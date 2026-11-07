@@ -250,12 +250,21 @@ def deliver(event):
                 if session["owner"] and event.get("session_id") == session["owner"]["session_id"]:
                     buffered = directory / session["session_id"] / "pending-deliveries" / f"{agent}.json"
                     buffering = True
-                    if usable and not defect:
-                        # Only the key the report's heading names can ever adopt it.
-                        if not claimed or key in claimed:
-                            save(buffered, {"agent_id": agent, "session_id": event["session_id"],
-                                            "stop_hook_active": redelivery,
-                                            "last_assistant_message": report})
+                    if usable and not defect and claimed and key not in claimed:
+                        # An authenticated later delivery claims another target: it can never be
+                        # adopted here, and it must not leave the earlier buffered report standing.
+                        buffered.unlink(missing_ok=True)
+                    elif usable and not defect:
+                        if buffered.is_file() and not redelivery:
+                            earlier = json.loads(regular(root, buffered).read_text())
+                            if earlier.get("last_assistant_message") != report:
+                                # Same rule as store(): only a stop-hook continuation replaces
+                                # a reviewer's earlier delivery; fail closed on a second assessment.
+                                buffered.unlink()
+                                raise ValueError("Multiple different assessments for one role/session")
+                        save(buffered, {"agent_id": agent, "session_id": event["session_id"],
+                                        "stop_hook_active": redelivery,
+                                        "last_assistant_message": report})
                     elif buffered.is_file():
                         # An authenticated empty or invalid later delivery invalidates the earlier buffered one.
                         buffered.unlink()

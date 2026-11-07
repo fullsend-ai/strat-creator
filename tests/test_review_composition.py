@@ -323,6 +323,53 @@ def test_delivery_is_buffered_only_for_the_key_its_heading_names(target):
     assert not (session / "pending-deliveries").exists()
 
 
+def test_prelaunch_differing_delivery_requires_a_stop_hook_continuation(target):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
+    session = root / "tmp/review-composition" / key / started["session_id"]
+    launch, stop = interactive(reports["feasibility"], LAUNCH_RECEIPT)
+    buffered = session / "pending-deliveries" / f"{stop['agent_id']}.json"
+    composition.capture(stop)
+    composition.capture(stop)  # an identical redelivery is harmless
+    assert buffered.exists()
+    different = {**stop, "last_assistant_message": stop["last_assistant_message"] + "\nA second assessment."}
+    with pytest.raises(ValueError, match="Multiple different assessments"):
+        composition.capture(different)
+    assert not buffered.exists()  # fail closed, as store() does after launch
+    assert "pending" in composition.capture(launch)
+    assert not (session / "feasibility.json").exists()
+
+
+def test_prelaunch_stop_hook_continuation_replaces_the_buffered_delivery(target):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
+    session = root / "tmp/review-composition" / key / started["session_id"]
+    launch, stop = interactive(reports["feasibility"], LAUNCH_RECEIPT)
+    composition.capture(stop)
+    second = {**stop, "stop_hook_active": True,
+              "last_assistant_message": stop["last_assistant_message"] + "\nCorrected after the scope hook."}
+    composition.capture(second)
+    assert "captured" in composition.capture(launch)
+    saved = json.loads((session / "feasibility.json").read_text())
+    assert saved["text"] == second["last_assistant_message"]
+
+
+def test_prelaunch_wrong_target_redelivery_clears_the_earlier_buffer(target):
+    root, key, rfe = target
+    started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
+    session = root / "tmp/review-composition" / key / started["session_id"]
+    launch, stop = interactive(reports["feasibility"], LAUNCH_RECEIPT)
+    buffered = session / "pending-deliveries" / f"{stop['agent_id']}.json"
+    composition.capture(stop)
+    assert buffered.exists()
+    wrong = {**stop, "stop_hook_active": True,
+             "last_assistant_message": stop["last_assistant_message"].replace(key, "STRAT-9502")}
+    composition.capture(wrong)
+    assert not buffered.exists()  # the stale earlier report must not be adopted at launch
+    assert "pending" in composition.capture(launch)
+    assert not (session / "feasibility.json").exists()
+
+
 def test_compose_and_direct_capture_leave_no_pending_delivery_buffers(target):
     root, key, rfe = target
     started, reports = prepare(root, key, rfe, (1, 1, 1, 1), finish=False)
