@@ -321,8 +321,24 @@ remain separate, including any disagreement with that gate. Prepared reviews
 mark those verdicts pending rather than borrowing the scorer's recommendation.
 
 The review Skill opens one session per target. PostToolUse hooks bind its
-begin receipt to the actual caller and capture the four delivered forked Skill
-results with role, agent/tool identity and content hashes. The Python composer
+begin receipt to the actual caller. When a forked Skill call returns only a
+launch receipt (the interactive case), the PostToolUse hook records a pending
+launch with role and agent/tool identity. A SubagentStop hook
+(`review_composition.py hook`) then captures that reviewer's delivered report
+from `last_assistant_message`, checking `agent_id` against the pending launch
+and `session_id` against the bound session owner. A report delivered before its
+launch record exists is buffered (`pending-deliveries/`) under only the key its
+heading names; its verdict fields are checked at once, so a fixable error blocks
+the stop there, and every other check runs and the report is adopted when the
+launch arrives. Buffers are removed on adoption, on a direct delivery and when
+composition completes. The two SubagentStop hooks run in parallel, so a later
+delivery from the same reviewer that carries `stop_hook_active` (the
+continuation after a blocked stop) replaces its own earlier one; any other
+second delivery is rejected as multiple assessments. An invalid later delivery
+clears the earlier one. A fixable verdict-field error blocks the stop once so
+the reviewer can correct it. Reports delivered directly in a forked Skill PostToolUse
+result are captured there. Either way, the four reports are stored with role,
+agent/tool identity and content hashes. The Python composer
 copies all report text unchanged, lists dissent and labels the scorer output
 separately. It exports the role reports and a provenance manifest beside the
 review. Missing reports prevent composition; recording review and host
@@ -331,7 +347,21 @@ includes those provenance/source files. This does not judge report quality;
 the delivery-content gate and independent accuracy evaluation remain separate.
 
 This adapter is tested on Claude Code 2.1.296 and depends on the actual Bash
-and forked Skill PostToolUse payload fields. Requalify it when upgrading Claude.
+and forked Skill PostToolUse payload fields and the SubagentStop payload fields
+(`last_assistant_message`, `agent_id`, `agent_type`, `session_id`,
+`stop_hook_active`). Requalify it when upgrading Claude. A renamed or absent
+`agent_type` fails silently: no delivery is recognized as a reviewer's, so all
+four deliveries are never adopted and composition stops on the missing roles.
+
+The interactive path's core assumption is not yet natively qualified: the
+launch is keyed by the forked-Skill receipt's `agentId` and delivery matches
+SubagentStop's `agent_id`. The native fixtures were captured from different
+forks, so no paired payload shows that one fork reports the same identifier in
+both events; the unit tests construct the equality. If the identifiers do not
+correlate in a real interactive session, reports are never adopted and
+composition stops on the missing roles. Capture a paired interactive receipt and
+SubagentStop for one fork into `tests/fixtures/native-hooks/` before relying on
+this path.
 
 A workflow has no shell of its own, so every command runs in a step agent.
 Each step records its outcome in `tmp/strat-progress.json` through

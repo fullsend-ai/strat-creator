@@ -202,6 +202,9 @@ With --scores-from, substitute the supplied directory here too. This command
 checks the score source and prepared review. Loaded plugin PostToolUse hooks bind
 this session to the actual caller and save each delivered Skill result. Hook
 capture is required; standalone Skill text without the plugin is insufficient.
+In an interactive session a Skill call may return only a launch receipt; the
+hook records that reviewer and captures its report when the fork delivers it.
+Wait until all four reports have been delivered before Step 7.
 Run begin in its own Bash call; do not launch two begin sessions in one call.
 Do not substitute transcripts, earlier scorer feedback or invented reports.
 
@@ -226,8 +229,9 @@ Each reviewer resolves only the exact assigned strategy file and its
 `source_rfe`. A local file for a different ticket does not change its mode.
 The loaded strat-creator/strat-pipeline plugin blocks other ticket reads and
 checks each completed assessment's target. If any return begins with
-`REVIEW_SCOPE_ERROR:`, lacks the assigned heading, or includes another strategy
-key, stop with an error before composition or Jira publication. Do not treat
+`REVIEW_SCOPE_ERROR:`, or any *delivered assessment* (not a launch receipt)
+lacks the assigned heading or includes another strategy key, stop with an
+error before composition or Jira publication. Do not treat
 that result as a review, rewrite it into a valid report, or rerun the reviewer.
 
 ## Step 7: Compose the captured reviews (AUTOMATED)
