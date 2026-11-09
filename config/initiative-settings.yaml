@@ -4,13 +4,15 @@
 jql:
   project: RHAISTRAT
   issue_type: Initiative               # RHAISTRAT also holds rfe-strategy's Features
+  required_labels:
+    - initiative-autofix-opt-in        # the owner's opt-in (rfe-creator types/initiative labels.opt_in): rfe-creator
+                                       # does not stop rubric-pass from appearing without it, so require it here too
   quality_labels:
     - initiative-autofix-rubric-pass   # rfe-creator's initiative rubric-pass label, its published contract:
                                        # rubric-passed Initiatives only; tech-reviewed is not accepted (no Initiative job sets it)
-                                       # No opt-in label: rfe-creator reviews only opted-in Initiatives, so this label
-                                       # already implies it (AISDLC-301)
   excluded_labels:
     - strat-creator-processing         # the lock, same label as RFEs
+    - initiative-needs-attention       # rfe-creator asked a human to look: it can sit next to rubric-pass
   excluded_statuses:                   # open question: RHAISTRAT's Initiative workflow states (RFEs also exclude Draft)
     - Closed
     - Resolved

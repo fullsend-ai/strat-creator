@@ -259,7 +259,10 @@ def check_jira(c, result, repo, run):
     from jira_utils import get_issue, require_env
     from type_registry import run_type
 
-    same_ticket = run_type(run).same_ticket
+    desc = run_type(run)
+    same_ticket = desc.same_ticket
+    # Only the clone step writes the provenance label; a same-ticket strategy is never cloned.
+    not_written = {desc.labels["auto_created"]} if same_ticket else set()
     server, user, token = require_env()
     for s in result["strategies"]:
         try:
@@ -272,7 +275,7 @@ def check_jira(c, result, repo, run):
             c.fail(f"Jira readback of {s['strat']} failed: {str(exc)[:200]}")
             continue
         c.check(s["strat"] in clones, f"{s['strat']} is not cloned from {s['rfe']} in Jira")
-        expected = set(compute_strat_labels("Reviewed", s["recommendation"]))
+        expected = set(compute_strat_labels("Reviewed", s["recommendation"])) - not_written
         missing = sorted(expected - labels)
         c.check(not missing, f"{s['strat']} is missing Jira label(s) {', '.join(missing)}")
         try:

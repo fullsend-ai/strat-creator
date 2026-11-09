@@ -17,6 +17,7 @@ Commands:
         (must have strat-creator-auto-created, must NOT have
         strat-creator-needs-attention or strat-creator-human-sign-off),
         then lock the RFE. Fails if no Cloners link to RHAIRFE exists.
+        An Initiative (same-ticket strategy) is locked on itself.
 
     unlock-strat RHAISTRAT-1500
         Resolve STRAT→RFE via Cloners link, remove lock from RFE.
@@ -228,8 +229,28 @@ def unlock_owned(server, user, token, keys, owner):
     return 0
 
 
+def _same_ticket(server, user, token, strat_key):
+    """True when the key's type keeps its strategy on the ticket itself (an Initiative): the
+    ticket is its own input, so there is no Cloners link to walk and no clone provenance label."""
+    desc = type_registry.load().detect(strat_key, issue_type=lambda: (
+        get_issue(server, user, token, strat_key, fields=["issuetype"])
+        .get("fields", {}).get("issuetype") or {}).get("name"))
+    return bool(desc and desc.same_ticket)
+
+
 def lock_strat(server, user, token, strat_key, locked_keys_file=None):
-    """Lock via STRAT key: resolve to RFE, validate STRAT guards, lock RFE."""
+    """Lock via STRAT key: resolve to RFE, validate STRAT guards, lock RFE.
+
+    A same-ticket strategy (an Initiative) is locked on the ticket itself; lock() refuses it
+    when it carries a blocking label (needs-attention, human sign-off).
+    """
+    if _same_ticket(server, user, token, strat_key):
+        exit_code, locked_keys = lock(server, user, token, [strat_key],
+                                      locked_keys_file=locked_keys_file)
+        if exit_code != 0:
+            return exit_code
+        return 0 if locked_keys else 1
+
     # Validate STRAT labels
     strat_labels = _get_labels(server, user, token, strat_key)
     if STRAT_REQUIRED_LABEL not in strat_labels:
@@ -263,6 +284,8 @@ def lock_strat(server, user, token, strat_key, locked_keys_file=None):
 
 def unlock_strat(server, user, token, strat_key):
     """Unlock via STRAT key: resolve to RFE, remove lock from RFE."""
+    if _same_ticket(server, user, token, strat_key):
+        return unlock(server, user, token, [strat_key])
     rfe_key = _resolve_strat_to_rfe(server, user, token, strat_key)
     if not rfe_key:
         print(f"ERROR {strat_key} — no Cloners link to RHAIRFE found.",

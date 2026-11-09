@@ -154,22 +154,27 @@ class TestTypeMode:
         result = _run(["--jql-default", "--type", "initiative-strategy"], env=env)
         assert result.returncode != 0
         assert result.stderr.startswith("TYPE RESOLVED: initiative-strategy (--type)\n")
-        assert ('JQL: project = RHAISTRAT AND issuetype = "Initiative" AND '
-                '(labels = "initiative-autofix-rubric-pass"') in result.stderr
+        assert ('JQL: project = RHAISTRAT AND issuetype = "Initiative" AND labels = "initiative-autofix-opt-in" '
+                'AND (labels = "initiative-autofix-rubric-pass"') in result.stderr
 
 
 class TestSameTicketDiscovery:
     """initiative-strategy runs on the Initiative itself (relation self): the intake gate selects
-    rubric-passed Initiatives without the lock, and "already processed" is an Initiative carrying a
-    skip_if label. rfe-strategy's discovery on the same Jira is unchanged."""
+    opted-in, rubric-passed Initiatives without the lock or rfe-creator's needs-attention, and
+    "already processed" is an Initiative carrying a skip_if label. rfe-strategy's discovery on the
+    same Jira is unchanged."""
 
     def test_initiatives(self, jira):
-        gate = "initiative-autofix-rubric-pass"
-        jira.create("RHAISTRAT-1", "Fresh", "d", labels=[gate], issue_type="Initiative")
-        jira.create("RHAISTRAT-2", "Reviewed", "d", labels=[gate, "strat-creator-rubric-pass"], issue_type="Initiative")
-        jira.create("RHAISTRAT-3", "Locked", "d", labels=[gate, "strat-creator-processing"], issue_type="Initiative")
+        gate = ["initiative-autofix-opt-in", "initiative-autofix-rubric-pass"]
+        jira.create("RHAISTRAT-1", "Fresh", "d", labels=gate, issue_type="Initiative")
+        jira.create("RHAISTRAT-2", "Reviewed", "d", labels=[*gate, "strat-creator-rubric-pass"],
+                    issue_type="Initiative")
+        jira.create("RHAISTRAT-3", "Locked", "d", labels=[*gate, "strat-creator-processing"], issue_type="Initiative")
         jira.create("RHAIRFE-4", "An RFE", "d", labels=["strat-creator-3.5", "rfe-creator-autofix-rubric-pass"])
-        jira.create("RHAISTRAT-5", "An RFE's strategy", "d", labels=[gate], issue_type="Feature")  # same project
+        jira.create("RHAISTRAT-5", "An RFE's strategy", "d", labels=gate, issue_type="Feature")  # same project
+        jira.create("RHAISTRAT-6", "Not opted in", "d", labels=gate[1:], issue_type="Initiative")
+        jira.create("RHAISTRAT-7", "Flagged", "d", labels=[*gate, "initiative-needs-attention"],
+                    issue_type="Initiative")
         env = dict(os.environ, JIRA_SERVER=jira.url, JIRA_USER="admin", JIRA_TOKEN="admin")
 
         result = _run(["--jql-default", "--type", "initiative-strategy", "--verbose"], env=env)

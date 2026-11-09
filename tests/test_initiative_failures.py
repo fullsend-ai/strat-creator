@@ -17,6 +17,7 @@ import jira_utils  # noqa: E402
 import validate_types  # noqa: E402
 
 GATE = "initiative-autofix-rubric-pass"
+OPT_IN = "initiative-autofix-opt-in"
 LOCK = "strat-creator-processing"
 TWIN = os.path.join(REPO, "types", "initiative-strategy", "type.yaml")
 
@@ -38,7 +39,7 @@ def _discover(jira):
 
 def _initiative(jira, key, *labels):
     jira.create(key, f"Initiative {key}", "## Objective\n\nGrow the platform.",
-                labels=[GATE, *labels], issue_type="Initiative")
+                labels=[OPT_IN, GATE, *labels], issue_type="Initiative")
 
 
 class TestInvalidDefinition:

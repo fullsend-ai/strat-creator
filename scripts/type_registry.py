@@ -405,7 +405,8 @@ def resolve(registry, *, explicit_type=None, artifact=None, ids=(), env=None, he
     5. ``legacy default`` — no signal at all: ``rfe-strategy``.
 
     The signals of rungs 2-4 must agree (a run is single-typed); with ``--type`` they are checked
-    only for a conflict. Several types left and nothing to decide: headless (``is_headless``)
+    only for a conflict. An id of a shared key prefix is narrowed only by the artifact, not by
+    another id. Several types left and nothing to decide: headless (``is_headless``)
     raises ``ResolveError`` with ``exit_code`` 3, interactive returns an ambiguous
     ``Resolution``. An id no type owns is no signal, except in a headless run without
     ``--type``, where it is an error: a headless run never guesses.
@@ -472,6 +473,12 @@ def resolve(registry, *, explicit_type=None, artifact=None, ids=(), env=None, he
             f"conflicting type signals: {_render_pairs(pairs)}; a run is single-typed — split the "
             f"input by type or pass --type"
         )
+    # An id whose prefix several types share (RHAISTRAT-) is settled by its artifact, never by another
+    # id: with RHAIRFE-1, RHAISTRAT-2 may be the RFE's Feature or an Initiative (a mixed list).
+    loose = [set(names) for r, _, names in deterministic if r == "id grammar" and len(names) > 1]
+    if len(common) == 1 and loose and not any(r != "id grammar" and len(names) == 1
+                                              for r, _, names in deterministic):
+        common = set.union(*loose)
     if len(common) == 1:
         (name,) = common
         rung = min((r for r, _, names in deterministic if name in names), key=RESOLVE_RUNGS.index)

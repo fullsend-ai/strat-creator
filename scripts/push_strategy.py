@@ -32,7 +32,6 @@ from jira_utils import (
     adf_to_markdown,
     attachment_sort_key,
     build_rfe_reference,
-    download_attachment,
     get_issue,
     markdown_to_adf,
     require_env,
@@ -361,7 +360,7 @@ def _push_via_attachment(server, user, token, issue_key, existing_md,
 
 
 def _push_same_ticket(server, user, token, issue_key,
-                      strategy_section, staff_input_section, local_content):
+                      strategy_section, staff_input_section, local_content, desc):
     """Push to a ticket that is its own input (relation self): the strategy and
     the Staff Engineer / SME Input go only to a new append-only attachment.
 
@@ -372,20 +371,11 @@ def _push_same_ticket(server, user, token, issue_key,
     att_filename = STRATEGY_ATTACHMENT_TEMPLATE.format(issue_key=issue_key)
     if os.path.lexists("tmp/strat-input.json") or os.environ.get("STRAT_MANAGED_RUN") == "1":
         # As on a clone: a managed run never changes the live SME input, here the newest attachment's.
-        from strat_freshness import staff, verify_staff
+        from strat_freshness import live_staff, verify_staff
         from strat_side_effects import context
         context()
-        attachments = [a for a in get_issue(server, user, token, issue_key, fields=["attachment"])
-                       ["fields"].get("attachment", []) if a.get("filename") == att_filename]
-        live = ""
-        if attachments:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                path = os.path.join(tmp_dir, att_filename)
-                download_attachment(server, user, token,
-                                    max(attachments, key=attachment_sort_key)["content"], path)
-                with open(path, encoding="utf-8") as f:
-                    live = f.read()
-        verify_staff(local_content, staff(live))
+        fields = get_issue(server, user, token, issue_key, fields=["attachment"])["fields"]
+        verify_staff(local_content, live_staff((server, user, token), issue_key, fields, desc))
     with _attachment_writer_lock(issue_key):
         with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".md", delete=False, encoding="utf-8") as tmp:
@@ -433,7 +423,7 @@ def main():
 
     if desc and desc.get("inputs.0.relation.kind") == "self":
         _push_same_ticket(server, user, token, args.issue_key,
-                          strategy_section, staff_input_section, local_content)
+                          strategy_section, staff_input_section, local_content, desc)
         return
 
     issue = get_issue(server, user, token, args.issue_key,

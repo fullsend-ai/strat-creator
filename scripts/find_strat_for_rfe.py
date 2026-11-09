@@ -44,6 +44,10 @@ from strat_label_gate import pipeline_label_gate
 _TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
 LINK_TYPE = _TYPE.get("inputs.0.relation.link_type")
 STRAT_PREFIX = _TYPE.write_prefix
+# Issue types other registered types write under the same prefix (RHAISTRAT Initiatives): such a
+# ticket is never an RFE's clone, even when a person links it with Cloners.
+OTHER_ISSUE_TYPES = {d.get("identity.jira.issue_type", None) for d in type_registry.load()
+                     if d.name != _TYPE.name and STRAT_PREFIX in d.key_prefixes} - {None}
 
 
 def find_strat_clones(server, user, token, rfe_key):
@@ -67,10 +71,12 @@ def find_strat_clones(server, user, token, rfe_key):
     results = []
     for key in strat_keys:
         strat_data = get_issue(server, user, token, key,
-                               fields=["status", "labels"])
+                               fields=["status", "labels", "issuetype"])
         fields = strat_data.get("fields")
         if not isinstance(fields, dict):
             raise ValueError(f"{key}: Jira response has no fields object")
+        if (fields.get("issuetype") or {}).get("name") in OTHER_ISSUE_TYPES:
+            continue
         status = fields.get("status", {}).get("name", "Unknown")
         # No default: a missing labels field must fail the gate, not pass it.
         labels = fields.get("labels")

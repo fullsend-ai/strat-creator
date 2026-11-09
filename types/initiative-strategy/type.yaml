@@ -11,7 +11,7 @@
 #       All four are listed until decided — the twin's list is decided by omission.
 #   Sign-off: human sign-off stays (the signoff stage is present). On the shared ticket the summary and description
 #       are rfe-creator's: strat-creator never writes them, so there is no [DRAFT] prefix, and the Business Need heading
-#       titles only the local task file's copy of the description. The auto-created lock guard is flagged where it is.
+#       titles only the local task file's copy of the description. Nothing clones it, so it never gets auto_created.
 # Selected by --type initiative-strategy or by its ids (type_registry.resolve); the default stays rfe-strategy.
 schema_version: 1
 type: initiative-strategy
@@ -142,7 +142,7 @@ pipeline:
     path: scripts/assess-strat/agent_prompt.md
     rubric_version: "93a3722cbd00076723679e3ec666a6e2fc15038791b69f670245671360d2e5f7"
     export: artifacts/strat-rubric.md
-  lock:                                                 # open question: derived_required_label assumes a clone we created; on a shared ticket the guard needs rethinking
+  lock:                                                 # derived_* apply to a clone only: lock_issues.py lock-strat locks a same-ticket strategy on itself, and validate_result.py expects no auto_created label on it
     label: strat-creator-processing
     blocking_labels: [strat-creator-processing, strat-creator-needs-attention, strat-creator-human-sign-off]
     derived_required_label: strat-creator-auto-created

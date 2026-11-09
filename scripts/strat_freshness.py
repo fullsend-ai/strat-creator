@@ -198,16 +198,34 @@ def jira_rfe(key, work_type=None):
     return digest({"fields": fields, "comments": comments})
 
 
-def jira_human(key, *, root=None, data=None):
-    from jira_utils import adf_to_markdown, get_issue, require_env
+def live_staff(env, key, fields, work_type):
+    """The live SME input of strategy ``key``: its description on a clone; on a same-ticket
+    strategy, whose description is its owner's, the newest strategy attachment ("" when none)."""
+    from jira_utils import adf_to_markdown, attachment_sort_key, download_attachment
+    if not work_type.same_ticket:
+        return staff(adf_to_markdown(fields.get("description")))
+    name = work_type.get("pipeline.body_overflow.attachment").format(issue_key=key)
+    candidates = [a for a in fields.get("attachment") or [] if a.get("filename") == name]
+    if not candidates:
+        return ""
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / name
+        download_attachment(*env, max(candidates, key=attachment_sort_key)["content"], str(path))
+        return staff(path.read_text(encoding="utf-8"))
+
+
+def jira_human(key, *, root=None, data=None, work_type=None):
+    from jira_utils import get_issue, require_env
     from strat_side_effects import HUMAN_GATES, check_human_gates
     env = require_env()
-    fields = get_issue(*env, key, fields=["description", "summary", "priority", "status", "labels"])["fields"]
+    work_type = type_registry.run_type(data) if data is not None else _type(work_type)
+    fields = get_issue(*env, key, fields=["description", "summary", "priority", "status", "labels"]
+                       + (["attachment"] if work_type.same_ticket else []))["fields"]
     gates = sorted(set(checked_labels(fields.get("labels"))) & HUMAN_GATES)
     if data is not None:
         check_human_gates(env[0], key, gates, data, root=root)
         gates = []  # Only our exact current-run verdict can pass a present gate.
-    return {"staff": staff(adf_to_markdown(fields.get("description"))),
+    return {"staff": live_staff(env, key, fields, work_type),
             "summary": fields.get("summary"), "priority": fields.get("priority"), "status": fields.get("status"),
             "gate_labels": gates}
 
@@ -519,7 +537,7 @@ def reusable(root, rfe, key, previous, *, trusted_source=None, work_type=None):
     from jira_utils import require_env
     if base["server"] != digest(require_env()[0].rstrip("/")) or base["rfes"].get(rfe) != jira_rfe(rfe, work_type):
         return None
-    if proof.get("published") != jira_published(key) or proof.get("human") != jira_human(key):
+    if proof.get("published") != jira_published(key) or proof.get("human") != jira_human(key, work_type=work_type):
         return None
     return {"key": key, "proof": proof, "previous_run_id": previous["run_id"],
             "context": {"source": digest(base["source"]), "architecture": digest(base["architecture"]),

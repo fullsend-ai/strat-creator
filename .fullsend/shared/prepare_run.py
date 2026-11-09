@@ -15,7 +15,8 @@ record is on the host before the agent starts and the CI cleanup
 (release-locks.sh) can release it whatever happens next.
 
 Resume points, per RFE (first match wins; a same-ticket type reads the
-labels on the input ticket itself, which is also its strategy):
+labels on the input ticket itself, which is also its strategy, and checks
+the gates before "no open STRAT"):
   no open STRAT                                  -> create
   STRAT has rubric-pass, needs-attention or
     human-sign-off                               -> skipped (done, or waiting for a human)
@@ -155,8 +156,9 @@ def resume_point(rfe, previous, desc):
     """(step, None) or (None, skip reason) for one RFE; see the module docstring."""
     server, user, token = require_env()
     if desc.same_ticket:
+        # Its gates come first: a strategy review passed is done even without auto-refined.
         strat, labels = rfe, labels_of([rfe])[rfe]
-        if REFINED_LABEL not in labels:
+        if REFINED_LABEL not in labels and not labels & set(GATE_LABELS):
             return "create", None
     else:
         clones = [c for c in find_strat_clones(server, user, token, rfe) if c["status"] not in ACTIVE_STATUSES]
@@ -301,6 +303,15 @@ def main(argv, env):
             print(f"prepare-run: RFE_KEY must be a {type_name} input key "
                   f"({'/'.join(desc.input_key_prefixes)}NNNN), got {key!r}", file=sys.stderr)
             return 1
+        wanted = desc.get("identity.jira.issue_type", None) if desc.same_ticket else None
+        if wanted:  # a same-ticket type shares its project's keys with other issue types (RHAISTRAT Features)
+            server, user, token = require_env()
+            actual = (get_issue(server, user, token, key, fields=["issuetype"])
+                      .get("fields", {}).get("issuetype") or {}).get("name")
+            if actual != wanted:
+                print(f"prepare-run: RFE_KEY {key} has issue type {actual!r}; {type_name} runs only on "
+                      f"issue type {wanted!r}", file=sys.stderr)
+                return 1
         candidates = [key]
     elif mode == "resume":
         key = env.get("STRAT_RESUME_KEY", "").strip()
