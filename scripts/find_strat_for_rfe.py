@@ -35,7 +35,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 import type_registry
-from jira_utils import get_issue, require_env
+from jira_utils import foreign_issue_types, get_issue, require_env
 from strat_label_gate import pipeline_label_gate
 
 # The default work type's relation: the link type and the derived (RHAISTRAT-) key prefix.
@@ -44,10 +44,7 @@ from strat_label_gate import pipeline_label_gate
 _TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
 LINK_TYPE = _TYPE.get("inputs.0.relation.link_type")
 STRAT_PREFIX = _TYPE.write_prefix
-# Issue types other registered types write under the same prefix (RHAISTRAT Initiatives): such a
-# ticket is never an RFE's clone, even when a person links it with Cloners.
-OTHER_ISSUE_TYPES = {d.get("identity.jira.issue_type", None) for d in type_registry.load()
-                     if d.name != _TYPE.name and STRAT_PREFIX in d.key_prefixes} - {None}
+OTHER_ISSUE_TYPES = foreign_issue_types(_TYPE)  # an Initiative linked with Cloners is no RFE's clone
 
 
 def find_strat_clones(server, user, token, rfe_key):

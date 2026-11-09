@@ -162,3 +162,33 @@ def test_an_explicit_initiative_key_honours_the_intake_exclusions(monkeypatch, e
     monkeypatch.setattr(prepare, "require_env", lambda: ("s", "u", "t"))
     monkeypatch.setattr(prepare, "get_issue", lambda *a, **k: {"fields": fields})
     assert prepare.expected_create_skip("RHAISTRAT-9", settings, INITIATIVE) == reason
+
+
+def test_rfe_discovery_ignores_a_cloned_initiative(jira):
+    """Bot review on #100: an Initiative carries strat-creator-rubric-pass on itself; linked to an RFE with
+    Cloners it is not that RFE's strategy, so the RFE stays in discovery. A Feature with the label still counts."""
+    env = (jira.url, "admin", "admin")
+    link = {"type": {"name": "Cloners"}}
+    for n, issue_type in ((6400, "Initiative"), (6401, "Feature")):
+        jira.create(f"RHAIRFE-{n}", "RFE", "Ask.")
+        jira.create(f"RHAISTRAT-{n}", "Strategy", "Plan.", issue_type=issue_type, labels=["strat-creator-rubric-pass"])
+        jira.request("POST", "/rest/api/3/issueLink", {**link, "inwardIssue": {"key": f"RHAISTRAT-{n}"},
+                                                       "outwardIssue": {"key": f"RHAIRFE-{n}"}})
+    processed = jira_utils.find_processed_rfe_ids(*env, ["strat-creator-rubric-pass"], ["Closed"])
+    assert "RHAIRFE-6401" in processed and "RHAIRFE-6400" not in processed
+
+
+def test_an_initiative_eval_case_has_no_jira_key(tmp_path):
+    """Bot review on #100: a jira_key turns on the skills' live Jira label gates, so the eval would read Jira."""
+    builder = module("followup_build_dataset", ROOT / "eval/scripts/build_dataset.py")
+    files = {}
+    for name in ("original", "strategy", "review"):
+        files[name] = tmp_path / f"{name}.md"
+        files[name].write_text("## Objective\n\nGrow the platform.\n")
+    tri = {"ts": "run-1", "comments": None, **{k: str(v) for k, v in files.items()},
+           "entry": {"title": "Grow", "priority": "Major", "scores": {"total": 7}, "recommendation": "approve"}}
+    builder.build_case("RHAISTRAT-50", tri, str(tmp_path / "cases"), False, INITIATIVE)
+    (stub,) = (tmp_path / "cases").glob("*/stub.md")
+    front = stub.read_text().split("---")[1]
+    assert "jira_key: null" in front
+    assert "strat_id: RHAISTRAT-50" in front and "source_initiative: RHAISTRAT-50" in front

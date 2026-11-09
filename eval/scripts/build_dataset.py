@@ -224,8 +224,9 @@ def build_case(rfe_key, tri, out_root, force, desc):
     )
     stub_path = os.path.join(case_dir, "stub.md")
     write(stub_path, stub_body)
+    # No jira_key for any type: the skills' live Jira gates stay off, so the case is the frozen one.
     fields = {"strat_id": strat_id, "title": title, desc.get("inputs.0.source_ref_field"): rfe_key,
-              "jira_key": rfe_key if same_ticket else "null", "priority": priority, "status": "Draft"}
+              "jira_key": "null", "priority": priority, "status": "Draft"}
     if desc.name != type_registry.LEGACY_DEFAULT_TYPE:
         # strategy-create stamps it, and it picks the schema; rfe-strategy cases stay as they were built
         fields["type"] = desc.name

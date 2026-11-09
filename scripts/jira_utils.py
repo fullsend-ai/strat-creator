@@ -290,8 +290,20 @@ def _linked_input_key(link, desc=None):
     return None
 
 
+def foreign_issue_types(desc=None):
+    """Issue types other registered types write under this type's key prefix (RHAISTRAT
+    Initiatives beside rfe-strategy's Features): such an issue is never this type's strategy,
+    even when a person links it to an input with Cloners."""
+    d = desc or _TYPE
+    return {o.get("identity.jira.issue_type", None) for o in type_registry.load()
+            if o.name != d.name and d.write_prefix in o.key_prefixes} - {None}
+
+
 def _linked_input_keys(issues, desc=None):
+    foreign = foreign_issue_types(desc)
     for issue in issues:
+        if (issue.get("fields", {}).get("issuetype") or {}).get("name") in foreign:
+            continue
         for link in issue.get("fields", {}).get("issuelinks", []):
             key = _linked_input_key(link, desc)
             if key:
@@ -350,14 +362,14 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
         label_clause = " OR ".join(f'labels = "{label}"' for label in skip_labels)
         jql = f"project = {strat_project} AND ({label_clause})"
         issues = search_issues(server, user, token, jql,
-                               fields=["issuelinks"])
+                               fields=["issuelinks", "issuetype"])
         processed |= _extract_rfe_keys_from_issues(issues, d)
 
     if excluded_strat_statuses:
         status_clause = ", ".join(f'"{s}"' for s in excluded_strat_statuses)
         jql = f"project = {strat_project} AND status IN ({status_clause})"
         issues = search_issues(server, user, token, jql,
-                               fields=["issuelinks"])
+                               fields=["issuelinks", "issuetype"])
         processed |= _extract_rfe_keys_from_issues(issues, d)
 
     if processed and excluded_strat_statuses:
@@ -365,7 +377,7 @@ def find_processed_rfe_ids(server, user, token, skip_labels,
         open_jql = (f"project = {strat_project} "
                     f"AND status NOT IN ({sc})")
         open_issues = search_issues(server, user, token, open_jql,
-                                    fields=["issuelinks", "labels"])
+                                    fields=["issuelinks", "labels", "issuetype"])
         open_counts = _count_rfe_clones_from_issues(open_issues, d)
 
         unlabeled_rfes = set()
