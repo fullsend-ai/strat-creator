@@ -146,3 +146,19 @@ def test_another_id_does_not_settle_a_shared_prefix_id():
     assert type_registry.resolve(REG, ids=["RHAIRFE-1", "RHAIRFE-2"], env={"CI": "true"}).type_name == "rfe-strategy"
     pinned = type_registry.resolve(REG, explicit_type="rfe-strategy", ids=["RHAIRFE-1", "RHAISTRAT-2"], env={})
     assert pinned.type_name == "rfe-strategy"
+
+
+@pytest.mark.parametrize("extra,reason", [
+    (["initiative-needs-attention"], "excluded label: initiative-needs-attention"),
+    (["strat-creator-processing"], None), ([], None)])
+def test_an_explicit_initiative_key_honours_the_intake_exclusions(monkeypatch, extra, reason):
+    """Bot review on #100: an RFE_KEY run skips the discovery query, so a flagged Initiative is skipped here.
+    The host's own lock label is not an exclusion: it is on the ticket by then."""
+    import yaml
+    prepare = module("followup_skip", ROOT / ".fullsend/shared/prepare_run.py")
+    settings = yaml.safe_load((ROOT / "config/initiative-settings.yaml").read_text())
+    labels = ["initiative-autofix-opt-in", "initiative-autofix-rubric-pass", *extra]
+    fields = {"issuetype": {"name": "Initiative"}, "status": {"name": "New"}, "labels": labels}
+    monkeypatch.setattr(prepare, "require_env", lambda: ("s", "u", "t"))
+    monkeypatch.setattr(prepare, "get_issue", lambda *a, **k: {"fields": fields})
+    assert prepare.expected_create_skip("RHAISTRAT-9", settings, INITIATIVE) == reason

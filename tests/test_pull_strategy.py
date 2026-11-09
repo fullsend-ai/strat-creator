@@ -900,4 +900,7 @@ class TestPullSameTicket:
         assert body.strip().startswith(f"{heading}\n\nGrow the platform.\n\n{STRATEGY_HEADING}")
         assert "Second strategy." in body and "First strategy." not in body
         assert "## Staff Engineer / SME Input" in body
-        assert not (local_dir / "strat-originals").exists()
+        # Its own description is its source: local review scoping finds it there.
+        assert (local_dir / "strat-originals" / "RHAISTRAT-2200.md").read_text() == "Grow the platform.\n"
+        import review_scope
+        assert review_scope.inputs(tmp_path, "RHAISTRAT-2200")["source_rfe"] == "RHAISTRAT-2200"

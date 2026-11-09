@@ -214,6 +214,15 @@ def pull_strategy(server, user, token, strat_key, local_dir=WORKSPACE, *, pipeli
         result["files"].append(rfe_path)
         result["rfe_key"] = rfe_key
         print(f"  RFE original: {rfe_path}")
+    elif same_ticket:
+        # The ticket is its own source: review scoping reads its description from the originals.
+        originals_dir = os.path.join(local_dir, _DIRS["originals"])
+        os.makedirs(originals_dir, exist_ok=True)
+        source_path = os.path.join(originals_dir, f"{strat_key}.md")
+        with open(source_path, "w", encoding="utf-8") as f:
+            f.write(adf_to_markdown(description_adf).strip() + "\n" if description_adf else "\n")
+        result["files"].append(source_path)
+        print(f"  Source original: {source_path}")
 
     # A reference-only pipeline import needs its section boundary before
     # reconstruction; local human pulls retain their existing warning behavior.

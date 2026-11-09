@@ -212,6 +212,11 @@ def expected_create_skip(rfe, settings, desc):
     if quality and not labels & quality:
         return "quality: no quality label"
     if desc.same_ticket:
+        # An explicit key skips the discovery query, so its exclusions apply here too, except
+        # the lock label the host itself puts on this ticket.
+        excluded = labels & (set(jql.get("excluded_labels", [])) - {desc.get("pipeline.lock.label")})
+        if excluded:
+            return f"excluded label: {', '.join(sorted(excluded))}"
         return None  # nothing is cloned; the processed labels are resume_point's gates
     clones = find_strat_clones(server, user, token, rfe)
     open_clones = [c for c in clones if c["status"] not in ACTIVE_STATUSES]
