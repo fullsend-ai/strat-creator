@@ -192,3 +192,17 @@ def test_an_initiative_eval_case_has_no_jira_key(tmp_path):
     front = stub.read_text().split("---")[1]
     assert "jira_key: null" in front
     assert "strat_id: RHAISTRAT-50" in front and "source_initiative: RHAISTRAT-50" in front
+
+
+def test_cloning_an_rfe_does_not_adopt_a_linked_initiative(jira):
+    """Bot review on #100: discovery and find_strat_clones skip an Initiative linked to an RFE, so the RFE gets a
+    new Feature; the clone step's recovery must not return the Initiative as that Feature."""
+    jira.create("RHAIRFE-6500", "RFE", "Ask.")
+    jira.create("RHAISTRAT-6500", "Initiative", "Objective.", issue_type="Initiative")
+    jira.request("POST", "/rest/api/3/issueLink", {"type": {"name": "Cloners"},
+                 "inwardIssue": {"key": "RHAISTRAT-6500"}, "outwardIssue": {"key": "RHAIRFE-6500"}})
+    result = _script(jira, "clone_issue.py", "RHAIRFE-6500", "--target-project", "RHAISTRAT")
+    assert result.returncode == 0, result.stderr
+    new_key = result.stdout.strip()
+    assert new_key.startswith("RHAISTRAT-") and new_key != "RHAISTRAT-6500"
+    assert jira.get(new_key)["fields"]["issuetype"]["name"] == "Feature"

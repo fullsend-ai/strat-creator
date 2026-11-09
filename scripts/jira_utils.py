@@ -519,11 +519,16 @@ def create_clone(server, user, token, source_key, **fields):
                                            "project": fields["project"]})[:32]
     fields = dict(fields)
     fields["labels"] = sorted(set(fields.get("labels", [])) | {marker})
+    foreign = foreign_issue_types()
+
     def read():
         linked = get_issue(server, user, token, source_key, fields=["issuelinks"])["fields"].get("issuelinks", [])
         keys = {link.get(side, {}).get("key", "") for link in linked
                 if link.get("type", {}).get("name") == "Cloners" for side in ("inwardIssue", "outwardIssue")
                 if link.get(side, {}).get("key", "").startswith(fields["project"] + "-")}
+        # A linked ticket of another type's issue type (an Initiative) is never this clone.
+        keys = {key for key in keys if (get_issue(server, user, token, key, fields=["issuetype"])["fields"]
+                                        .get("issuetype") or {}).get("name") not in foreign}
         issues = search_issues(server, user, token, f'project = "{fields["project"]}" AND labels = "{marker}"')
         keys.update(issue["key"] for issue in issues)
         if len(keys) > 1:
