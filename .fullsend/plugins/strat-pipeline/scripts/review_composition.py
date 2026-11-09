@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from review_scope import TARGET, check_report, inputs, safe_path
+from review_scope import check_report, inputs, is_strategy_key, safe_path
 
 ROLES = ("feasibility", "testability", "scope", "architecture")
 POLICY = "numeric-only-v1"
@@ -37,7 +37,7 @@ def save(path, value):
 
 @contextmanager
 def locked(root, key):
-    if not TARGET.fullmatch(key):
+    if not is_strategy_key(key):
         raise ValueError("One exact strategy key is required")
     directory = safe_path(root, str(root / "tmp/review-composition" / key))
     directory.mkdir(parents=True, exist_ok=True)
@@ -167,7 +167,7 @@ def capture(event):
     if not matching:
         return
     key = tool.get("args", "").strip()
-    if not TARGET.fullmatch(key):
+    if not is_strategy_key(key):
         raise ValueError("Delivered review must belong to one exact target")
     # Standalone reviewer invocations do not participate in a composition session.
     if not (root / "tmp/review-composition" / key / "active.json").exists():

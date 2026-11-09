@@ -26,8 +26,21 @@ import re
 import subprocess
 import sys
 
+import type_registry
+
+# The default work type's values (rfe-strategy). For now: one type; take --type and resolve per call
+# (type_registry.resolve) once a type with its own dirs, dimensions or criterion labels lands.
+_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+
 FRONTMATTER_SCRIPT = os.path.join(os.path.dirname(__file__), "frontmatter.py")
-REVIEW_DIR_DEFAULT = os.path.join(os.path.dirname(__file__), "..", "artifacts", "strat-reviews")
+REVIEW_DIR_DEFAULT = os.path.join(os.path.dirname(__file__), "..", *_TYPE.dirs()["reviews"].split("/"))
+
+# The review dimensions (schema.review.score_fields): frontmatter keys under scores.* / reviewers.*;
+# the scorer's CSV names them by their display name (reporting.criterion_labels). Each scores 0-2.
+DIMENSIONS = _TYPE.score_fields
+COLUMNS = _TYPE.get("reporting.criterion_labels")
+TOTAL_FIELD = _TYPE.get("schema.review.total_field")
+MAX_TOTAL = 2 * len(DIMENSIONS)
 
 
 def extract_score_table(result_text):
@@ -82,18 +95,12 @@ def set_frontmatter(review_path, strat_id, verdict, needs_attention, scores):
 
     args = [
         sys.executable, FRONTMATTER_SCRIPT, "set", review_path,
-        f"strat_id={strat_id}",
+        f"{_TYPE.id_field}={strat_id}",
         f"recommendation={verdict.lower()}",
         f"needs_attention={'true' if needs_attention else 'false'}",
-        f"scores.feasibility={scores['Feasibility']}",
-        f"scores.testability={scores['Testability']}",
-        f"scores.scope={scores['Scope']}",
-        f"scores.architecture={scores['Architecture']}",
-        f"scores.total={scores['Total']}",
-        f"reviewers.feasibility={reviewer_default}",
-        f"reviewers.testability={reviewer_default}",
-        f"reviewers.scope={reviewer_default}",
-        f"reviewers.architecture={reviewer_default}",
+        *[f"scores.{dim}={scores[COLUMNS[dim]]}" for dim in DIMENSIONS],
+        f"scores.{TOTAL_FIELD}={scores['Total']}",
+        *[f"reviewers.{dim}={reviewer_default}" for dim in DIMENSIONS],
     ]
 
     result = subprocess.run(args, capture_output=True, text=True)
@@ -115,15 +122,13 @@ def ensure_review_file(review_path, strat_id, scores, score_table, feedback):
     if score_table:
         body += f"{score_table}\n"
         if "Total" not in score_table:
-            body += f"| **Total** | **{total}/8** | **{verdict}** |\n"
+            body += f"| **Total** | **{total}/{MAX_TOTAL}** | **{verdict}** |\n"
     else:
         body += "| Criterion | Score | Notes |\n"
         body += "|-----------|-------|-------|\n"
-        body += f"| Feasibility | {scores['Feasibility']}/2 | |\n"
-        body += f"| Testability | {scores['Testability']}/2 | |\n"
-        body += f"| Scope | {scores['Scope']}/2 | |\n"
-        body += f"| Architecture | {scores['Architecture']}/2 | |\n"
-        body += f"| **Total** | **{total}/8** | **{verdict}** |\n"
+        for dim in DIMENSIONS:
+            body += f"| {COLUMNS[dim]} | {scores[COLUMNS[dim]]}/2 | |\n"
+        body += f"| **Total** | **{total}/{MAX_TOTAL}** | **{verdict}** |\n"
 
     if feedback:
         body += f"\n## Scorer Feedback\n\n{feedback}\n"
@@ -172,14 +177,9 @@ def main():
 
     for row in rows:
         strat_id = row["ID"]
-        scores = {
-            "Feasibility": int(row["Feasibility"]),
-            "Testability": int(row["Testability"]),
-            "Scope": int(row["Scope"]),
-            "Architecture": int(row["Architecture"]),
-            "Total": int(row["Total"]),
-            "Verdict": row["Verdict"],
-        }
+        scores = {COLUMNS[dim]: int(row[COLUMNS[dim]]) for dim in DIMENSIONS}
+        scores["Total"] = int(row["Total"])
+        scores["Verdict"] = row["Verdict"]
         needs_attention = row["Needs_Attention"].lower() == "true"
 
         review_filename = f"{strat_id}-review.md"
@@ -203,7 +203,7 @@ def main():
         if ok:
             applied += 1
             status = "APPROVE" if not needs_attention else scores["Verdict"]
-            print(f"  {strat_id}: {scores['Total']}/8 → {status}")
+            print(f"  {strat_id}: {scores['Total']}/{MAX_TOTAL} → {status}")
         else:
             errors += 1
 

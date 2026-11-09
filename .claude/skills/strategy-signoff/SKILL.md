@@ -1,6 +1,6 @@
 ---
 name: strategy-signoff
-description: Sign off on a CI-approved strategy — pushes content and adds strat-creator-human-sign-off label. For rubric-pass strategies only.
+description: Sign off on a CI-approved strategy (a RHAISTRAT issue, or an Initiative's strategy) — pushes content and adds strat-creator-human-sign-off label. For rubric-pass strategies only.
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
@@ -9,7 +9,20 @@ You are signing off on a strategy that has passed CI review, marking it as featu
 
 ## Input
 
-`$ARGUMENTS` must contain a RHAISTRAT key (e.g., `RHAISTRAT-1520`). If no key is provided, ask the user for one.
+`$ARGUMENTS` must contain a strategy key: a RHAISTRAT key (e.g., `RHAISTRAT-1520`), either a Feature cloned from
+an RFE or an Initiative whose strategy lives on the Initiative itself; the scripts tell them apart by issue type. If no key is provided, ask the
+user for one. `RHAISTRAT-NNNN` below stands for whichever key you were given.
+
+Resolve the work type from the local strategy file's `type:` stamp, adding `--type <type>` if `$ARGUMENTS` has one,
+and use the type it prints as `<type>` below. A key alone cannot tell the two types apart, so the file decides:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py resolve --artifact local/strat-tasks/RHAISTRAT-NNNN.md RHAISTRAT-NNNN
+```
+
+If it prints `TYPE AMBIGUOUS` and the file exists without a `type:` line, `<type>` is `rfe-strategy`: Initiative
+strategy files are always stamped, so an unstamped one is an RFE strategy pulled before types existed. If the file
+does not exist, continue to Step 1, which stops. On any other non-zero exit, show its error and stop.
 
 ## Step 1: Validate Pre-Conditions
 
@@ -21,7 +34,7 @@ Then fetch the current labels and parent from Jira:
 python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_issue.py RHAISTRAT-NNNN --fields labels,parent --markdown
 ```
 
-**Guard checks:**
+**Guard checks** (the labels are the type's `conventions.labels.needs_attention` / `rubric_pass` in `types/<type>/type.yaml`, `<type>` being the type resolved above):
 
 - If the issue has `strat-creator-needs-attention` (not `rubric-pass`): tell the user this strategy needs CI approval first. Suggest using `/strategy-push` to resubmit, then waiting for CI to approve before signing off. **Stop here.**
 - If the issue does NOT have `strat-creator-rubric-pass`: tell the user this strategy hasn't been CI-approved yet and cannot be signed off. **Stop here.**
@@ -85,6 +98,8 @@ If the review file does not exist, skip and print `[SKIP] No review file found �
 
 ## Step 6: Add human-sign-off Label
 
+The label is the type's `conventions.labels.human_sign_off`; sign-off is the `signoff` stage of `pipeline.stages` (human sign-off stays).
+
 ```bash
 python3 -c "
 import sys; sys.path.insert(0, '${CLAUDE_SKILL_DIR}/scripts')
@@ -98,7 +113,7 @@ Print `[LABEL] strat-creator-human-sign-off added to RHAISTRAT-NNNN`.
 
 ## Step 7: Remove [DRAFT] Prefix
 
-Strip the `[DRAFT]` prefix (and its trailing space) from the Jira summary if present:
+Strip the `[DRAFT]` prefix (and its trailing space; `conventions.summary_prefix`, removed at this stage) from the Jira summary if present. If the type has no `conventions.summary_prefix` (a same-ticket type, whose summary is its owner's), skip this step and print `[SKIP] No summary prefix for <type> — summary unchanged`:
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/remove_draft_prefix.py RHAISTRAT-NNNN

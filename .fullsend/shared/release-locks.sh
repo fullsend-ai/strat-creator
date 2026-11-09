@@ -21,7 +21,11 @@ keys=()
 while IFS= read -r key || [[ -n "${key}" ]]; do
   key="${key//[[:space:]]/}"
   [[ -z "${key}" ]] && continue
-  if [[ ! "${key}" =~ ^RHAIRFE-[0-9]+$ ]]; then
+  # An input key of a registered work-item type (an RFE, or a same-ticket Initiative).
+  if [[ ! "${key}" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || ! python3 -c '
+import sys; sys.path.insert(0, sys.argv[1]); import type_registry as t
+r = t.load(); sys.exit(not any(r.get(n).input_key_re.match(sys.argv[2]) for n in r.names()))' \
+      "${ROOT}/scripts" "${key}"; then
     echo "release-locks: ERROR: invalid key in ${RECORD}: ${key}" >&2
     exit 1
   fi

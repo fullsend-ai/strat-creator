@@ -34,8 +34,17 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from jira_utils import get_issue, require_env
+import type_registry
+from jira_utils import foreign_issue_types, get_issue, require_env
 from strat_label_gate import pipeline_label_gate
+
+# The default work type's relation: the link type and the derived (RHAISTRAT-) key prefix.
+# For now: one type; resolve per call from rfe_key (type_registry.resolve(ids=[rfe_key])) once a
+# second clones type ships. A self relation (initiative-strategy) has no clone to find.
+_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+LINK_TYPE = _TYPE.get("inputs.0.relation.link_type")
+STRAT_PREFIX = _TYPE.write_prefix
+OTHER_ISSUE_TYPES = foreign_issue_types(_TYPE)  # an Initiative linked with Cloners is no RFE's clone
 
 
 def find_strat_clones(server, user, token, rfe_key):
@@ -45,12 +54,12 @@ def find_strat_clones(server, user, token, rfe_key):
 
     strat_keys = []
     for link in links:
-        if link.get("type", {}).get("name") != "Cloners":
+        if link.get("type", {}).get("name") != LINK_TYPE:
             continue
         for direction in ("outwardIssue", "inwardIssue"):
             issue = link.get(direction, {})
             key = issue.get("key", "")
-            if key.startswith("RHAISTRAT-"):
+            if key.startswith(STRAT_PREFIX):
                 strat_keys.append(key)
 
     if not strat_keys:
@@ -59,10 +68,12 @@ def find_strat_clones(server, user, token, rfe_key):
     results = []
     for key in strat_keys:
         strat_data = get_issue(server, user, token, key,
-                               fields=["status", "labels"])
+                               fields=["status", "labels", "issuetype"])
         fields = strat_data.get("fields")
         if not isinstance(fields, dict):
             raise ValueError(f"{key}: Jira response has no fields object")
+        if (fields.get("issuetype") or {}).get("name") in OTHER_ISSUE_TYPES:
+            continue
         status = fields.get("status", {}).get("name", "Unknown")
         # No default: a missing labels field must fail the gate, not pass it.
         labels = fields.get("labels")

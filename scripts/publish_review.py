@@ -8,6 +8,7 @@ import re
 import tempfile
 from pathlib import Path
 
+import type_registry
 from artifact_utils import read_frontmatter_validated
 from jira_utils import (
     add_attachment,
@@ -37,8 +38,19 @@ def write_summary(path, content):
             os.unlink(temporary)
 
 
+def work_type(root):
+    """The prepared run's type; outside a prepared run, rfe-strategy."""
+    path = root / "tmp/strat-input.json"
+    return type_registry.run_type(json.loads(path.read_text()) if path.exists() else {})
+
+
+def tracker_key(root, key):
+    """True for a strategy key Jira holds, as opposed to a local draft."""
+    return key.startswith(tuple(work_type(root).key_prefixes))
+
+
 def publish(root, key, check_only=False, dry_run=False):
-    if not re.fullmatch(r"(?:RHAISTRAT|STRAT)-[0-9]+", key):
+    if not work_type(root).strategy_key_re.match(key):
         raise ValueError("invalid strategy key")
     from strat_freshness import source_rfe, verify_progress
     input_path, progress_path = root / "tmp/strat-input.json", root / "tmp/strat-progress.json"
@@ -47,7 +59,7 @@ def publish(root, key, check_only=False, dry_run=False):
         if not data.get("dry_run"):
             if dry_run:
                 raise ValueError("dry-run override is forbidden in a prepared live run")
-            if not check_only and (not key.startswith("RHAISTRAT-") or not all(require_env())):
+            if not check_only and (not tracker_key(root, key) or not all(require_env())):
                 raise ValueError("prepared live publication requires a Jira strategy and credentials")
         progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
         verify_progress(root, data, progress, rfe=source_rfe(root, key, data))
@@ -85,7 +97,7 @@ def publish(root, key, check_only=False, dry_run=False):
         raise ValueError("saved review summary differs; reconcile before publication")
     if not comment_path.exists():
         write_summary(comment_path, comment)
-    if dry_run or data.get("dry_run") or not key.startswith("RHAISTRAT-") or not all(require_env()):
+    if dry_run or data.get("dry_run") or not tracker_key(root, key) or not all(require_env()):
         return verdict
     server, user, token = require_env()
     add_comment(server, user, token, key, markdown_to_adf(comment))
@@ -120,7 +132,7 @@ def verify_publication(root, key):
     """Verify all live review effects without posting, uploading or relabeling."""
     from strat_side_effects import check_human_gates, checked_labels
 
-    if not key.startswith("RHAISTRAT-") or not all(require_env()):
+    if not tracker_key(root, key) or not all(require_env()):
         raise ValueError("live review publication requires a Jira strategy and credentials")
     manifest = verify_review(root, key)
     verdict = {"key": key, **manifest["decision"]}

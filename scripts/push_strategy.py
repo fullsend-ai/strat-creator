@@ -26,6 +26,7 @@ import threading
 import urllib.error
 from contextlib import contextmanager
 
+import type_registry
 from jira_utils import (
     add_attachment,
     adf_to_markdown,
@@ -48,7 +49,20 @@ Write in declarative, cumulative form — statements that remain valid across re
 This input takes priority over architecture context when they conflict. \
 After review: address findings, then remove the needs-attention label from Jira.*"""
 
-STRATEGY_ATTACHMENT_TEMPLATE = "{issue_key}-strategy.md"
+# The default work type, rfe-strategy: the input reference its files carry, the overflow
+# attachment name and the originals dir of the pre-push backup. The body contract (the headings,
+# the Staff Input template, the notices) stays literal: both types share it. A key of a type whose
+# inputs[0].relation.kind is self (initiative-strategy) takes _push_same_ticket instead.
+# For now: the file's type: stamp picks only that branch (stamped_type), and the attachment name stays
+# rfe-strategy's (the self type's is equal); resolve(ids=[issue_key], artifact=local_file) per call
+# once a type's values differ.
+_TYPES = type_registry.load()
+_TYPE = _TYPES.get(type_registry.LEGACY_DEFAULT_TYPE)
+_SOURCE_PREFIX = _TYPE.get("inputs.0.jira.key_prefixes.0")
+_SOURCE_REF_RE = re.compile(_TYPE.get("inputs.0.source_ref_field") + r":\s*(" + _SOURCE_PREFIX + r"\d+)")
+NO_SOURCE_REF = _SOURCE_PREFIX + "0"  # what pull_strategy.py writes when the issue has no linked input
+
+STRATEGY_ATTACHMENT_TEMPLATE = _TYPE.get("pipeline.body_overflow.attachment")
 ATTACHMENT_NOTICE = (
     "> **Note:** The full strategy exceeds Jira's description size limit "
     "and is stored as an attachment: `{filename}`. "
@@ -197,16 +211,24 @@ def _attachment_writer_lock(issue_key):
             fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
+def stamped_type(content):
+    """The type the file's frontmatter ``type:`` stamp names, else None (an unstamped file is
+    rfe-strategy's: the Initiative writers always stamp)."""
+    match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+    stamp = re.search(r'^type:\s*["\']?([\w-]+)', match.group(1), re.M) if match else None
+    return _TYPES.get(stamp.group(1)) if stamp and stamp.group(1) in _TYPES else None
+
+
 def extract_source_rfe(content):
     """Extract source_rfe from YAML frontmatter before metadata is stripped."""
     match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
     if not match:
         return None
-    rfe_match = re.search(r'source_rfe:\s*(RHAIRFE-\d+)', match.group(1))
+    rfe_match = _SOURCE_REF_RE.search(match.group(1))
     if not rfe_match:
         return None
     key = rfe_match.group(1)
-    if key == "RHAIRFE-0":
+    if key == NO_SOURCE_REF:
         return None
     return key
 
@@ -337,9 +359,43 @@ def _push_via_attachment(server, user, token, issue_key, existing_md,
     print(f"OK: Strategy pushed to {issue_key} as attachment {att_filename}")
 
 
+def _push_same_ticket(server, user, token, issue_key,
+                      strategy_section, staff_input_section, local_content, desc):
+    """Push to a ticket that is its own input (relation self): the strategy and
+    the Staff Engineer / SME Input go only to a new append-only attachment.
+
+    The ticket's summary and description are its owner's (rfe-creator rewrites
+    the whole description and skips an issue edited behind it), so neither is
+    read or written.
+    """
+    att_filename = STRATEGY_ATTACHMENT_TEMPLATE.format(issue_key=issue_key)
+    if os.path.lexists("tmp/strat-input.json") or os.environ.get("STRAT_MANAGED_RUN") == "1":
+        # As on a clone: a managed run never changes the live SME input, here the newest attachment's.
+        from strat_freshness import live_staff, verify_staff
+        from strat_side_effects import context
+        context()
+        fields = get_issue(server, user, token, issue_key, fields=["attachment"])["fields"]
+        verify_staff(local_content, live_staff((server, user, token), issue_key, fields, desc))
+    with _attachment_writer_lock(issue_key):
+        with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", delete=False, encoding="utf-8") as tmp:
+            tmp.write(f"{strategy_section}\n\n"
+                      f"{staff_input_section or STAFF_INPUT_TEMPLATE}\n")
+            tmp_path = tmp.name
+        try:
+            add_attachment(server, user, token, issue_key,
+                           tmp_path, filename=att_filename)
+        finally:
+            os.unlink(tmp_path)
+
+    print(f"OK: Strategy and Staff Engineer / SME Input pushed to "
+          f"{issue_key} as attachment {att_filename}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    # For now: kept literal for byte-identical rfe-strategy output; reword when the Initiative job goes live
     parser.add_argument("issue_key", help="RHAISTRAT issue key")
     parser.add_argument("local_file", help="Local strategy file path")
     args = parser.parse_args()
@@ -354,6 +410,7 @@ def main():
         local_content = f.read()
 
     source_rfe = extract_source_rfe(local_content)
+    desc = stamped_type(local_content)
     local_content = strip_metadata(local_content)
 
     strategy_section = extract_strategy_section(local_content)
@@ -364,8 +421,20 @@ def main():
 
     staff_input_section = extract_staff_input_section(local_content)
 
+    if desc and desc.get("inputs.0.relation.kind") == "self":
+        _push_same_ticket(server, user, token, args.issue_key,
+                          strategy_section, staff_input_section, local_content, desc)
+        return
+
     issue = get_issue(server, user, token, args.issue_key,
-                      fields=["description", "attachment"])
+                      fields=["description", "attachment", "issuetype"])
+    # An unstamped file must never rewrite an Initiative's description, which is its owner's.
+    issue_type = (issue.get("fields", {}).get("issuetype") or {}).get("name")
+    owner = _TYPES.detect(args.issue_key, issue_type=lambda: issue_type)
+    if owner and owner.get("inputs.0.relation.kind") == "self":
+        print(f"Error: {args.issue_key} is an {issue_type}, but {args.local_file} has no "
+              f"'type: {owner.name}' stamp. Pull it again with pull_strategy.py.", file=sys.stderr)
+        sys.exit(1)
     existing_desc = issue.get("fields", {}).get("description")
     existing_md = adf_to_markdown(existing_desc).strip() if existing_desc else ""
     attachments = issue.get("fields", {}).get("attachment", [])
@@ -377,7 +446,7 @@ def main():
         verify_staff(local_content, staff(existing_md))
 
     if existing_md:
-        backup_dir = os.path.join(os.path.dirname(args.local_file), "..", "strat-originals")
+        backup_dir = os.path.join(os.path.dirname(args.local_file), "..", _TYPE.dirs("bare")["originals"])
         os.makedirs(backup_dir, exist_ok=True)
         backup_path = os.path.join(backup_dir, f"{args.issue_key}-pre-push.md")
         if not os.path.exists(backup_path):

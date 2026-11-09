@@ -14,11 +14,12 @@ import re
 import tempfile
 from pathlib import Path
 
+import type_registry
 from artifact_utils import read_frontmatter
 from strat_side_effects import HumanGateChanged, checked_labels, digest
 
 CONTRACT = "strat-freshness-v1"
-SOURCE_TREES = ("scripts", "config", "workflows", ".claude/skills", ".claude/agents",
+SOURCE_TREES = ("scripts", "config", "workflows", "types", ".claude/skills", ".claude/agents",
                 ".fullsend/shared", ".fullsend/plugins", ".fullsend/strat-single", ".fullsend/strat-batch",
                 ".fullsend/strat-resume")
 SOURCE_FILES = ("CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md", ".claude-plugin/plugin.json", "hooks/hooks.json")
@@ -44,14 +45,15 @@ def changed(rfe, message, deferred):
 
 def source_rfe(root, key, data=None):
     """Resolve a ticket's scope from its actual identity, never a caller's filter."""
-    if not isinstance(key, str) or not re.fullmatch(r"(?:RHAIRFE|RHAISTRAT|STRAT)-[0-9]+", key):
+    if not isinstance(key, str) or not re.fullmatch(r"[A-Z][A-Z0-9]*-[0-9]+", key):
         raise ValueError("freshness: invalid ticket identity")
     path = root / "tmp/strat-input.json"
     if data is None:
         if not path.exists():
             return None  # Interactive, unprepared Skill usage.
         data = json.loads(path.read_text())
-    if key.startswith("RHAIRFE-"):
+    work_type = type_registry.run_type(data)
+    if work_type.input_key_re.match(key) and not work_type.strategy_key_re.match(key):
         rfe = key
     else:
         task = root / f"artifacts/strat-tasks/{key}.md"
@@ -62,7 +64,7 @@ def source_rfe(root, key, data=None):
         fm, _ = read_frontmatter(task)
         if fm.get("strat_id") != key:
             raise ValueError("freshness: strategy identity mismatch")
-        rfe = fm.get("source_rfe")
+        rfe = fm.get(work_type.source_field)  # an Initiative's is itself
     if rfe not in data.get("acquired_keys", []):
         raise ValueError("freshness: ticket is outside acquired RFEs")
     return rfe
@@ -159,28 +161,71 @@ def verify_staff(markdown, expected):
         raise ValueError("freshness: managed pipeline cannot edit SME input")
 
 
-def jira_rfe(key):
-    from jira_utils import get_comments, get_issue, require_env
+def _type(work_type):
+    return work_type or type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+
+
+def own_comment(comment, work_type, me):
+    """A comment this station posted, e.g. the review summary: its comment prefix opens it and this
+    job's own Jira account wrote it, so a person's comment under the prefix still counts as input."""
+    from jira_utils import adf_to_markdown
+    body, author = comment["body"], comment.get("author") or {}
+    text = adf_to_markdown(body) if isinstance(body, dict) else str(body or "")
+    # accountId on Jira Cloud; the emulator's comment authors carry only email and name.
+    mine = any(author.get(k) and author.get(k) == me.get(k) for k in ("accountId", "emailAddress", "name"))
+    return mine and text.lstrip("*_ ").startswith(work_type.get("conventions.comment_prefix"))
+
+
+def jira_rfe(key, work_type=None):
+    """Digest of the input ticket's fields and comments.
+
+    A same-ticket type's input is also its strategy, which this run labels and
+    comments on: those labels and comments are this station's own output, not input.
+    """
+    from jira_utils import get_comments, get_issue, myself, require_env
+    work_type = _type(work_type)
     server, user, token = require_env()
     if not all((server, user, token)):
         raise ValueError("freshness needs Jira credentials to recheck live inputs")
     fields = get_issue(server, user, token, key, fields=list(RFE_FIELDS))["fields"]
+    own = work_type.get("conventions.label_prefix") + "-" if work_type.same_ticket else None
     fields["labels"] = sorted(x for x in checked_labels(fields.get("labels"))
-                              if x != "strat-creator-processing" and not x.startswith("strat-creator-owner-"))
-    comments = [{"id": str(c["id"]), "body": c["body"]} for c in get_comments(server, user, token, key)]
+                              if x != "strat-creator-processing" and not x.startswith("strat-creator-owner-")
+                              and not (own and x.startswith(own)))
+    me = myself(server, user, token) if work_type.same_ticket else None
+    comments = [{"id": str(c["id"]), "body": c["body"]} for c in get_comments(server, user, token, key)
+                if not (me and own_comment(c, work_type, me))]
     return digest({"fields": fields, "comments": comments})
 
 
-def jira_human(key, *, root=None, data=None):
-    from jira_utils import adf_to_markdown, get_issue, require_env
+def live_staff(env, key, fields, work_type):
+    """The live SME input of strategy ``key``: its description on a clone; on a same-ticket
+    strategy, whose description is its owner's, the newest strategy attachment ("" when none)."""
+    from jira_utils import adf_to_markdown, attachment_sort_key, download_attachment
+    if not work_type.same_ticket:
+        return staff(adf_to_markdown(fields.get("description")))
+    name = work_type.get("pipeline.body_overflow.attachment").format(issue_key=key)
+    candidates = [a for a in fields.get("attachment") or [] if a.get("filename") == name]
+    if not candidates:
+        return ""
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / name
+        download_attachment(*env, max(candidates, key=attachment_sort_key)["content"], str(path))
+        return staff(path.read_text(encoding="utf-8"))
+
+
+def jira_human(key, *, root=None, data=None, work_type=None):
+    from jira_utils import get_issue, require_env
     from strat_side_effects import HUMAN_GATES, check_human_gates
     env = require_env()
-    fields = get_issue(*env, key, fields=["description", "summary", "priority", "status", "labels"])["fields"]
+    work_type = type_registry.run_type(data) if data is not None else _type(work_type)
+    fields = get_issue(*env, key, fields=["description", "summary", "priority", "status", "labels"]
+                       + (["attachment"] if work_type.same_ticket else []))["fields"]
     gates = sorted(set(checked_labels(fields.get("labels"))) & HUMAN_GATES)
     if data is not None:
         check_human_gates(env[0], key, gates, data, root=root)
         gates = []  # Only our exact current-run verdict can pass a present gate.
-    return {"staff": staff(adf_to_markdown(fields.get("description"))),
+    return {"staff": live_staff(env, key, fields, work_type),
             "summary": fields.get("summary"), "priority": fields.get("priority"), "status": fields.get("status"),
             "gate_labels": gates}
 
@@ -207,7 +252,8 @@ def initialize(root, data, *, live=False, trusted_source=None):
     root = root.resolve()
     baseline = {"contract": CONTRACT, "run_id": data["run_id"], "parameters": parameters(data),
                 "source": source(root), "architecture": tree(root, ".context/architecture-context"),
-                "live": live, "rfes": {k: jira_rfe(k) for k in data.get("acquired_keys", [])} if live else {},
+                "live": live, "rfes": {k: jira_rfe(k, type_registry.run_type(data))
+                                       for k in data.get("acquired_keys", [])} if live else {},
                 "server": None}
     if live and data.get("mode") == "batch":
         from strat_history import initial_evidence
@@ -266,7 +312,7 @@ def verify(root, data=None, *, live=True, trusted_source=None, rfe=None, deferre
         for key, expected in base["rfes"].items():
             if rfe is not None and key != rfe:
                 continue
-            if jira_rfe(key) != expected:
+            if jira_rfe(key, type_registry.run_type(data)) != expected:
                 changed(key, f"freshness: live RFE inputs changed: {key}", deferred)
     for reused_rfe, reuse in data.get("reused_push", {}).items():
         if rfe is not None and reused_rfe != rfe:
@@ -281,7 +327,7 @@ def verify(root, data=None, *, live=True, trusted_source=None, rfe=None, deferre
     return base
 
 
-def strategy(root, key):
+def strategy(root, key, work_type=None):
     from push_strategy import extract_strategy_section
     path = root / f"artifacts/strat-tasks/{key}.md"
     if path.is_symlink() or not path.is_file():
@@ -294,7 +340,8 @@ def strategy(root, key):
     published = strip_metadata(extract_strategy_section(body) or body.strip())
     # Parse content rather than hashing irrelevant Markdown blank-line changes.
     # ADF preserves lists, links, marks and code while Jira round trips spacing.
-    return digest({"identity": {k: fm.get(k) for k in ("strat_id", "source_rfe", "jira_key", "title", "priority")},
+    identity = ("strat_id", _type(work_type).source_field, "jira_key", "title", "priority")
+    return digest({"identity": {k: fm.get(k) for k in identity},
                    "strategy": canonical_adf(markdown_to_adf(published)),
                    "staff": canonical_adf(markdown_to_adf(staff(body)))})
 
@@ -321,7 +368,8 @@ def strategy_jira_key(root, data, key):
     A synthetic task has no remote strategy to snapshot, and must never make
     a real Jira key eligible for the local-only exception.
     """
-    if not re.fullmatch(r"(?:RHAISTRAT|STRAT)-\d+", key):
+    work_type = type_registry.run_type(data)
+    if not work_type.strategy_key_re.match(key):
         raise ValueError(f"freshness: strategy has no valid Jira identity: {key}")
     path = root / f"artifacts/strat-tasks/{key}.md"
     if any(p.is_symlink() for p in (path, path.parent, path.parent.parent)):
@@ -329,9 +377,9 @@ def strategy_jira_key(root, data, key):
     fm, _ = read_frontmatter(path)
     if fm.get("strat_id") != key:
         raise ValueError(f"freshness: strategy identity does not match its filename: {key}")
-    if re.fullmatch(r"RHAISTRAT-\d+", key) and fm.get("jira_key") == key:
+    if key.startswith(tuple(work_type.key_prefixes)) and fm.get("jira_key") == key:
         return key
-    if data.get("dry_run") is True and re.fullmatch(r"STRAT-\d+", key) and fm.get("jira_key") is None:
+    if data.get("dry_run") is True and re.fullmatch(work_type.local_id_pattern, key) and fm.get("jira_key") is None:
         return None
     raise ValueError(f"freshness: strategy has no valid Jira identity: {key}")
 
@@ -340,7 +388,7 @@ def record(root, data, progress, phase, key, rfe):
     saved = bind(data, progress)
     if saved is None:
         return
-    value = {"strategy": strategy(root, key), "originals": originals(root, rfe)}
+    value = {"strategy": strategy(root, key, type_registry.run_type(data)), "originals": originals(root, rfe)}
     jira_key = strategy_jira_key(root, data, key) if data["freshness"]["live"] else None
     human = jira_human(jira_key, root=root, data=data) if jira_key and phase != "review" else None
     if human is not None:
@@ -404,7 +452,7 @@ def verify_progress(root, data, progress, *, live=True, rfe=None, deferred=None)
         for key in marks:
             stamp = saved[phase].get(key)
             target = saved["targets"].get(key)
-            if not stamp or not target or stamp["strategy"] != strategy(root, key):
+            if not stamp or not target or stamp["strategy"] != strategy(root, key, type_registry.run_type(data)):
                 raise ValueError(f"freshness: {phase} strategy changed or lacks provenance: {key}")
             if stamp["originals"] != originals(root, target["rfe"]):
                 raise ValueError(f"freshness: cached RFE inputs changed: {key}")
@@ -440,7 +488,8 @@ def verify_progress(root, data, progress, *, live=True, rfe=None, deferred=None)
     for rfe, reuse in data.get("reused_push", {}).items():
         pairs = (progress.get("create") or {}).get("strategies", [])
         pair = next((p for p in pairs if p["rfe"] == rfe), None)
-        if pair and (pair["strat"] != reuse["key"] or strategy(root, pair["strat"]) != reuse["proof"]["strategy"]):
+        if pair and (pair["strat"] != reuse["key"]
+                     or strategy(root, pair["strat"], type_registry.run_type(data)) != reuse["proof"]["strategy"]):
             raise ValueError("freshness: imported strategy differs from the reusable push")
 
 
@@ -473,7 +522,7 @@ def batch_deferred(root, data, progress, *, live=True):
     return [{"key": key, "reason": reason} for key, reason in sorted(deferred.items())]
 
 
-def reusable(root, rfe, key, previous, *, trusted_source=None):
+def reusable(root, rfe, key, previous, *, trusted_source=None, work_type=None):
     if any(v["key"] == rfe for v in previous.get("deferred", [])):
         return None
     saved = previous.get("freshness") or {}
@@ -486,9 +535,9 @@ def reusable(root, rfe, key, previous, *, trusted_source=None):
     if trusted_source is not None and base.get("trusted_instructions") != source(trusted_source.resolve()):
         return None
     from jira_utils import require_env
-    if base["server"] != digest(require_env()[0].rstrip("/")) or base["rfes"].get(rfe) != jira_rfe(rfe):
+    if base["server"] != digest(require_env()[0].rstrip("/")) or base["rfes"].get(rfe) != jira_rfe(rfe, work_type):
         return None
-    if proof.get("published") != jira_published(key) or proof.get("human") != jira_human(key):
+    if proof.get("published") != jira_published(key) or proof.get("human") != jira_human(key, work_type=work_type):
         return None
     return {"key": key, "proof": proof, "previous_run_id": previous["run_id"],
             "context": {"source": digest(base["source"]), "architecture": digest(base["architecture"]),

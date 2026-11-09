@@ -15,7 +15,7 @@ test-unit:          ## All repository checks, including hardening regressions (n
 
 test-integration:   ## Run integration tests (jira-emulator)
 	uv run pytest tests/test_clone_issue.py tests/test_push_strategy_integration.py \
-	       tests/test_push_refined_strategies.py \
+	       tests/test_push_refined_strategies.py tests/test_initiative_failures.py \
 	       tests/test_fetch_issue.py tests/test_find_strat_for_rfe.py \
 	       tests/test_search_and_filter.py tests/test_pull_strategy.py \
 	       tests/test_skill_paths.py tests/test_fullsend_host_integration.py -v --tb=short

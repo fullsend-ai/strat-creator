@@ -17,6 +17,7 @@ Commands:
         (must have strat-creator-auto-created, must NOT have
         strat-creator-needs-attention or strat-creator-human-sign-off),
         then lock the RFE. Fails if no Cloners link to RHAIRFE exists.
+        An Initiative (same-ticket strategy) is locked on itself.
 
     unlock-strat RHAISTRAT-1500
         Resolve STRAT→RFE via Cloners link, remove lock from RFE.
@@ -42,6 +43,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+import type_registry
 from jira_utils import (
     add_labels,
     get_issue,
@@ -50,20 +52,21 @@ from jira_utils import (
 )
 from strat_side_effects import OWNER_PREFIX, atomic, checked_labels, locked, owner_label
 
-PROCESSING_LABEL = "strat-creator-processing"
+# pipeline.lock of the default work type: the lock label written on the SOURCE issue, what blocks
+# taking it, and the labels the DERIVED issue must / must not carry.
+# For now: one type's lock; resolve per call from the keys (type_registry.resolve(ids=keys)) once a
+# type with its own lock labels or a relation other than clones lands (lock-strat walks Cloners).
+_TYPE = type_registry.load().get(type_registry.LEGACY_DEFAULT_TYPE)
+_LOCK = _TYPE.get("pipeline.lock")
 
-BLOCKING_LABELS = frozenset({
-    "strat-creator-processing",
-    "strat-creator-needs-attention",
-    "strat-creator-human-sign-off",
-})
+PROCESSING_LABEL = _LOCK["label"]
+BLOCKING_LABELS = frozenset(_LOCK["blocking_labels"])
+STRAT_REQUIRED_LABEL = _LOCK["derived_required_label"]
+STRAT_BLOCKING_LABELS = frozenset(_LOCK["derived_blocking_labels"])
 
-STRAT_REQUIRED_LABEL = "strat-creator-auto-created"
-
-STRAT_BLOCKING_LABELS = frozenset({
-    "strat-creator-needs-attention",
-    "strat-creator-human-sign-off",
-})
+# lock-strat's walk back to the input: the relation's link type and the input key prefix.
+LINK_TYPE = _TYPE.get("inputs.0.relation.link_type")
+INPUT_PREFIX = _TYPE.get("inputs.0.jira.key_prefixes.0")
 
 
 def _init_locked_keys_file(path):
@@ -90,12 +93,12 @@ def _resolve_strat_to_rfe(server, user, token, strat_key):
                      fields=["issuelinks"])
     links = data.get("fields", {}).get("issuelinks", [])
     for link in links:
-        if link.get("type", {}).get("name") != "Cloners":
+        if link.get("type", {}).get("name") != LINK_TYPE:
             continue
         for direction in ("outwardIssue", "inwardIssue"):
             issue = link.get(direction, {})
             key = issue.get("key", "")
-            if key.startswith("RHAIRFE-"):
+            if key.startswith(INPUT_PREFIX):
                 return key
     return None
 
@@ -226,8 +229,28 @@ def unlock_owned(server, user, token, keys, owner):
     return 0
 
 
+def _same_ticket(server, user, token, strat_key):
+    """True when the key's type keeps its strategy on the ticket itself (an Initiative): the
+    ticket is its own input, so there is no Cloners link to walk and no clone provenance label."""
+    desc = type_registry.load().detect(strat_key, issue_type=lambda: (
+        get_issue(server, user, token, strat_key, fields=["issuetype"])
+        .get("fields", {}).get("issuetype") or {}).get("name"))
+    return bool(desc and desc.same_ticket)
+
+
 def lock_strat(server, user, token, strat_key, locked_keys_file=None):
-    """Lock via STRAT key: resolve to RFE, validate STRAT guards, lock RFE."""
+    """Lock via STRAT key: resolve to RFE, validate STRAT guards, lock RFE.
+
+    A same-ticket strategy (an Initiative) is locked on the ticket itself; lock() refuses it
+    when it carries a blocking label (needs-attention, human sign-off).
+    """
+    if _same_ticket(server, user, token, strat_key):
+        exit_code, locked_keys = lock(server, user, token, [strat_key],
+                                      locked_keys_file=locked_keys_file)
+        if exit_code != 0:
+            return exit_code
+        return 0 if locked_keys else 1
+
     # Validate STRAT labels
     strat_labels = _get_labels(server, user, token, strat_key)
     if STRAT_REQUIRED_LABEL not in strat_labels:
@@ -261,6 +284,8 @@ def lock_strat(server, user, token, strat_key, locked_keys_file=None):
 
 def unlock_strat(server, user, token, strat_key):
     """Unlock via STRAT key: resolve to RFE, remove lock from RFE."""
+    if _same_ticket(server, user, token, strat_key):
+        return unlock(server, user, token, [strat_key])
     rfe_key = _resolve_strat_to_rfe(server, user, token, strat_key)
     if not rfe_key:
         print(f"ERROR {strat_key} — no Cloners link to RHAIRFE found.",

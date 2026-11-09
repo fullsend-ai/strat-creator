@@ -265,3 +265,16 @@ def test_history_without_a_valid_identity_is_unverifiable(monkeypatch, identity)
         jira_utils, "api_call", lambda *args: {"changelog": {"total": 1, "startAt": 0, "histories": [malformed]}}
     )
     assert history.cursor("RHAIRFE-1") is None
+
+
+@pytest.mark.parametrize("later,expected", [
+    (change("description", "Grow.", "Grow faster."), True),
+    (change("labels", "", "strat-creator-needs-attention"), False),  # this station's own verdict label
+])
+def test_an_initiative_pair_is_change_evidence_on_its_own_ticket(monkeypatch, tmp_path, later, expected):
+    earlier = change("summary", "Old", "New")
+    monkeypatch.setattr(history, "histories", lambda key: [row(1, earlier), row(2, later)])
+    data = {"type": "initiative-strategy",
+            "freshness": {"rfe_history": {"RHAISTRAT-1": {"id": "1", "items": [digest(earlier)]}}}}
+    progress = {"create": {"strategies": [{"rfe": "RHAISTRAT-1", "strat": "RHAISTRAT-1"}]}}
+    assert history.proves_change(tmp_path, data, progress, "RHAISTRAT-1") is expected

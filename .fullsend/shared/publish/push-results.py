@@ -46,11 +46,11 @@ def git(args, cwd):
     return subprocess.run(args, cwd=cwd, capture_output=True, text=True)
 
 
-def organize_run(results_dir, run_id=None):
+def organize_run(results_dir, run_id=None, subdir="RHAISTRAT"):
     """Move strategy artifacts into a timestamped run directory."""
     if run_id is not None:
-        return organize_identified_run(results_dir, run_id)
-    rhaistrat_dir = results_dir / "RHAISTRAT"
+        return organize_identified_run(results_dir, run_id, subdir)
+    rhaistrat_dir = results_dir / subdir
     rhaistrat_dir.mkdir(exist_ok=True)
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -97,7 +97,7 @@ def organize_run(results_dir, run_id=None):
         current.unlink()
     current.symlink_to(ts)
 
-    print(f"Organized artifacts into RHAISTRAT/{ts}/")
+    print(f"Organized artifacts into {subdir}/{ts}/")
     return run_dir
 
 
@@ -145,14 +145,16 @@ def publish_copy(src, dest, expected, results_dir):
         Path(name).unlink(missing_ok=True)
 
 
-def organize_identified_run(results_dir, run_id):
+def organize_identified_run(results_dir, run_id, subdir="RHAISTRAT"):
     """Immutable directory per run; recover partial copying and a lost push ack."""
     import re
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", run_id):
         raise ValueError("invalid publication run ID")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", subdir):
+        raise ValueError("invalid publication folder")
     results_dir = results_dir.resolve(strict=True)
     state = publication_path(results_dir, ".git/strat-publication.json")
-    run_relative = Path("RHAISTRAT") / ("run-" + run_id)
+    run_relative = Path(subdir) / ("run-" + run_id)
     run_dir = publication_path(results_dir, run_relative)
     manifest_path = publication_path(results_dir, run_relative / ".publication.json")
     files = {}
@@ -218,7 +220,7 @@ def organize_identified_run(results_dir, run_id):
     # Reconciliation of an already published run must not move current back
     # over a newer run. A first/partial publication can select this run.
     current = run_dir.parent / "current"
-    in_head = git(["git", "cat-file", "-e", f"HEAD:RHAISTRAT/{run_dir.name}/.publication.json"],
+    in_head = git(["git", "cat-file", "-e", f"HEAD:{subdir}/{run_dir.name}/.publication.json"],
                   cwd=results_dir).returncode == 0
     if not existing or (saved and not in_head) or not (current.exists() or current.is_symlink()):
         if current.is_symlink():
@@ -237,6 +239,8 @@ def main():
                         help="Organize and commit locally, but skip push")
     parser.add_argument("--run-id", default=os.environ.get("STRAT_RUN_ID"),
                         help="Stable run identity (required by the S1 post-script)")
+    parser.add_argument("--subdir", default="RHAISTRAT",
+                        help="Data repo folder, one per work-item type (default: RHAISTRAT)")
     args = parser.parse_args()
 
     results_dir = Path(args.results_dir)
@@ -270,7 +274,7 @@ def main():
               f"{pull.stderr.strip()}")
 
     # Organize artifacts into timestamped run directory
-    run_dir = organize_run(results_dir, args.run_id)
+    run_dir = organize_run(results_dir, args.run_id, args.subdir)
     if run_dir is None:
         print("No artifacts to push.")
         sys.exit(0)

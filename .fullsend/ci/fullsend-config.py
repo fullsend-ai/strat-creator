@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[2]
 CONTEXT_REPO = "https://github.com/opendatahub-io/architecture-context.git"
 sys.path.insert(0, str(ROOT / "scripts"))
 from architecture_release import latest_release  # noqa: E402
+from type_registry import LEGACY_DEFAULT_TYPE  # noqa: E402
+from type_registry import load as load_types  # noqa: E402
 
 
 def git(*args, cwd=None, binary=False):
@@ -58,9 +60,17 @@ def validate(env):
     mode = operation(env)
     if pipeline_source == "schedule" and mode != "batch":
         raise ValueError("scheduled pipelines require batch mode")
+    types = load_types()
+    type_name = env.get("STRAT_TYPE") or LEGACY_DEFAULT_TYPE
+    if type_name not in types:
+        raise ValueError(f"STRAT_TYPE must be one of {', '.join(types.names())}")
+    desc = types.get(type_name)
+    if desc.same_ticket and mode not in {"single", "batch"}:
+        raise ValueError(f"{type_name} runs in single or batch mode only")
     key = env.get("RFE_KEY", "")
-    if mode == "single" and not re.fullmatch(r"RHAIRFE-[1-9][0-9]*", key):
-        raise ValueError("single mode requires RFE_KEY=RHAIRFE-N")
+    number = key.rpartition("-")[2]
+    if mode == "single" and not (desc.input_key_re.fullmatch(key) and re.fullmatch(r"[1-9][0-9]*", number)):
+        raise ValueError(f"single mode requires RFE_KEY={desc.input_key_prefixes[0]}N")
     if mode == "batch" and key:
         raise ValueError("batch mode discovers tickets; leave RFE_KEY empty")
     if mode == "reprocess" and not re.fullmatch(r"RHAISTRAT-[1-9][0-9]*", env.get("STRAT_KEY", "")):
@@ -84,6 +94,7 @@ def validate(env):
         raise ValueError("dry-run results must not update production publication")
     return {
         "mode": mode,
+        "type": type_name,
         "rfe_key": key,
         "dry_run": env.get("STRAT_DRY_RUN", "1"),
         "publish": env.get("FULLSEND_PUBLISH", "0"),

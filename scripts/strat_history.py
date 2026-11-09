@@ -8,6 +8,7 @@ Missing, truncated or unrecognized history provides no proof.
 import json
 import re
 
+import type_registry
 from strat_side_effects import digest
 
 ACTIVE_STATUSES = {"Closed", "Resolved", "In Progress", "Review", "Release Pending"}
@@ -116,7 +117,9 @@ def labels(value):
     return set(filter(None, re.split(r"[,\s]+", value)))
 
 
-def rfe_change(item):
+def rfe_change(item, own=None):
+    """A change to an input field. ``own`` is a same-ticket type's label prefix: its labels are this
+    station's output on the ticket, not input (as in strat_freshness.jira_rfe)."""
     from strat_freshness import RFE_FIELDS
 
     field = item.get("fieldId") or item["field"]
@@ -128,6 +131,7 @@ def rfe_change(item):
         def protected(value):
             return {
                 v for v in labels(value) if v != "strat-creator-processing" and not v.startswith("strat-creator-owner-")
+                and not (own and v.startswith(own))
             }
 
         return protected(item.get("fromString")) != protected(item.get("toString"))
@@ -162,15 +166,18 @@ def proves_change(root, data, progress, rfe):
 
     try:
         base = data["freshness"]
+        work_type = type_registry.run_type(data)
+        source = "|".join(map(re.escape, work_type.get("inputs.0.jira.key_prefixes")))  # RHAIRFE-, or RHAISTRAT-
+        own = work_type.get("conventions.label_prefix") + "-" if work_type.same_ticket else None
         pairs = (progress.get("create") or {}).get("strategies", [])
         if not isinstance(pairs, list) or any(
             not isinstance(p, dict) or not isinstance(p.get("strat"), str)
             or not re.fullmatch(r"(?:RHAISTRAT|STRAT)-[0-9]+", p["strat"])
-            or not isinstance(p.get("rfe"), str) or not re.fullmatch(r"RHAIRFE-[0-9]+", p["rfe"])
+            or not isinstance(p.get("rfe"), str) or not re.fullmatch(rf"(?:{source})[0-9]+", p["rfe"])
             for p in pairs
         ):
             raise ValueError("invalid creation mapping for change evidence")
-        if any(rfe_change(v) for v in since(histories(rfe), base.get("rfe_history", {}).get(rfe))):
+        if any(rfe_change(v, own) for v in since(histories(rfe), base.get("rfe_history", {}).get(rfe))):
             return True
         # Creation may encounter a gate before it can bind a human snapshot.
         # Candidate mappings discover keys; only Jira and host anchors prove drift.
@@ -188,7 +195,7 @@ def proves_change(root, data, progress, rfe):
             if issue.get("key") != key:
                 raise ValueError("Jira change-evidence identity differs from requested key")
             fields = issue["fields"]
-            linked = {
+            linked = {key} if work_type.same_ticket else {  # an Initiative is its own source
                 link[side]["key"]
                 for link in fields["issuelinks"]
                 if link["type"]["name"] == "Cloners"

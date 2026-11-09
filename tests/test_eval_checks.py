@@ -306,3 +306,23 @@ def test_fails_closed_without_subagent_transcripts(check, tmp_path):
 
     assert value is False
     assert "no subagent transcripts" in rationale
+
+
+def test_the_initiative_eval_differs_only_in_its_type_lines():
+    """eval/strat-refine-initiative.yaml is eval/strat-refine.yaml run with --type initiative-strategy on
+    the Initiative dataset: judges, thresholds, permissions, hooks and models stay the RFE eval's."""
+    with open(EVAL_YAML, encoding="utf-8") as fh:
+        rfe = yaml.safe_load(fh)
+    with open(os.path.join(PROJECT_ROOT, "eval", "strat-refine-initiative.yaml"), encoding="utf-8") as fh:
+        initiative = yaml.safe_load(fh)
+    assert initiative["name"] == "strat-creator-eval-initiative"
+    assert initiative["dataset"]["path"] == "dataset/initiative-cases"
+    for rfe_step, step in zip(rfe["execution"]["steps"], initiative["execution"]["steps"], strict=True):
+        assert step["arguments"] == rfe_step["arguments"].replace(
+            "{{ input.strat_id }}", "{{ input.strat_id }} --type initiative-strategy")
+    for config in (rfe, initiative):
+        del config["name"], config["description"], config["dataset"]["path"], config["dataset"]["schema"]
+        config["outputs"][0].pop("schema")
+        for step in config["execution"]["steps"]:
+            del step["arguments"]
+    assert initiative == rfe

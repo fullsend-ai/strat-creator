@@ -21,7 +21,9 @@ back to reviewing a directory or the full batch.
 
 Read `local/strat-tasks/<KEY>.md` if that exact file exists; otherwise read
 `artifacts/strat-tasks/<KEY>.md`. Do not Glob or Grep the strategy directory.
-Use `source_rfe` from that file's frontmatter to read only its source RFE:
+Use its source field from that file's frontmatter to read only its source RFE: `source_rfe`,
+or `source_initiative` when the file says `type: initiative-strategy` (an Initiative is its
+own source; read "RFE" below as that Initiative):
 `local/strat-originals/<SOURCE_RFE>.md` in local mode, or
 `artifacts/strat-originals/<SOURCE_RFE>.md` in CI mode. If that exact frozen
 CI source does not exist, use `artifacts/rfe-tasks/<SOURCE_RFE>.md` instead.

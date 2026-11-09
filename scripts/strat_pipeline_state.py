@@ -26,6 +26,7 @@ perform live freshness checks; short hooks explicitly use local verification.
 import argparse
 import contextlib
 import fcntl
+import functools
 import io
 import json
 import os
@@ -38,6 +39,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import type_registry  # noqa: E402
 from artifact_utils import read_frontmatter, read_frontmatter_validated, update_frontmatter  # noqa: E402
 
 INPUT = Path("tmp/strat-input.json")
@@ -50,14 +52,35 @@ SKIPPED_MD = Path("artifacts/strat-skipped.md")
 TICKETS_MD = Path("artifacts/strat-tickets.md")
 SCORE_ROOT = Path("tmp/strat-assess")
 
-RFE_RE = re.compile(r"^RHAIRFE-\d+$")
-STRAT_RE = re.compile(r"^(RHAISTRAT|STRAT)-\d+$")
 STEPS = ("create", "refine", "push", "score", "review", "workflow")
 RESUME_STEPS = ("create", "refine", "push", "review")
 
 
 def now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@functools.cache
+def run_type():
+    """The run's work-item type (tmp/strat-input.json `type`; none recorded is rfe-strategy).
+
+    Its input keys stand where an RFE key did ("rfe" in a pair) and its own ids where a
+    STRAT key did; a same-ticket type pairs a key with itself.
+    """
+    return type_registry.run_type(json.loads(INPUT.read_text()) if INPUT.is_file() else {})
+
+
+def is_input(key):
+    return isinstance(key, str) and bool(run_type().input_key_re.match(key))
+
+
+def is_strategy(key):
+    return isinstance(key, str) and bool(run_type().strategy_key_re.match(key))
+
+
+def is_tracker_strategy(key):
+    """A strategy key Jira holds (not a local draft)."""
+    return is_strategy(key) and key.startswith(tuple(run_type().key_prefixes))
 
 
 def die(message):
@@ -70,7 +93,7 @@ def _read_input():
         die(f"{INPUT} not found; the host pre-script writes it")
     data = json.loads(INPUT.read_text())
     for key in data.get("acquired_keys", []):
-        if not RFE_RE.match(key):
+        if not is_input(key):
             die(f"invalid key in {INPUT}: {key!r}")
     return data
 
@@ -157,7 +180,7 @@ def pushable(key):
         fm, _ = read_frontmatter_validated(path, "strat-task")
     except Exception:
         return False
-    return key.startswith("RHAISTRAT-") and fm.get("status") == "Refined" and fm.get("jira_key") == key
+    return is_tracker_strategy(key) and fm.get("status") == "Refined" and fm.get("jira_key") == key
 
 
 def review_only(data):
@@ -167,7 +190,7 @@ def review_only(data):
 
 
 def check_strat(key):
-    if not STRAT_RE.match(key):
+    if not is_strategy(key):
         die(f"not a strategy key: {key!r}")
     return key
 
@@ -198,7 +221,7 @@ def skipped_reasons():
         return reasons
     for line in SKIPPED_MD.read_text().splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) >= 3 and RFE_RE.match(cells[0]):
+        if len(cells) >= 3 and is_input(cells[0]):
             reasons[cells[0]] = cells[2][:500] or "skipped by strategy-create"
     return reasons
 
@@ -212,8 +235,8 @@ def created_strategies(acquired):
         if path.is_symlink() or not path.is_file():
             continue
         data, _ = read_frontmatter(path)
-        rfe, strat = data.get("source_rfe"), data.get("strat_id")
-        if rfe in acquired and isinstance(strat, str) and STRAT_RE.match(strat) \
+        rfe, strat = data.get(run_type().source_field), data.get("strat_id")
+        if rfe in acquired and is_strategy(strat) \
                 and path.name == f"{strat}.md":
             pairs.append({"rfe": rfe, "strat": strat})
     return sorted(pairs, key=lambda p: (acquired.index(p["rfe"]), p["strat"]))
@@ -222,7 +245,7 @@ def created_strategies(acquired):
 def refinement_error(pair, data):
     """Check identity, schema and completion evidence, not strategy quality."""
     key, rfe = pair["strat"], pair["rfe"]
-    if rfe not in data.get("acquired_keys", []) or not STRAT_RE.fullmatch(key):
+    if rfe not in data.get("acquired_keys", []) or not is_strategy(key):
         return "strategy is outside this run's created targets"
     path = TASKS / f"{key}.md"
     if not path.is_file() or any(part.is_symlink() for part in (path, TASKS, TASKS.parent)):
@@ -231,9 +254,9 @@ def refinement_error(pair, data):
         fm, body = read_frontmatter_validated(path, "strat-task")
     except Exception:
         return "strategy frontmatter is invalid"
-    if fm.get("strat_id") != key or fm.get("source_rfe") != rfe:
+    if fm.get("strat_id") != key or fm.get(run_type().source_field) != rfe:
         return "strategy identity/source does not match the recorded target"
-    if key.startswith("RHAISTRAT-") and fm.get("jira_key") != key:
+    if is_tracker_strategy(key) and fm.get("jira_key") != key:
         return "strategy Jira key does not match the recorded target"
     if fm.get("status") not in ("Refined", "Reviewed"):
         return "strategy is not Refined or Reviewed"
@@ -298,6 +321,7 @@ def cmd_read(_args):
     print(json.dumps({
         "cwd": os.getcwd(),
         "run_id": data["run_id"],
+        "type": run_type().name,
         "mode": data["mode"],
         "dry_run": bool(data.get("dry_run")),
         "acquired_keys": data.get("acquired_keys", []),
@@ -347,7 +371,7 @@ def restore_review_import(data, pair, progress):
     from strat_freshness import strategy
     reused = data.get("reused_push", {}).get(rfe, {})
     if (not data.get("freshness", {}).get("live") or reused.get("key") != key
-            or reused.get("proof", {}).get("strategy") != strategy(Path.cwd(), key)):
+            or reused.get("proof", {}).get("strategy") != strategy(Path.cwd(), key, run_type())):
         die(f"cannot restore review-only import {key}: matching verified push required")
     if (key in progress.get("review", {}) or (REVIEWS / f"{key}-review-provenance.json").exists()
             or (Path("tmp/review-composition") / key / "active.json").exists()):
@@ -456,7 +480,7 @@ def _mark(args, progress, data):
         record(Path.cwd(), data, progress, "refine", strategy, pairs[0]["rfe"])
         recorded = strategy
     elif args.step == "push":
-        # push_refined_strategies.py pushes every artifacts/strat-tasks/RHAISTRAT-*.md
+        # push_refined_strategies.py pushes every artifacts/strat-tasks/<tracker key>.md
         # whose frontmatter says status Refined with that jira_key, skips the rest,
         # and exits nonzero if any push fails; so after a successful run those
         # are exactly the strategies it pushed, excluding verified review-only
@@ -594,7 +618,7 @@ def parse_failed(values):
     failed = []
     for value in values or []:
         step, _, key = value.partition(":")
-        if step not in STEPS or (key and not (STRAT_RE.match(key) or RFE_RE.match(key))):
+        if step not in STEPS or (key and not (is_strategy(key) or is_input(key))):
             die(f"invalid --failed value: {value!r}")
         failed.append((step, key))
     return failed
@@ -651,15 +675,15 @@ def assemble(data, progress, failed):
                 "needs_attention": reviews[p["strat"]]["needs_attention"]}
                for p in strategies if p["strat"] in reviews]
     artifacts = []
-    for pair in strategies:
-        artifacts += existing([TASKS / f"{pair['strat']}.md",
+    for pair in strategies:  # a same-ticket pair names one key twice: list its originals once
+        artifacts += existing(dict.fromkeys([TASKS / f"{pair['strat']}.md",
                                REVIEWS / f"{pair['strat']}-review.md",
                                REVIEWS / f"{pair['strat']}-review-provenance.json",
                                REVIEWS / f"{pair['strat']}-review-scorer.md",
                                REVIEWS / f"{pair['strat']}-review-comment.md",
                                ORIGINALS / f"{pair['rfe']}.md",
                                ORIGINALS / f"{pair['rfe']}-comments.md",
-                               ORIGINALS / f"{pair['strat']}.md"])
+                               ORIGINALS / f"{pair['strat']}.md"]))
         artifacts += existing([REVIEWS / f"{pair['strat']}-review-{role}.md"
                                for role in ("feasibility", "testability", "scope", "architecture")])
     artifacts += existing([SKIPPED_MD, TICKETS_MD])

@@ -42,6 +42,7 @@ from artifact_utils import (
     read_frontmatter,
     read_frontmatter_validated,
     rebuild_index,
+    typed_schema,
     update_frontmatter,
     write_frontmatter,
 )
@@ -132,6 +133,9 @@ def cmd_set(args):
               "Use --schema-type.", file=sys.stderr)
         sys.exit(1)
 
+    # A strategy file's own type's schema: a type= being set, else its frontmatter's, else its id's.
+    stamp = next((f.split("=", 1)[1] for f in args.fields if f.startswith("type=")), None)
+    schema_type = typed_schema(schema_type, args.file, {"type": stamp} if stamp else None)
     schema = SCHEMAS[schema_type]
 
     # Parse field=value pairs from remaining args

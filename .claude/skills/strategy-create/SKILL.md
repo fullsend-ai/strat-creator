@@ -18,6 +18,57 @@ If `--dry-run` is in `$ARGUMENTS`, skip ALL external writes:
 - For **Path A** (existing STRAT found via Cloners link): Use the real `RHAISTRAT-NNNN` key as filename and `jira_key` — the ticket already exists, we're importing it
 - Print `[DRY RUN] Skipping Jira clone for <RFE key>` for each Path B RFE
 
+## Work-Item Type
+
+The work-item type is `types/<type>/type.yaml`, `<type>` being the `--type` value in `$ARGUMENTS`, default `rfe-strategy`. Read one of its values with:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py get <type> <dotted.path> --json
+```
+
+If the type's `inputs[0].relation.kind` is `clones` (`rfe-strategy`), skip **Same-Ticket Types** and follow Steps 1–8. If it is `self`, follow **Same-Ticket Types** instead of Steps 1–7, then Step 8.
+
+## Same-Ticket Types
+
+For a type whose `inputs[0].relation.kind` is `self`, the strategy is written for the input ticket itself: nothing is cloned. Each key in `$ARGUMENTS` is such a ticket (`inputs[0].jira.key_prefixes`); if none is given, stop and ask for one. The Path A / Path B bullets of Dry Run Mode do not apply. For each key, written `<KEY>` below:
+
+1. **Fetch** it as Step 1 does: `python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_issue.py <KEY> --fields summary,description,priority,labels,status --markdown`.
+2. **Gate.** Read the settings file the type names in `discovery.settings`, the one `list-rfe-ids.py --jql-default --type <type>` used when it selected the key, and check the ticket against its `jql` settings: its issue type is `issue_type` when that is set; its status is not in `excluded_statuses`; it has a label from `quality_labels` when that list is non-empty; when `required_labels` or `target_versions` is non-empty, it has one of those labels or Target Versions. It has no label from `excluded_labels` except the lock label (`pipeline.lock.label`), which the batch job puts on this same ticket before this skill runs. Treat each list as data; do not copy its values into this skill. A ticket that already has the type's `conventions.labels.rubric_pass` or `needs_attention` was processed. Skip a failing or processed key as Step 2a does: append a row with the reason to `artifacts/strat-skipped.md` and print `[SKIPPED] <KEY> — <reason>`.
+3. **Originals.** Run Steps 4 and 4a with `<KEY>` in place of the RFE key.
+4. **Stub.** Write `artifacts/strat-tasks/<KEY>.md`, with and without `--dry-run`: the type's `pipeline.section_ownership[0].heading`, the ticket's description under it VERBATIM, character-for-character, then the Strategy and Staff Engineer / SME Input sections. `push_strategy.py` keeps those two sections in an attachment on the ticket, a new one per push, named by the type's `pipeline.body_overflow.attachment` with `{issue_key}` set to `<KEY>` (written `<attachment>` below). Save the newest one, if any:
+
+```bash
+python3 -c "
+import sys; sys.path.insert(0, '${CLAUDE_SKILL_DIR}/scripts')
+from jira_utils import attachment_sort_key, download_attachment, get_issue, require_env
+s, u, t = require_env()
+atts = [a for a in get_issue(s, u, t, sys.argv[1], fields=['attachment'])['fields'].get('attachment') or []
+        if a.get('filename') == sys.argv[2]]
+if atts:
+    download_attachment(s, u, t, max(atts, key=attachment_sort_key)['content'], sys.argv[3])
+    print('[IMPORT] ' + sys.argv[2])
+" <KEY> <attachment> artifacts/strat-originals/<attachment>
+```
+
+If it printed `[IMPORT]`, write that file's content VERBATIM after the description: it holds the newest Strategy and the Staff Engineer / SME Input an owner may have pushed, which a re-run must keep. Otherwise write the Strategy and Staff Engineer / SME Input template sections exactly as Path B writes them.
+
+5. **Frontmatter.** Read the field names with `python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py schema <type>-task`, then set them; `<source_ref_field>` is the type's `inputs[0].source_ref_field`:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-tasks/<KEY>.md \
+    strat_id=<KEY> \
+    title="<summary from Jira>" \
+    <source_ref_field>=<KEY> \
+    jira_key=<KEY> \
+    priority=<priority from Jira> \
+    status=Draft \
+    type=<type>
+```
+
+6. Print `[CREATE] <KEY> — strategy stub for the ticket itself`.
+
+There is no clone (Step 3), no `find_strat_for_rfe.py` lookup (Step 5a), no provenance label (Step 6) and no tickets file (Step 7), and the file never takes a local-prefix name, dry run or not. This section writes nothing to Jira.
+
 ## Step 1: Find RFE Source Data
 
 Check for available RFE sources:
@@ -173,11 +224,11 @@ The script returns a JSON array of RHAISTRAT clones with their status, labels an
 
 The STRAT was already cloned from the RFE in Jira. Import its content instead of creating a new stub. Skip Step 3 (Jira clone) for this RFE.
 
-From the script output, filter out any with status **Closed**, **Resolved**, **In Progress**, **Review**, or **Release Pending** — these are already being worked on or completed and must not be touched. STRATs in **Refinement** are NOT excluded — the pipeline should process them to provide early review feedback. If all STRATs are filtered out by status, **skip this RFE** — do NOT fall through to Path B (creating a new clone would duplicate active or completed work). Append to `artifacts/strat-skipped.md` with reason: `existing STRAT(s) in active/completed state: RHAISTRAT-NNNN (status)`. Print `[SKIP] RHAIRFE-NNNN — RHAISTRAT-NNNN already in <status>`.
+From the script output, filter out any with status **Closed**, **Resolved**, **In Progress**, **Review**, or **Release Pending** (`excluded_strat_statuses` in the type's settings file) — these are already being worked on or completed and must not be touched. STRATs in **Refinement** are NOT excluded — the pipeline should process them to provide early review feedback. If all STRATs are filtered out by status, **skip this RFE** — do NOT fall through to Path B (creating a new clone would duplicate active or completed work). Append to `artifacts/strat-skipped.md` with reason: `existing STRAT(s) in active/completed state: RHAISTRAT-NNNN (status)`. Print `[SKIP] RHAIRFE-NNNN — RHAISTRAT-NNNN already in <status>`.
 
 **Multiple open STRATs**: After filtering, if **more than one** RHAISTRAT remains in early states (e.g., New, Open), **skip this RFE** — multiple open STRATs means ambiguity that requires human resolution. Append to `artifacts/strat-skipped.md` with reason: `multiple open STRATs: RHAISTRAT-NNNN, RHAISTRAT-MMMM`. Print `[SKIP] RHAIRFE-NNNN — multiple open STRATs found, requires human decision`. If exactly one remains, import it.
 
-**Pipeline label gate**: From the script output, check each remaining STRAT candidate's `gate_label` field. It is computed by an exact match against `strat-creator-rubric-pass` and `strat-creator-needs-attention` — act only on that field and do NOT interpret the `labels` list yourself. Lookalikes such as `rfe-creator-needs-attention` (inherited from the source RFE) are not gate labels. If `gate_label` is not null, **skip this RFE** — the STRAT has already been processed by the pipeline:
+**Pipeline label gate**: From the script output, check each remaining STRAT candidate's `gate_label` field. It is computed by an exact match against `strat-creator-rubric-pass` and `strat-creator-needs-attention` (`conventions.labels.rubric_pass` / `needs_attention`) — act only on that field and do NOT interpret the `labels` list yourself. Lookalikes such as `rfe-creator-needs-attention` (inherited from the source RFE) are not gate labels. If `gate_label` is not null, **skip this RFE** — the STRAT has already been processed by the pipeline:
 - Do NOT import the STRAT
 - Append to `artifacts/strat-skipped.md` with reason and run info (same format as Step 2a): `RHAISTRAT-NNNN already processed (label: <gate_label>)`
 - Print `[SKIP] RHAIRFE-NNNN — RHAISTRAT-NNNN already has <gate_label>`
@@ -255,7 +306,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-tasks/RHA
     source_rfe=RHAIRFE-NNNN \
     jira_key=RHAISTRAT-NNNN \
     priority=<priority from Jira> \
-    status=Draft
+    status=Draft \
+    type=rfe-strategy
 ```
 
 5. Print `[IMPORT] RHAISTRAT-NNNN imported (cloned from RHAIRFE-NNNN)` for each imported STRAT.
@@ -304,7 +356,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/frontmatter.py set artifacts/strat-tasks/<fi
     source_rfe=<source_rfe_id> \
     jira_key=<RHAISTRAT_key_or_null> \
     priority=<priority> \
-    status=Draft
+    status=Draft \
+    type=rfe-strategy
 ```
 
 Use `jira_key=null` if Jira cloning was not done (dry-run mode).

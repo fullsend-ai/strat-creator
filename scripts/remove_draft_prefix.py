@@ -15,9 +15,14 @@ Environment variables:
 import argparse
 import sys
 
+import type_registry
 from jira_utils import get_issue, require_env, update_summary
 
-DRAFT_PREFIX = "[DRAFT] "
+# conventions.summary_prefix of the default work type: added at create, removed here at signoff.
+# For now: one type's prefix; resolve it from the issue key once a type with its own prefix lands.
+# A key whose type has no prefix (initiative-strategy) is skipped, so its summary is never touched.
+_TYPES = type_registry.load()
+DRAFT_PREFIX = _TYPES.get(type_registry.LEGACY_DEFAULT_TYPE).get("conventions.summary_prefix.value")
 
 
 def main():
@@ -32,16 +37,22 @@ def main():
               file=sys.stderr)
         sys.exit(2)
 
-    issue = get_issue(server, user, token, args.issue_key, fields=["summary"])
+    issue = get_issue(server, user, token, args.issue_key, fields=["summary", "issuetype"])
+    issue_type = (issue["fields"].get("issuetype") or {}).get("name")
+    owner = _TYPES.detect(args.issue_key, issue_type=lambda: issue_type)
+    if owner and owner.get("conventions.summary_prefix", None) is None:
+        print(f"[SKIP] {owner.name} has no summary prefix -- {args.issue_key} summary unchanged")
+        return
+
     summary = issue["fields"]["summary"]
 
     if not summary.startswith(DRAFT_PREFIX):
-        print(f"[SKIP] No [DRAFT] prefix on {args.issue_key} -- summary unchanged")
+        print(f"[SKIP] No {DRAFT_PREFIX.strip()} prefix on {args.issue_key} -- summary unchanged")
         return
 
     update_summary(server, user, token, args.issue_key,
                    summary[len(DRAFT_PREFIX):])
-    print(f"[SUMMARY] Removed [DRAFT] prefix from {args.issue_key}")
+    print(f"[SUMMARY] Removed {DRAFT_PREFIX.strip()} prefix from {args.issue_key}")
 
 
 if __name__ == "__main__":
