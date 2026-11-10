@@ -205,7 +205,7 @@ def checkout_candidate(destination, receipt, env, root=ROOT):
             {
                 **record,
                 "fullsend_version": versions(root)["FULLSEND_VERSION"],
-                "model": "claude-opus-4-6",
+                "model": "claude-opus-5-5",
                 "effort": "high",
                 "concurrency": 10,
             },
