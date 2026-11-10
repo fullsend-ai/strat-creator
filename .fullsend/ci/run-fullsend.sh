@@ -111,7 +111,7 @@ python3 -c 'import jsonschema, yaml, certifi, diff_match_patch'
 set +e
 bash "$CI_SCRIPTS/with-fullsend-gateway.sh" -- fullsend run "$AGENT" \
   --fullsend-dir "$STRAT_RUNTIME_DIR" --target-repo "$TARGET_REPO_DIR" \
-  --model claude-opus-4-6 --effort high --output-dir "$FULLSEND_OUTPUT_DIR/runs" --debug=api,hooks \
+  --model claude-opus-5-5 --effort high --output-dir "$FULLSEND_OUTPUT_DIR/runs" --debug=api,hooks \
   2>&1 | python3 "$CI_SCRIPTS/fullsend-redact.py" stream
 codes=("${PIPESTATUS[@]}")
 set -e
