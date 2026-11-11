@@ -67,6 +67,9 @@ cleanup() {
   for item in run.json owned-rfe-ids.txt owned-rfe-ids.txt.owner.json recovery; do
     [[ ! -e "$STRAT_STATE_DIR/$item" ]] || cp -R "$STRAT_STATE_DIR/$item" "$FULLSEND_OUTPUT_DIR/host-state/"
   done
+  # A run that publishes nothing (a dry run) has no other copy of its drafted strategies and reviews.
+  [[ "$FULLSEND_PUBLISH" == 1 || ! -d "$STRAT_PUBLISH_DIR/handoff" ]] \
+    || cp -R "$STRAT_PUBLISH_DIR/handoff" "$FULLSEND_OUTPUT_DIR/"
   printf '{"run_exit":%s,"release_exit":%s}\n' "$rc" "$release_rc" >"$FULLSEND_OUTPUT_DIR/exit-status.json"
   python3 "$CI_SCRIPTS/fullsend-redact.py" tree "$FULLSEND_OUTPUT_DIR" || scrub_rc=$?
   if [[ "$scrub_rc" != 0 ]]; then

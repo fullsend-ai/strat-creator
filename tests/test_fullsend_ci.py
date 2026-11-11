@@ -357,7 +357,8 @@ set -e
   printf '%s\\n' "$FULLSEND_MODE" "$CONFIG_FILE" "$RFE_FILTER"
   printf '%s\\n' "$STRAT_REPROCESS_KEY" "$FULLSEND_WORK_ITEM_KEY"
 } > "$CI_PROJECT_DIR/operation.txt"
-mkdir -p "$STRAT_STATE_DIR/strat-creator/.fullsend/shared"
+mkdir -p "$STRAT_STATE_DIR/strat-creator/.fullsend/shared" "$STRAT_PUBLISH_DIR/handoff/strat-tasks"
+printf 'Drafted strategy, token %s.\\n' "$JIRA_TOKEN" > "$STRAT_PUBLISH_DIR/handoff/strat-tasks/RHAISTRAT-19.md"
 printf 'RHAIRFE-19\\n' > "$STRAT_STATE_DIR/owned-rfe-ids.txt"
 printf '{"owner":"synthetic-run"}\\n' > "$STRAT_STATE_DIR/owned-rfe-ids.txt.owner.json"
 cat > "$STRAT_STATE_DIR/strat-creator/.fullsend/shared/release-locks.sh" <<'EOF'
@@ -422,4 +423,7 @@ shift
     assert status == {"run_exit": run_code, "release_exit": release_code if head_matches else 1}
     exported = tmp_path / "fullsend-output/host-state"
     assert (exported / "owned-rfe-ids.txt").read_text() == "RHAIRFE-19\n"
+    # A dry run keeps its drafts in the artifacts, scrubbed like everything else there.
+    draft = (tmp_path / "fullsend-output/handoff/strat-tasks/RHAISTRAT-19.md").read_text()
+    assert draft.startswith("Drafted strategy") and "synthetic-jira-secret" not in draft
     assert json.loads((exported / "owned-rfe-ids.txt.owner.json").read_text()) == {"owner": "synthetic-run"}
