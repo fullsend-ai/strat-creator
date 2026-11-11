@@ -77,9 +77,10 @@ cleanup() {
     # reviews. They are scrubbed on their own, so a draft the scrubber rejects costs only the drafts.
     local drafts="$STRAT_PRIVATE_DIR/drafts-export"
     rm -rf -- "$drafts"
-    if ! { cp -R "$STRAT_PUBLISH_DIR/handoff" "$drafts" \
+    # cp and mv stay quiet: their errors would print file names that the scrub never saw.
+    if ! { cp -R "$STRAT_PUBLISH_DIR/handoff" "$drafts" 2>/dev/null \
         && python3 "$CI_SCRIPTS/fullsend-redact.py" tree "$drafts" \
-        && mv "$drafts" "$FULLSEND_OUTPUT_DIR/handoff"; }; then
+        && mv "$drafts" "$FULLSEND_OUTPUT_DIR/handoff" 2>/dev/null; }; then
       rm -rf -- "$drafts"
       echo 'Dry-run drafts were not exported: copying or scrubbing them failed' >&2
     fi
