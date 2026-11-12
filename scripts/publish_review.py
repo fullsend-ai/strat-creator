@@ -113,8 +113,11 @@ def review_comment(path, verdict):
     """Build the same summary for publication and read-only verification."""
     fm, _ = read_frontmatter_validated(path, "strat-review")
     scores = fm["scores"]
-    dissent = [role for role, assessment in fm.get("reviewers", {}).items()
-               if assessment != verdict["recommendation"]]
+    # Score fields only: a dimension outside the numeric gate (e.g. uxresearch,
+    # scored: false) differing from the recommendation is not dissent.
+    reviewers = fm.get("reviewers", {})
+    dissent = [role for role in scores if role != "total"
+               and reviewers.get(role) != verdict["recommendation"]]
     lines = [f"*[Strat Creator]* Strategy Review — {verdict['recommendation'].upper()} "
              f"(Score: {scores['total']}/8)", "", "| Criterion | Score |", "| --- | --- |"]
     lines += [f"| {role.title()} | {scores[role]}/2 |"

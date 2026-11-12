@@ -14,6 +14,13 @@ from pathlib import Path
 from review_scope import check_report, inputs, is_strategy_key, safe_path
 
 ROLES = ("feasibility", "testability", "scope", "architecture")
+# Informational roles are captured, attributed and rendered like any other
+# specialist report, but they carry no numeric score: they stay out of ROLES so
+# numeric_decision, the score table and the /8 total cannot see them. Each one
+# is optional — its research source may be unreachable at review time — so a
+# missing report never blocks composition.
+INFORMATIONAL = ("uxresearch",)
+ALL_ROLES = ROLES + INFORMATIONAL
 POLICY = "numeric-only-v1"
 
 
@@ -66,10 +73,11 @@ def report_verdict(scope, role, report):
     # Read every field so an invalid value cannot hide beside a valid one.
     values = re.findall(r"^\*\*Recommendation\*\*:[ \t]*([^\r\n]*)", report, re.M)
     verdicts = {value.strip() for value in values}
+    may_skip = role == "architecture" or role in INFORMATIONAL
     if (len(verdicts) != 1 or not verdicts <= {"approve", "revise", "reject", "skipped"}
-            or (verdicts == {"skipped"} and role != "architecture")):
+            or (verdicts == {"skipped"} and not may_skip)):
         raise ValueError("Report must contain one consistent Recommendation: approve, revise, reject "
-                         "(architecture may be skipped)")
+                         "(architecture and informational roles may be skipped)")
     return next(iter(verdicts))
 
 
@@ -163,7 +171,7 @@ def capture(event):
         return
     tool = event.get("tool_input", {})
     skill = tool.get("skill", "").split(":")[-1]
-    matching = [role for role in ROLES if skill == f"strategy-{role}-review"]
+    matching = [role for role in ALL_ROLES if skill == f"strategy-{role}-review"]
     if not matching:
         return
     key = tool.get("args", "").strip()
@@ -209,10 +217,13 @@ def rendered(key, scores, decision, reports, scorer):
              "Specialist recommendations below are retained independently and do not change this gate.\n\n")
     body += ("## Reviewer sources\n\n| Role | Recommendation | Agent | Delivered report SHA-256 |\n"
              "| --- | --- | --- | --- |\n")
-    body += "".join(f"| {role} | {reports[role]['recommendation']} | {reports[role]['agent_id']} | "
-                    f"{reports[role]['sha256']} |\n" for role in ROLES)
-    for role in ROLES:
+    present = [role for role in ALL_ROLES if role in reports]
+    body += "".join(f"| {role}{' (informational)' if role in INFORMATIONAL else ''} | "
+                    f"{reports[role]['recommendation']} | {reports[role]['agent_id']} | "
+                    f"{reports[role]['sha256']} |\n" for role in present)
+    for role in present:
         body += f"\n## {role.title()} Review: {key}\n\n" + reports[role]["text"] + "\n"
+    # Informational roles are outside the gate, so differing from it is not dissent.
     dissent = [role for role in ROLES if reports[role]["recommendation"] != decision["recommendation"]]
     body += "\n## Disagreements\n\n"
     if dissent:
@@ -242,8 +253,11 @@ def compose(root, key):
         if source != session["inputs"]:
             raise ValueError("Review inputs changed before composition")
         reports = {}
-        for role in ROLES:
-            item = json.loads(regular(root, path.parent / f"{role}.json").read_text())
+        for role in ALL_ROLES:
+            captured = path.parent / f"{role}.json"
+            if role in INFORMATIONAL and not captured.is_file():
+                continue
+            item = json.loads(regular(root, captured).read_text())
             if (item.get("session_id") != session["session_id"] or item.get("role") != role
                     or item.get("key") != key or item.get("caller") != session["owner"]
                     or item.get("sha256") != digest(item["text"])
@@ -256,13 +270,21 @@ def compose(root, key):
         review.parent.mkdir(parents=True, exist_ok=True)
         review.write_text(body)
         write_frontmatter(review, {"strat_id": key, **decision, "scores": session["scores"],
-                                  "reviewers": {role: reports[role]["recommendation"] for role in ROLES}},
+                                  "reviewers": {role: reports[role]["recommendation"]
+                                                for role in ALL_ROLES if role in reports}},
                           "strat-review")
         # Frontmatter helpers use universal newline reads. Restore the exact
         # rendered body after writing metadata so CRLF report bytes survive.
         front = review.read_bytes().decode().split("---", 2)[1]
         review.write_bytes(("---" + front + "---\n\n" + body).encode())
-        for role in ROLES:
+        # An optional role that delivered nothing this run must not keep a
+        # previous run's exported report beside this review.
+        for role in INFORMATIONAL:
+            if role not in reports:
+                stale = review.with_name(f"{key}-review-{role}.md")
+                if stale.is_file():
+                    stale.unlink()
+        for role in list(reports):
             exported = safe_path(root, str(review.with_name(f"{key}-review-{role}.md")))
             exported.write_text(reports[role]["text"])
             reports[role] = {field: value for field, value in reports[role].items() if field != "text"}
@@ -327,10 +349,11 @@ def _verify_review(root, key):
             or manifest.get("review") != {"path": str(review.relative_to(root)),
                                          "sha256": digest(review.read_bytes().decode())}):
         raise ValueError("Composed review disagrees with numeric policy or its recorded content")
-    if set(manifest.get("reports", {})) != set(ROLES):
+    recorded = set(manifest.get("reports", {}))
+    if not recorded >= set(ROLES) or not recorded <= set(ALL_ROLES):
         raise ValueError("Review provenance lacks a required role")
     reports = {}
-    for role in ROLES:
+    for role in sorted(recorded):
         item = manifest["reports"][role]
         expected = review.with_name(f"{key}-review-{role}.md")
         if item.get("path") != str(expected.relative_to(root)):

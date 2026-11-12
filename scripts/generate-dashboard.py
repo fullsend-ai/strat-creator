@@ -399,6 +399,7 @@ def extract_run_stats(run_dir, config):
             "testability": reviewers.get("testability", "—"),
             "scope": reviewers.get("scope", "—"),
             "architecture": reviewers.get("architecture", "—"),
+            "uxresearch": reviewers.get("uxresearch", "—"),
             "scores": {
                 "feasibility": scores.get("feasibility"),
                 "testability": scores.get("testability"),
@@ -548,6 +549,7 @@ def load_run_from_json(run_dir, config):
             "testability": reviewers.get("testability", "—"),
             "scope": reviewers.get("scope", "—"),
             "architecture": reviewers.get("architecture", "—"),
+            "uxresearch": reviewers.get("uxresearch", "—"),
             "scores": s.get("scores"),
             "rfe_html": md_to_html(body.get("rfe", "")) if body else "",
             "strategy_html": md_to_html(body.get("strategy", "")) if body else "",
@@ -1496,7 +1498,7 @@ function renderAttention() {{
 
     html += `<table><thead><tr>
         <th>Strategy</th><th>Title</th><th>Verdict</th><th>Score</th>
-        <th>F</th><th>T</th><th>S</th><th>A</th><th>Run</th>
+        <th>F</th><th>T</th><th>S</th><th>A</th><th title="UX Research — informational, not scored">UXR</th><th>Run</th>
     </tr></thead><tbody>`;
     attn.forEach((s, idx) => {{
         const v = s.recommendation || '—';
@@ -1511,9 +1513,10 @@ function renderAttention() {{
             <td style="${{scoreStyle(sc.testability)}};padding:4px 8px;border-radius:4px">${{scoreText(sc.testability)}}</td>
             <td style="${{scoreStyle(sc.scope)}};padding:4px 8px;border-radius:4px">${{scoreText(sc.scope)}}</td>
             <td style="${{scoreStyle(sc.architecture)}};padding:4px 8px;border-radius:4px">${{scoreText(sc.architecture)}}</td>
+            <td class="${{verdictClass(s.uxresearch)}}" title="UX Research — informational, not scored">${{verdictLabel(s.uxresearch)}}</td>
             <td style="font-size:12px;color:#8b949e">${{s.run_id || '—'}}</td>
         </tr>
-        <tr><td colspan="9" style="padding:0">
+        <tr><td colspan="10" style="padding:0">
             <div id="attn-panel-${{idx}}" class="detail-panel">
                 <div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
                     <div>
@@ -1829,7 +1832,7 @@ function renderExecutiveSummary() {{
     html += `<div class="grid-section"><h3>All Unique Strategies (deduped)</h3>
     <table><thead><tr>
         <th></th><th>Strat ID</th><th>Title</th><th>Source RFE</th><th>Priority</th>
-        <th>F</th><th>T</th><th>S</th><th>A</th><th>Score</th><th>Verdict</th><th>Attention</th><th>SME</th><th>Iter</th><th>Run</th>
+        <th>F</th><th>T</th><th>S</th><th>A</th><th title="UX Research — informational, not scored">UXR</th><th>Score</th><th>Verdict</th><th>Attention</th><th>SME</th><th>Iter</th><th>Run</th>
     </tr></thead><tbody>`;
     e.strategies.forEach((s, i) => {{
         const sc = s.scores;
@@ -1863,13 +1866,14 @@ function renderExecutiveSummary() {{
             <td>${{s.source_rfe}}</td>
             <td>${{s.priority}}</td>
             ${{scoreCells}}
+            <td class="${{verdictClass(s.uxresearch)}}" title="UX Research — informational, not scored">${{verdictLabel(s.uxresearch)}}</td>
             <td class="${{verdictClass(s.recommendation)}}">${{verdictLabel(s.recommendation)}}</td>
             <td style="text-align:center">${{attentionHtml}}</td>
             <td style="text-align:center">${{smeHtml}}</td>
             <td style="text-align:center">${{iterHtml}}</td>
             <td style="font-size:12px;color:#6e7681">${{s.run_label}}</td>
         </tr>
-        <tr><td colspan="15" style="padding:0">
+        <tr><td colspan="16" style="padding:0">
             <div class="detail-panel" id="epanel-${{i}}">
                 <h2>${{s.strat_id}}: ${{s.title}}</h2>
                 <div class="label-bar">${{renderLabelBadges(s.labels || [])}}</div>
@@ -2030,6 +2034,7 @@ function verdictLabel(v) {{
     if (['approve','approved'].includes(v)) return 'Approve';
     if (['revise','needs revision','needs_revision'].includes(v)) return 'Revise';
     if (['reject','rejected','infeasible'].includes(v)) return 'Reject';
+    if (v === 'skipped') return 'Skipped';
     return v || '—';
 }}
 
@@ -2162,7 +2167,7 @@ function renderRunDetail(idx) {{
     // Summary table
     html += `<table><thead><tr>
         <th></th><th>Strat ID</th><th>Title</th><th>Source RFE</th><th>Size</th>
-        <th>F</th><th>T</th><th>S</th><th>A</th><th>Score</th><th>Verdict</th><th>Attention</th>
+        <th>F</th><th>T</th><th>S</th><th>A</th><th title="UX Research — informational, not scored">UXR</th><th>Score</th><th>Verdict</th><th>Attention</th>
     </tr></thead><tbody>`;
     r.strategies.forEach((s, i) => {{
         let badges = '';
@@ -2194,10 +2199,11 @@ function renderRunDetail(idx) {{
             <td>${{s.source_rfe}}</td>
             <td><span class="badge badge-size">${{s.size}}</span></td>
             ${{scoreCells}}
+            <td class="${{verdictClass(s.uxresearch)}}" title="UX Research — informational, not scored">${{verdictLabel(s.uxresearch)}}</td>
             <td class="${{verdictClass(s.recommendation)}}">${{verdictLabel(s.recommendation)}}</td>
             <td style="text-align:center">${{attentionHtml}}</td>
         </tr>
-        <tr><td colspan="10" style="padding:0">
+        <tr><td colspan="11" style="padding:0">
             <div class="detail-panel" id="rpanel-${{idx}}-${{i}}">
                 <h2>${{s.strat_id}}: ${{s.title}}</h2>
                 <div class="label-bar">${{renderLabelBadges(s.labels || [])}}</div>

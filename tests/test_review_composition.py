@@ -39,6 +39,57 @@ def test_numeric_approval_preserves_opposing_specialist_recommendations(target):
     assert "separate numeric assessor" in review
 
 
+def test_informational_review_is_composed_and_cannot_move_the_gate(target):
+    root, key, rfe = target
+    _, reports = prepare(root, key, rfe, (2, 2, 2, 2),
+                         {**dict.fromkeys(composition.ROLES, "approve")},
+                         informational={"uxresearch": "reject"})
+    manifest = composition.verify_review(root, key)
+    assert manifest["decision"] == {"recommendation": "approve", "needs_attention": False}
+    assert manifest["reports"]["uxresearch"]["recommendation"] == "reject"
+    assert manifest["reports"]["uxresearch"]["agent_id"] == reports["uxresearch"]["tool_response"]["agentId"]
+    assert manifest["scores"]["total"] == 8 and "uxresearch" not in manifest["scores"]
+    review = (root / manifest["review"]["path"]).read_text()
+    assert reports["uxresearch"]["tool_response"]["result"] in review
+    assert "uxresearch (informational)" in review
+    assert "uxresearch: reject" not in review.split("## Disagreements")[1]
+
+
+def test_missing_informational_report_does_not_block_composition(target):
+    root, key, rfe = target
+    prepare(root, key, rfe, (2, 2, 2, 2), {**dict.fromkeys(composition.ROLES, "approve")})
+    manifest = composition.verify_review(root, key)
+    assert "uxresearch" not in manifest["reports"]
+    assert manifest["decision"]["recommendation"] == "approve"
+    front = (root / manifest["review"]["path"]).read_text().split("---")[1]
+    assert "uxresearch" not in front
+
+
+def test_absent_informational_review_removes_a_previous_export(target):
+    root, key, rfe = target
+    prepare(root, key, rfe, (2, 2, 2, 2), {**dict.fromkeys(composition.ROLES, "approve")},
+            informational={"uxresearch": "approve"})
+    stale = root / f"artifacts/strat-reviews/{key}-review-uxresearch.md"
+    assert stale.is_file()
+    prepare(root, key, rfe, (2, 2, 2, 2), {**dict.fromkeys(composition.ROLES, "approve")})
+    assert not stale.exists(), "a previous run's report must not outlive this review"
+
+
+def test_informational_review_may_be_skipped(target):
+    root, key, rfe = target
+    prepare(root, key, rfe, (2, 2, 2, 2), {**dict.fromkeys(composition.ROLES, "approve")},
+            informational={"uxresearch": "skipped"})
+    manifest = composition.verify_review(root, key)
+    assert manifest["reports"]["uxresearch"]["recommendation"] == "skipped"
+    assert manifest["decision"]["recommendation"] == "approve"
+
+
+def test_scored_role_still_cannot_be_skipped(target):
+    root, key, rfe = target
+    with pytest.raises(ValueError, match="may be skipped"):
+        prepare(root, key, rfe, (2, 2, 2, 2), {"feasibility": "skipped"})
+
+
 def test_architecture_skip_is_explicit_and_not_invented_approval(target):
     root, key, rfe = target
     prepare(root, key, rfe, (2, 2, 2, 2), {**dict.fromkeys(composition.ROLES, "approve"), "architecture": "skipped"})

@@ -210,6 +210,8 @@ def extract_strategy(strat_id, task, review, review_comment):
             "testability": reviewers.get("testability", ""),
             "scope": reviewers.get("scope", ""),
             "architecture": reviewers.get("architecture", ""),
+            # Informational: composed but unscored, so it never appears in scores.
+            "uxresearch": reviewers.get("uxresearch", ""),
         } if reviewers else None,
         "labels": compute_strat_labels(
             meta.get("status", ""),

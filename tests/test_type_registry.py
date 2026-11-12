@@ -403,6 +403,11 @@ def test_review_consumers_equal_the_4c6ae1c_values():
     # #85 added the provisional reviewer values: pending for each specialist, skipped for architecture.
     for name, spec in frozen["strat-review"]["reviewers"]["fields"].items():
         spec["enum"] += ["skipped", "pending"] if name == "architecture" else ["pending"]
+    # The informational UXR dimension adds one optional, skippable reviewer. Optional because the
+    # research MCP may be unreachable, in which case no report is delivered. Appended last.
+    frozen["strat-review"]["reviewers"]["fields"]["uxresearch"] = {
+        "type": "string", "required": False,
+        "enum": ["approve", "revise", "reject", "skipped", "pending"]}
     for name in ("strat-task", "strat-review"):
         assert artifact_utils.SCHEMAS[name] == frozen[name], name
         assert list(artifact_utils.SCHEMAS[name]) == frozen["order"][name], f"{name} field order"
