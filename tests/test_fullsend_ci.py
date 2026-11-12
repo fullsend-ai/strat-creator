@@ -334,7 +334,7 @@ def test_actual_ci_wrapper_releases_claims_and_preserves_failure(
         'import pathlib,sys\nif sys.argv[1] != "validate": pathlib.Path(sys.argv[2]).mkdir(parents=True)\n'
     )
     archive = tmp_path / "binary.tar.gz"
-    body = (b'#!/bin/sh\nif [ "$1" = --version ]; then echo "fullsend 0.47.1"; exit 0; fi\n'
+    body = (b'#!/bin/sh\nif [ "$1" = --version ]; then echo "fullsend 0.55.0"; exit 0; fi\n'
             b'echo "synthetic-jira-secret"\nexit "$TEST_RUN_CODE"\n')
     with tarfile.open(archive, "w:gz") as stream:
         member = tarfile.TarInfo("fullsend")
@@ -343,7 +343,7 @@ def test_actual_ci_wrapper_releases_claims_and_preserves_failure(
     (scripts / "fullsend-versions.env").write_text(
         "STRAT_CREATOR_REF="
         + "a" * 40
-        + "\nFULLSEND_VERSION=0.47.1\nFULLSEND_TARBALL_SHA256="
+        + "\nFULLSEND_VERSION=0.55.0\nFULLSEND_TARBALL_SHA256="
         + hashlib.sha256(archive.read_bytes()).hexdigest()
         + "\n"
     )
