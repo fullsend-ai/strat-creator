@@ -132,6 +132,20 @@ def _make_task(body, meta=None):
 
 class TestExtractStrategyFields:
 
+    def test_informational_reviewer_is_carried_through(self):
+        review = {"meta": {"reviewers": {"feasibility": "approve", "testability": "approve",
+                                         "scope": "approve", "architecture": "approve",
+                                         "uxresearch": "revise"}}}
+        s = extract.extract_strategy("STRAT-001", _make_task("body"), review, "")
+        assert s["reviewers"]["uxresearch"] == "revise"
+        assert s["scores"] is None, "an unscored reviewer must not create scores"
+
+    def test_absent_informational_reviewer_is_blank(self):
+        review = {"meta": {"reviewers": {"feasibility": "approve", "testability": "approve",
+                                         "scope": "approve", "architecture": "approve"}}}
+        s = extract.extract_strategy("STRAT-001", _make_task("body"), review, "")
+        assert s["reviewers"]["uxresearch"] == ""
+
     def test_has_sme_input_true(self):
         task = _make_task(SME_BOILERPLATE + "\nReal SME guidance.\n")
         s = extract.extract_strategy("STRAT-001", task, None, "")

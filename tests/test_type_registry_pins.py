@@ -176,13 +176,29 @@ def test_stages_are_skills():
 def test_dimensions_are_the_review_skills():
     review = src(".claude/skills/strategy-review/SKILL.md")
     dims = D.get("pipeline.dimensions")
-    pin([d["name"] for d in dims], D.score_fields, "pipeline.dimensions[].name == schema.review.score_fields")
+    scored = [d for d in dims if d.get("scored", True)]
+    pin([d["name"] for d in scored], D.score_fields, "pipeline.dimensions[scored].name == schema.review.score_fields")
     for dim in dims:
         assert (REPO / dim["prompt"]).is_file(), dim["prompt"]
         assert f'Skill(skill="strategy-{dim["name"]}-review"' in review, f"strategy-review/SKILL.md:137-140 {dim['name']}"
     architecture = dims[3]
     assert architecture["condition"] == {"context_exists": ".context/architecture-context"}
     assert architecture["condition"]["context_exists"] + "/" in review, "strategy-review/SKILL.md:94"
+
+
+def test_unscored_dimensions_are_composed_review_skills():
+    review = src(".claude/skills/strategy-review/SKILL.md")
+    unscored = [d for d in D.get("pipeline.dimensions") if not d.get("scored", True)]
+    sys.path.insert(0, str(REPO / "scripts"))
+    import review_composition
+    assert set(review_composition.INFORMATIONAL) == {d["name"] for d in unscored}, "review_composition.INFORMATIONAL"
+    for dim in unscored:
+        assert dim["name"] not in D.score_fields, f"{dim['name']} must stay out of score_fields"
+        assert (REPO / dim["prompt"]).is_file(), dim["prompt"]
+        assert f'Skill(skill="strategy-{dim["name"]}-review"' in review, dim["name"]
+        assert dim["name"] in D.get("schema.review.extra_fields.reviewers.fields"), "composed into reviewers"
+    assert not set(review_composition.INFORMATIONAL) & set(review_composition.ROLES), \
+        "a role cannot be both scored and informational"
 
 
 def test_verdict_rules_and_review_labels():

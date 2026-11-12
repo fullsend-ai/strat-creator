@@ -123,6 +123,9 @@ schema:
           testability: { type: string, required: true, enum: [approve, revise, reject, pending] }
           scope: { type: string, required: true, enum: [approve, revise, reject, pending] }
           architecture: { type: string, required: true, enum: [approve, revise, reject, skipped, pending] }
+          # Informational: carries no score and never gates. Optional because the
+          # research MCP may be unreachable, in which case no report is delivered.
+          uxresearch: { type: string, required: false, enum: [approve, revise, reject, skipped, pending] }
     verdict_rules:                                      # strategy-review/SKILL.md:127-129 (APPROVE total>=6 and no zeros; REVISE total>=3 and <=1 zero; else REJECT) — a rule the review skill applies in prose; unpinned by code
       approve: { total_min: 6, zeros_max: 0 }
       revise: { total_min: 3, zeros_max: 1 }
@@ -134,7 +137,7 @@ pipeline:
   scorer_agent: strat-scorer                            # .claude/agents/strat-scorer.md:2; assess-strat/SKILL.md:55 subagent_type
   prompts:
     template: .claude/skills/strategy-refine/strat-template.md   # the strategy template the create/refine skills fill; referenced, not moved
-  dimensions:                                           # the four reviewer skills strategy-review/SKILL.md:137-140 launches; which ones apply to other types is still open
+  dimensions:                                           # the reviewer skills strategy-review/SKILL.md launches, scored first; which ones apply to other types is still open
     - { name: feasibility, prompt: .claude/skills/strategy-feasibility-review/SKILL.md, blocking: true }     # strategy-review/SKILL.md:137,:145
     - { name: testability, prompt: .claude/skills/strategy-testability-review/SKILL.md, blocking: true }     # :138,:146
     - { name: scope, prompt: .claude/skills/strategy-scope-review/SKILL.md, blocking: true }                 # :139,:147
@@ -142,6 +145,11 @@ pipeline:
       prompt: .claude/skills/strategy-architecture-review/SKILL.md
       blocking: true
       condition: { context_exists: .context/architecture-context }   # strategy-review/SKILL.md:94; CLAUDE.md:124
+    - name: uxresearch                                  # informational: composed and attributed, never scored
+      prompt: .claude/skills/strategy-uxresearch-review/SKILL.md
+      blocking: true                                    # the wave waits for it; composition still proceeds without a report
+      scored: false                                     # no score_fields entry, so the /8 total and gate cannot see it
+
   rubric:                                               # ADR-0005: the rubric is embedded in this repo — rfe-creator's D3 `repo: self` form
     repo: self
     path: scripts/assess-strat/agent_prompt.md          # export_rubric.py:21 "Source of truth"; the strat-scorer agent reads it
@@ -163,7 +171,7 @@ pipeline:
 
 snapshot: { mode: none, processed_gate: inputs.0.skip_if }   # no snapshot files; "already processed" is the derived-side skip_if (jira_utils.py:285-343)
 reporting:
-  criterion_labels: { feasibility: Feasibility, testability: Testability, scope: Scope, architecture: Architecture }   # display names: no code literal — generate-report.py:376 iterates the lowercase keys; eval/strat-refine.yaml:8 spells the four names. Unpinned
+  criterion_labels: { feasibility: Feasibility, testability: Testability, scope: Scope, architecture: Architecture, uxresearch: UX Research }   # display names: no code literal — generate-report.py:376 iterates the lowercase keys; eval/strat-refine.yaml:8 spells the four names. Unpinned. uxresearch is informational: it has no score_fields entry, so report renderers show its verdict only
 eval:
   config: eval/strat-refine.yaml                        # the committed eval config (hand-written; strat-creator has no generate_eval_config)
   dataset: eval/dataset/cases                           # eval/strat-refine.yaml:70 dataset.path "dataset/cases" (relative to eval/)

@@ -274,6 +274,8 @@ def verdict_label(verdict):
         return "Reject"
     elif verdict == "split":
         return "Split"
+    elif verdict == "skipped":
+        return "Skipped"
     return verdict or "—"
 
 def is_approve(v):
@@ -348,6 +350,7 @@ def generate_html(tasks, reviews, review_comments, skipped, pending_review, conf
             "testability": reviewers.get("testability", "—"),
             "scope": reviewers.get("scope", "—"),
             "architecture": reviewers.get("architecture", "—"),
+            "uxresearch": reviewers.get("uxresearch", "—"),
             "scores": {
                 "feasibility": scores.get("feasibility"),
                 "testability": scores.get("testability"),
@@ -733,6 +736,7 @@ tr.clickable {{ cursor: pointer; }}
     <th>T</th>
     <th>S</th>
     <th>A</th>
+    <th title="UX Research — informational, not scored">UXR</th>
     <th>Score</th>
     <th>Verdict</th>
     <th>Attention</th>
@@ -772,6 +776,7 @@ tr.clickable {{ cursor: pointer; }}
     <td>{escape_html(row["source_rfe"])}</td>
     <td><span class="badge badge-size">{escape_html(str(row["size"]))}</span></td>
     {score_cells}
+    <td class="{verdict_class(row["uxresearch"])}" title="UX Research — informational, not scored">{verdict_label(row["uxresearch"])}</td>
     <td class="{verdict_class(row["recommendation"])}">{verdict_label(row["recommendation"])}</td>
     <td style="text-align:center">{attention_html}</td>
 </tr>

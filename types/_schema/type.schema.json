@@ -707,6 +707,7 @@
         "name": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$", "description": "Poll phase is '<poll_prefix><name>'; output file is '<dirs.reviews>/<id>-<name>.md'." },
         "prompt": { "$ref": "#/$defs/repo_path", "description": "Prompt/skill file the dimension agent reads." },
         "blocking": { "type": "boolean", "description": "Whether the ASSESS wave waits on the dimension (wait-for-wave --also-phase). Descriptive at PR-1: no script reads it." },
+        "scored": { "type": "boolean", "description": "strat-creator. Whether the dimension has a schema.review.score_fields entry and counts toward the numeric gate. Absent means true. An unscored dimension's report is still composed and attributed, but never gates (review_composition.py INFORMATIONAL)." },
         "condition": {
           "oneOf": [
             {

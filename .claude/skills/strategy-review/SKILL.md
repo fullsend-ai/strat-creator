@@ -206,13 +206,14 @@ Run begin in its own Bash call; do not launch two begin sessions in one call.
 Do not substitute transcripts, earlier scorer feedback or invented reports.
 
 
-Use the **Skill tool** to invoke the type's reviewer skills in parallel — `pipeline.dimensions[]` in `types/<type>/type.yaml` (`<type>` is the `--type` value in `$ARGUMENTS`, default `rfe-strategy`), one `strategy-<name>-review` skill per dimension; today the four below. Each runs in its own isolated `context: fork` — no reviewer sees another's output. Pass the strategy key to each:
+Use the **Skill tool** to invoke the type's reviewer skills in parallel — `pipeline.dimensions[]` in `types/<type>/type.yaml` (`<type>` is the `--type` value in `$ARGUMENTS`, default `rfe-strategy`), one `strategy-<name>-review` skill per dimension; today the five below. Each runs in its own isolated `context: fork` — no reviewer sees another's output. Pass the strategy key to each:
 
 ```
 Skill(skill="strategy-feasibility-review", args="RHAISTRAT-NNNN")
 Skill(skill="strategy-testability-review", args="RHAISTRAT-NNNN")
 Skill(skill="strategy-scope-review", args="RHAISTRAT-NNNN")
 Skill(skill="strategy-architecture-review", args="RHAISTRAT-NNNN")
+Skill(skill="strategy-uxresearch-review", args="RHAISTRAT-NNNN")
 ```
 
 Do NOT use the Agent tool for reviews. Use the Skill tool — the reviewer skills are defined in `.claude/skills/` and contain specific review instructions.
@@ -221,6 +222,7 @@ Do NOT use the Agent tool for reviews. Use the Skill tool — the reviewer skill
 - **`strategy-testability-review`**: Are acceptance criteria testable? What edge cases are missing?
 - **`strategy-scope-review`**: Is the strategy right-sized? Does the effort match the scope?
 - **`strategy-architecture-review`** (if architecture context available — `pipeline.dimensions[3].condition.context_exists`): Are dependencies correctly identified? Are integration patterns correct?
+- **`strategy-uxresearch-review`** (informational — `pipeline.dimensions[]` with `scored: false`, never in `score_fields`): Are the claimed user needs supported by existing UXD research? It carries no numeric score and never changes the approval gate; it returns `skipped` when the research MCP is unreachable, and composition proceeds without it if no report is delivered.
 
 Each reviewer resolves only the exact assigned strategy file and its source
 (`source_rfe`, or an Initiative strategy's `source_initiative`). A local file for a different ticket does not change its mode.
@@ -239,7 +241,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/review_composition.py compose {KEY}
 python3 ${CLAUDE_SKILL_DIR}/scripts/review_composition.py verify {KEY}
 ```
 
-It writes the final review from the four actual delivered Skill results, preserving
+It writes the final review from the delivered Skill results, preserving
 all report text unchanged with role, caller/tool and source-hash attribution. It
 exports each role report, the separate scorer assessment and a provenance manifest
 beside the final file. Do not rewrite, summarize, harmonize or replace these

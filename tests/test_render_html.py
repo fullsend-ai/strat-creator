@@ -186,6 +186,57 @@ class TestLoadArtifactsSkipParsing:
             assert len(pending_review) == 0
 
 
+class TestInformationalReviewerIsRendered:
+    def test_report_shows_ux_research_verdict_column(self):
+        tasks = {"RHAISTRAT-1": _minimal_task()}
+        review = _minimal_review()
+        review["meta"]["reviewers"]["uxresearch"] = "revise"
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            out = f.name
+        try:
+            report.generate_html(
+                tasks, {"RHAISTRAT-1": review},
+                review_comments={},
+                skipped=[],
+                pending_review=[],
+                config={},
+                output_path=out,
+            )
+            with open(out) as f:
+                html = f.read()
+        finally:
+            os.unlink(out)
+        assert "UXR" in html
+        assert '<td class="verdict-revise" title="UX Research' in html
+
+    def test_dashboard_shows_ux_research_column_and_value(self):
+        run = {
+            "run_id": "2026-08-01_test", "total": 1, "reviewed": 1, "approved": 1,
+            "approval_rate": 100, "delta_approval": None,
+            "strategies": [{
+                "strat_id": "RHAISTRAT-1", "title": "T", "source_rfe": "RHAIRFE-1",
+                "priority": "Major", "size": "M", "recommendation": "approve",
+                "needs_attention": False,
+                "reviewers": {"feasibility": "approve", "testability": "approve",
+                              "scope": "approve", "architecture": "approve",
+                              "uxresearch": "revise"},
+                "scores": {"feasibility": 2, "testability": 2, "scope": 2,
+                           "architecture": 2, "total": 8},
+            }],
+        }
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            out = f.name
+        try:
+            dashboard.generate_dashboard(runs=[run], exec_summary="Test summary", output_path=out)
+            with open(out) as f:
+                html = f.read()
+        finally:
+            os.unlink(out)
+        assert html.count('title="UX Research — informational, not scored"') == 6, "3 headers + 3 cells"
+        assert html.count("s.uxresearch") == 6, "3 cells x class+label"
+        assert '"uxresearch": "revise"' in html
+
+
 class TestDashboardHtmlRendering:
     def _render(self):
         run = {

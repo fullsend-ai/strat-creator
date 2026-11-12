@@ -10,7 +10,8 @@ import review_composition as composition  # noqa: E402
 from artifact_utils import write_frontmatter  # noqa: E402
 
 
-def prepare(root, key, rfe, scores, verdicts=None, finish=True, *, source_text=None):
+def prepare(root, key, rfe, scores, verdicts=None, finish=True, *, source_text=None,
+            informational=None):
     root = root.resolve()
     source = root / "artifacts/strat-originals" / f"{rfe}.md"
     source.parent.mkdir(parents=True, exist_ok=True)
@@ -34,11 +35,16 @@ def prepare(root, key, rfe, scores, verdicts=None, finish=True, *, source_text=N
              "tool_response": {"stdout": json.dumps(started)}}
     composition.capture(event)
     verdicts = verdicts or dict.fromkeys(composition.ROLES, decision["recommendation"])
+    # Informational roles are optional: absent means the reviewer delivered nothing.
+    delivered = dict(verdicts)
+    delivered.update(informational or {})
     reports = {}
-    for role in composition.ROLES:
+    for role in composition.ALL_ROLES:
+        if role not in delivered:
+            continue
         report = (f"### {key}: Authored strategy\n**{role.title()} assessment**: authored finding\n"
                   f"{role.upper()}_CONCERN: retain this exact finding and its opposing view.\n"
-                  f"**Recommendation**: {verdicts[role]}")
+                  f"**Recommendation**: {delivered[role]}")
         reports[role] = {**event, "tool_name": "Skill", "tool_use_id": key + "_" + role,
                          "tool_input": {"skill": "strategy-" + role + "-review", "args": key},
                          "tool_response": {"success": True, "status": "forked", "agentId": key + "-" + role,
