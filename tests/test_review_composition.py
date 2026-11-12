@@ -155,7 +155,7 @@ def test_elaborated_verdict_lines_are_captured_as_their_leading_token(target, su
     "reject (or revise)",        # a parenthetical naming a different verdict
     "revise (unclosed",          # malformed elaboration
     "REVISE (targeted edits)",   # uppercase token
-    "**revise** — escalation",   # decorated token
+    "**revise** - escalation",   # decorated token
     "revise (nested (parens))",  # nested parenthetical
 ])
 def test_ambiguous_or_decorated_verdict_lines_still_fail_closed(target, value):

@@ -19,8 +19,8 @@ VERDICTS = ("approve", "revise", "reject", "skipped")
 _VERDICT_LINE = re.compile(r"^\*\*Recommendation\*\*:[ \t]*([^\r\n]*)", re.M)
 # One verdict token, optionally elaborated in a single parenthetical
 # ("revise (escalation plus targeted edits)"), with optional trailing
-# punctuation. Anything else — empty, the template placeholder, two
-# competing tokens, uppercase — remains a hard error.
+# punctuation. Anything else (empty, the template placeholder, two
+# competing tokens, uppercase) remains a hard error.
 _VERDICT_VALUE = re.compile(r"(approve|revise|reject|skipped)"
                             r"(?:[ \t]+\([^()\r\n]*\))?[ \t]*[.!]?[ \t]*")
 _VERDICT_WORDS = re.compile(r"\b(approve|revise|reject|skipped)\b")
