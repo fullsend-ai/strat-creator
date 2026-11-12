@@ -93,6 +93,78 @@ def test_missing_invalid_or_conflicting_recommendations_are_not_captured(target,
         composition.compose(root, key)
 
 
+# The elaborated shapes below reproduce strat-pipeline job 17978100781
+# (RHAISTRAT-3123, 2026-11-12): the scope skill's summary block ended with
+# "**Recommendation**: revise (escalation plus targeted edits)" while the
+# closing line read "**Recommendation**: revise", and the capture hook
+# rejected the whole report ("Report must contain one consistent
+# Recommendation") so the batch failed at compose time with a missing-file
+# error. See the linked issue for the production trace.
+PRODUCTION_SCOPE_REPORT = """### {key}: Agent Red Teaming capabilities in Garak
+
+**Scope assessment**: right-sized, with two boundary problems.
+**Effort vs scope**: matched
+**RFE coverage**: partial. Gaps are listed below.
+**Scope risks**: five items, listed below.
+**Recommendation**: revise (escalation plus targeted edits)
+
+---
+
+**Correction:** My earlier report mistyped the source RFE key in one place.
+The only source RFE for this strategy is {rfe}. No other RFE was used.
+
+**Files reviewed**
+- Strategy: `artifacts/strat-tasks/{key}.md`
+- Source RFE: `artifacts/strat-originals/{rfe}.md`
+
+**Assessment**
+
+This is a re-review, and the strategy has been substantially rewritten.
+The boundary problems are RFE AC2 coverage and one component's unclear status.
+
+**Recommendation**: revise
+"""
+
+
+@pytest.mark.parametrize("summary,closing", [
+    ("revise (escalation plus targeted edits)", "revise"),  # exact production shape
+    ("revise (escalation plus targeted edits)", "revise (targeted edits)"),
+    ("approve (minor nits)", "approve"),
+    ("revise.", "revise"),
+])
+def test_elaborated_verdict_lines_are_captured_as_their_leading_token(target, summary, closing):
+    root, key, rfe = target
+    _, reports = prepare(root, key, rfe, (2, 2, 2, 2), finish=False)
+    report = PRODUCTION_SCOPE_REPORT.format(key=key, rfe=rfe).replace(
+        "revise (escalation plus targeted edits)", summary, 1).replace("\n**Recommendation**: revise\n",
+                                                                        f"\n**Recommendation**: {closing}\n")
+    reports["scope"]["tool_response"]["result"] = report
+    for event in reports.values():
+        composition.capture(event)
+    composition.compose(root, key)
+    manifest = composition.verify_review(root, key)
+    source = manifest["reports"]["scope"]
+    assert source["recommendation"] == summary.split(" ")[0].strip(".")
+    assert source["sha256"] == composition.digest(report)
+    assert (root / source["path"]).read_bytes() == report.encode()
+    assert report in (root / manifest["review"]["path"]).read_text()
+
+
+@pytest.mark.parametrize("value", [
+    "approve/reject",            # two competing tokens on one line
+    "reject (or revise)",        # a parenthetical naming a different verdict
+    "revise (unclosed",          # malformed elaboration
+    "REVISE (targeted edits)",   # uppercase token
+    "**revise** - escalation",   # decorated token
+    "revise (nested (parens))",  # nested parenthetical
+])
+def test_ambiguous_or_decorated_verdict_lines_still_fail_closed(target, value):
+    _, key, rfe = target
+    report = (f"### {key}: Authored strategy\nFindings for {rfe}.\n**Recommendation**: {value}\n")
+    with pytest.raises(ValueError, match="consistent Recommendation"):
+        composition.report_verdict({"key": key, "source_rfe": rfe}, "scope", report)
+
+
 def test_agreeing_recommendation_values_allow_crlf_and_trailing_whitespace(target):
     _, key, rfe = target
     report = (f"### {key}: Authored strategy\r\nFindings for {rfe}.\r\n"
