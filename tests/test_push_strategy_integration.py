@@ -220,6 +220,46 @@ class TestPushNewStrategy:
         assert STAFF_INPUT_HEADING in md
 
 
+class TestFirstPushPreservesSmeInput:
+    """AISDLC-655: a first push onto a description that has Staff Engineer /
+    SME Input content but no managed Strategy heading must not drop the SME
+    input. The strategy section is inserted before the SME section so the
+    source_rfe truncation (which keeps everything from the Strategy heading
+    onward) cannot cut it."""
+
+    def test_first_push_inserts_strategy_before_sme_input(self, jira, art_dir):
+        existing = (
+            "## Business Need (from RFE)\n\n"
+            "Users need server-side GPU utilization metrics in the catalog.\n\n"
+            f"{STAFF_INPUT_HEADING}\n\n"
+            "*Add technical corrections below. After review: address findings, "
+            "then remove needs-attention labels.*\n"
+        )
+        jira.create("RHAISTRAT-1005", "First push keeps SME input", existing)
+
+        local_file = art_dir / "artifacts" / "strat-tasks" / "RHAISTRAT-1005.md"
+        local_file.write_text(
+            "---\n"
+            "strat_id: RHAISTRAT-1005\n"
+            "source_rfe: RHAIRFE-1005\n"
+            "---\n"
+            f"{STRATEGY_HEADING}\n\n"
+            "### Goal\n\n"
+            "Collect DCGM utilization during GuideLLM runs.\n"
+        )
+
+        result = _run(jira, "RHAISTRAT-1005", local_file)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        md = _get_description_markdown(jira, "RHAISTRAT-1005")
+        # The SME input survives the first push instead of being truncated away.
+        assert STAFF_INPUT_HEADING in md
+        assert "Add technical corrections below" in md
+        # The strategy landed, before the SME section.
+        assert "Collect DCGM utilization during GuideLLM runs" in md
+        assert md.index(STRATEGY_HEADING) < md.index(STAFF_INPUT_HEADING)
+
+
 class TestPushReplacement:
 
     def test_keeps_attachment_when_strategy_shrinks(self, jira, art_dir):

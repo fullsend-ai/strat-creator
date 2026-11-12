@@ -462,7 +462,18 @@ def main():
             flags=re.DOTALL,
         )
     else:
-        updated_md = existing_md + "\n\n" + strategy_section
+        # First push onto a description without the managed Strategy heading
+        # (e.g. a manually created strat): insert the section before any Staff
+        # Engineer / SME Input content instead of appending it at the end.
+        # Appending put the heading after the SME section, so the source_rfe
+        # truncation below then dropped the SME input (AISDLC-655).
+        staff_match = re.search(STAFF_INPUT_PATTERN, existing_md)
+        if staff_match:
+            updated_md = (existing_md[:staff_match.start()].rstrip()
+                          + "\n\n" + strategy_section + "\n\n"
+                          + existing_md[staff_match.start():].lstrip())
+        else:
+            updated_md = existing_md + "\n\n" + strategy_section
 
     if staff_input_section:
         if re.search(STAFF_INPUT_PATTERN, updated_md):
