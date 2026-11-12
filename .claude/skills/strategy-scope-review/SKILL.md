@@ -61,8 +61,9 @@ If this is a re-review:
 
 ## Output
 
-End with exactly one line `**Recommendation**: approve`, `revise` or `reject`.
-Use revise for requested changes or escalation; include the reason in the assessment.
+End with exactly one line `**Recommendation**: approve`, `revise` or `reject` — the bare
+verdict word only, never elaborated on that line. Put the reasoning in the assessment body.
+Use revise for requested changes or escalation.
 Architecture alone may return `**Recommendation**: skipped` when context is unavailable.
 
 
@@ -74,7 +75,6 @@ For the assigned strategy only:
 **Effort vs scope**: <matched / underestimated / overestimated>
 **RFE coverage**: <full / partial — gaps listed / exceeds RFE>
 **Scope risks**: <list or "none identified">
-**Recommendation**: <approve / revise / reject>
 ```
 
 If scope is too large, explain what's bundled and why it's a problem.
