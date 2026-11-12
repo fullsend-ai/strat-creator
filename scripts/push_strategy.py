@@ -467,7 +467,11 @@ def main():
         # Engineer / SME Input content instead of appending it at the end.
         # Appending put the heading after the SME section, so the source_rfe
         # truncation below then dropped the SME input (AISDLC-655).
-        staff_match = re.search(STAFF_INPUT_PATTERN, existing_md)
+        # Anchored to the line start (Markdown permits up to three leading
+        # spaces before an ATX heading) so an inline mention or a "###"-level
+        # lookalike cannot become the splice point; a miss falls back to the
+        # append behavior, which the managed freshness guard rejects.
+        staff_match = re.search(r"(?m)^ {0,3}" + STAFF_INPUT_PATTERN, existing_md)
         if staff_match:
             updated_md = (existing_md[:staff_match.start()].rstrip()
                           + "\n\n" + strategy_section + "\n\n"
