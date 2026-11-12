@@ -301,7 +301,7 @@ def test_binary_scrub_error_does_not_echo_filename_or_traceback(tmp_path):
     "run_code,release_code,head_matches,recovery_case,expected",
     [(23, 0, True, "none", 23), (0, 17, True, "none", 17), (0, 0, True, "none", 0),
      (0, 0, False, "none", 1), (23, 0, True, "file", 23),
-     (23, 0, True, "directory", 23), (0, 0, True, "file", 1)],
+     (23, 0, True, "directory", 23), (0, 0, True, "file", 1), (23, 0, True, "binary-draft", 23)],
 )
 @pytest.mark.parametrize("mode,agent,selectors", [
     ("single", "strat-single", {"RFE_KEY": "RHAIRFE-19"}),
@@ -357,7 +357,10 @@ set -e
   printf '%s\\n' "$FULLSEND_MODE" "$CONFIG_FILE" "$RFE_FILTER"
   printf '%s\\n' "$STRAT_REPROCESS_KEY" "$FULLSEND_WORK_ITEM_KEY"
 } > "$CI_PROJECT_DIR/operation.txt"
-mkdir -p "$STRAT_STATE_DIR/strat-creator/.fullsend/shared"
+mkdir -p "$STRAT_STATE_DIR/strat-creator/.fullsend/shared" "$STRAT_PUBLISH_DIR/handoff/strat-tasks"
+printf 'Drafted strategy, token %s.\\n' "$JIRA_TOKEN" > "$STRAT_PUBLISH_DIR/handoff/strat-tasks/RHAISTRAT-19.md"
+[[ "$TEST_RECOVERY_CASE" != binary-draft ]] \\
+  || printf '\\377\\000' > "$STRAT_PUBLISH_DIR/handoff/strat-tasks/rejected.bin"
 printf 'RHAIRFE-19\\n' > "$STRAT_STATE_DIR/owned-rfe-ids.txt"
 printf '{"owner":"synthetic-run"}\\n' > "$STRAT_STATE_DIR/owned-rfe-ids.txt.owner.json"
 cat > "$STRAT_STATE_DIR/strat-creator/.fullsend/shared/release-locks.sh" <<'EOF'
@@ -365,7 +368,7 @@ cat > "$STRAT_STATE_DIR/strat-creator/.fullsend/shared/release-locks.sh" <<'EOF'
 touch "$CI_PROJECT_DIR/released"
 exit "$TEST_RELEASE_CODE"
 EOF
-if [[ "$TEST_RECOVERY_CASE" != none ]]; then
+if [[ "$TEST_RECOVERY_CASE" == file || "$TEST_RECOVERY_CASE" == directory ]]; then
   mkdir -p "$TARGET_REPO_DIR/tmp"
   if [[ "$TEST_RECOVERY_CASE" == directory ]]; then
     mkdir -p "$TARGET_REPO_DIR/tmp/$JIRA_TOKEN"
@@ -413,7 +416,7 @@ shift
     assert (tmp_path / "released").exists() == head_matches
     assert "synthetic-jira-secret" not in result.stdout
     assert "synthetic-jira-secret" not in result.stderr
-    if recovery_case != "none":
+    if recovery_case in ("file", "directory"):
         assert "credential" in result.stderr
         assert not (tmp_path / "fullsend-output").exists()
         assert (tmp_path / ".fullsend-state/123/strat-state/recovery").is_dir()
@@ -423,3 +426,12 @@ shift
     exported = tmp_path / "fullsend-output/host-state"
     assert (exported / "owned-rfe-ids.txt").read_text() == "RHAIRFE-19\n"
     assert json.loads((exported / "owned-rfe-ids.txt.owner.json").read_text()) == {"owner": "synthetic-run"}
+    drafts = tmp_path / "fullsend-output/handoff"
+    if recovery_case == "binary-draft":
+        # A draft the scrubber rejects costs only the drafts, never the ownership records above.
+        assert not drafts.exists() and "drafts were not exported" in result.stderr
+        assert "rejected.bin" not in result.stderr
+        return
+    # A dry run keeps its drafts in the artifacts, scrubbed like everything else there.
+    draft = (drafts / "strat-tasks/RHAISTRAT-19.md").read_text()
+    assert draft.startswith("Drafted strategy") and "synthetic-jira-secret" not in draft

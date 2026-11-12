@@ -72,6 +72,18 @@ cleanup() {
   if [[ "$scrub_rc" != 0 ]]; then
     # This is the fixed, generated artifact directory, never a user input.
     rm -rf -- "$CI_PROJECT_DIR/fullsend-output"
+  elif [[ "$FULLSEND_PUBLISH" != 1 && -d "$STRAT_PUBLISH_DIR/handoff" ]]; then
+    # A run that publishes nothing (a dry run) has no other copy of its drafted strategies and
+    # reviews. They are scrubbed on their own, so a draft the scrubber rejects costs only the drafts.
+    local drafts="$STRAT_PRIVATE_DIR/drafts-export"
+    rm -rf -- "$drafts"
+    # cp and mv stay quiet: their errors would print file names that the scrub never saw.
+    if ! { cp -R "$STRAT_PUBLISH_DIR/handoff" "$drafts" 2>/dev/null \
+        && python3 "$CI_SCRIPTS/fullsend-redact.py" tree "$drafts" \
+        && mv "$drafts" "$FULLSEND_OUTPUT_DIR/handoff" 2>/dev/null; }; then
+      rm -rf -- "$drafts"
+      echo 'Dry-run drafts were not exported: copying or scrubbing them failed' >&2
+    fi
   fi
   [[ "$rc" != 0 ]] || rc=$release_rc
   [[ "$rc" != 0 ]] || rc=$scrub_rc
