@@ -78,6 +78,55 @@ def test_adf_readback_ignores_only_server_ids_and_default_presentation():
     assert canonical_adf(linked) != canonical_adf(other)
 
 
+def test_adf_readback_ignores_empty_text_nodes_jira_strips():
+    """Jira strips empty text nodes on storage (observed on RHAISTRAT-2003:
+    an empty table cell is sent as a paragraph with a lone empty text node
+    and stored as a paragraph with no content). The read-back comparison
+    must treat the two as equal, or every push of a table with an empty cell
+    fails its verified write with UncertainWrite even though the write
+    landed."""
+    from jira_utils import canonical_adf, markdown_to_adf, same_jira_value
+
+    expected = markdown_to_adf(
+        "| Prerequisite | Status | Notes |\n"
+        "| --- | --- | --- |\n"
+        "| Architecture Review | _Pending_ |  |\n"
+        "| Documentation Support | _Pending_ | Guide per RFE |\n")
+
+    def jira_storage(node):
+        if isinstance(node, list):
+            items = [jira_storage(x) for x in node]
+            return [x for x in items
+                    if not (isinstance(x, dict) and x.get("type") == "text" and x.get("text") == "")]
+        if isinstance(node, dict):
+            result = {k: jira_storage(v) for k, v in node.items()}
+            if result.get("content") == []:
+                result.pop("content", None)
+            return result
+        return node
+
+    stored = jira_storage(copy.deepcopy(expected))
+    # The empty Notes cell round-trips to a content-less paragraph...
+    cell = stored["content"][0]["content"][1]["content"][2]
+    assert "content" not in cell["content"][0]
+    # ...and the read-back comparison must still verify the write.
+    assert same_jira_value(stored, expected)
+    # A real content difference still fails the comparison.
+    stored["content"][0]["content"][1]["content"][1]["content"][0]["text"] = "Done"
+    assert not same_jira_value(stored, expected)
+
+    # An empty text node between two same-marked text nodes must not block
+    # their merge.
+    bold = [{"type": "strong"}]
+    split = {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [
+        {"type": "text", "text": "Hello ", "marks": bold},
+        {"type": "text", "text": "", "marks": bold},
+        {"type": "text", "text": "world", "marks": bold}]}]}
+    joined = {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [
+        {"type": "text", "text": "Hello world", "marks": bold}]}]}
+    assert canonical_adf(split) == canonical_adf(joined)
+
+
 def test_partial_source_cleanup_recovers_only_matching_sealed_content(tmp_path, monkeypatch):
     import subprocess
     publisher = module(".fullsend/shared/publish/push-results.py", "pr85_publisher")
