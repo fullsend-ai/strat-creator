@@ -153,8 +153,9 @@ def verify_consumer(consumer, env, source=ROOT):
 def materialize_runtime(consumer, destination, env, source=ROOT):
     """Expand one resolved source snapshot into private runtime state.
 
-    Released Fullsend 0.47.1 resolves some remote companions against the
-    consumer directory. Supply those companions from the verified checkout.
+    Released Fullsend 0.47.1 resolved some remote companions against the
+    consumer directory; this is kept for 0.55.0 until re-checked. Supply
+    those companions from the verified checkout.
     Branch registrations are bound to the already checked-out commit here,
     so later dependency resolution never follows the moving branch again.
     """
