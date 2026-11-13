@@ -490,16 +490,31 @@ class TestManagedFirstPush:
                                  "Collect DCGM utilization. " * 100,
                                  sme_staff(existing))
 
+        # The real attachment write goes through the pipeline ledger, which needs
+        # the whole prepared batch; stub it at the module boundary and record
+        # what the fallback uploads.
+        uploads = []
+
+        def fake_add_attachment(server, user, token, key, path, filename=None):
+            with open(path, encoding="utf-8") as f:
+                uploads.append((key, filename, f.read()))
+
+        monkeypatch.setattr(push_strategy, "add_attachment", fake_add_attachment)
+
         result = _run_managed(jira, "RHAISTRAT-1030", local_file, art_dir, monkeypatch)
         assert result.returncode == 0, result.stderr
 
-        fields = jira.get("RHAISTRAT-1030")["fields"]
-        attachments = fields.get("attachment", [])
-        assert len(attachments) == 1
-        assert attachments[0]["filename"] == "RHAISTRAT-1030-strategy.md"
+        assert len(uploads) == 1
+        key, filename, uploaded = uploads[0]
+        assert key == "RHAISTRAT-1030"
+        assert filename == "RHAISTRAT-1030-strategy.md"
+        assert uploaded.startswith(STRATEGY_HEADING)
+        assert ("Collect DCGM utilization. " * 100).strip() in uploaded
+
         md = _get_description_markdown(jira, "RHAISTRAT-1030")
         assert "Only SME section: use DCGM exporters." in md
         assert md.count(STAFF_INPUT_HEADING) == 1
+        assert "Collect DCGM utilization." not in md
         verify_staff(md, sme_staff(existing))
 
     def test_second_push_on_new_layout(self, jira, art_dir, monkeypatch):
