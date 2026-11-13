@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 import push_strategy
 from jira_utils import RFE_REFERENCE_MARKER, add_attachment, adf_to_markdown
+from strat_freshness import staff as sme_staff
+from strat_freshness import verify_staff
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPT = os.path.join(PROJECT_ROOT, "scripts", "push_strategy.py")
@@ -218,6 +220,121 @@ class TestPushNewStrategy:
 
         md = _get_description_markdown(jira, "RHAISTRAT-1004")
         assert STAFF_INPUT_HEADING in md
+
+
+class TestFirstPushPreservesSmeInput:
+    """AISDLC-655: a first push onto a description that has Staff Engineer /
+    SME Input content but no managed Strategy heading must not drop the SME
+    input. The strategy section is inserted before the SME section so the
+    source_rfe truncation (which keeps everything from the Strategy heading
+    onward) cannot cut it."""
+
+    def test_first_push_inserts_strategy_before_sme_input(self, jira, art_dir):
+        existing = (
+            "## Business Need (from RFE)\n\n"
+            "Users need server-side GPU utilization metrics in the catalog.\n\n"
+            f"{STAFF_INPUT_HEADING}\n\n"
+            "Use DCGM exporters owned by the platform telemetry team.\n"
+        )
+        jira.create("RHAISTRAT-1009", "First push keeps SME input", existing)
+
+        local_file = art_dir / "artifacts" / "strat-tasks" / "RHAISTRAT-1009.md"
+        local_file.write_text(
+            "---\n"
+            "strat_id: RHAISTRAT-1009\n"
+            "source_rfe: RHAIRFE-1009\n"
+            "---\n"
+            f"{STRATEGY_HEADING}\n\n"
+            "### Goal\n\n"
+            "Collect DCGM utilization during GuideLLM runs.\n"
+        )
+
+        result = _run(jira, "RHAISTRAT-1009", local_file)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        md = _get_description_markdown(jira, "RHAISTRAT-1009")
+        # The source_rfe truncation ran: the front matter collapsed to the
+        # RFE reference (otherwise the assertions below could pass with the
+        # cut disabled and SME merely left in place by the insertion).
+        assert RFE_REFERENCE_MARKER in md
+        # The SME input survives the first push instead of being truncated
+        # away, and passes the managed freshness guard's own comparison
+        # (verify_staff) against the pre-push SME content.
+        assert STAFF_INPUT_HEADING in md
+        verify_staff(md, sme_staff(existing))
+        # The strategy landed, before the SME section.
+        assert "Collect DCGM utilization during GuideLLM runs" in md
+        assert md.index(STRATEGY_HEADING) < md.index(STAFF_INPUT_HEADING)
+
+    def test_inline_mention_is_not_a_splice_point(self, jira, art_dir):
+        """An inline mention or a "###"-level lookalike of the SME heading
+        must not become the insertion point (the splice would split the line
+        and corrupt the description)."""
+        existing = (
+            "## Business Need (from RFE)\n\n"
+            "Fill the `## Staff Engineer / SME Input` section after review.\n\n"
+            "### Staff Engineer Input notes\n\n"
+            "Draft notes live here.\n\n"
+            f"{STAFF_INPUT_HEADING}\n\n"
+            "Use DCGM exporters owned by the platform telemetry team.\n"
+        )
+        jira.create("RHAISTRAT-1010", "Inline mention is not a splice point",
+                    existing)
+
+        local_file = art_dir / "artifacts" / "strat-tasks" / "RHAISTRAT-1010.md"
+        local_file.write_text(
+            "---\n"
+            "strat_id: RHAISTRAT-1010\n"
+            "source_rfe: RHAIRFE-1010\n"
+            "---\n"
+            f"{STRATEGY_HEADING}\n\n"
+            "### Goal\n\n"
+            "Collect DCGM utilization during GuideLLM runs.\n"
+        )
+
+        result = _run(jira, "RHAISTRAT-1010", local_file)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        md = _get_description_markdown(jira, "RHAISTRAT-1010")
+        # Exactly one SME heading in the result: the real one. An unanchored
+        # splice would have split the inline mention into a second heading.
+        assert md.count(STAFF_INPUT_HEADING) == 1
+        # The real SME input survives (staff() itself is unanchored, so an
+        # inline mention legitimately changes what it extracts from the
+        # original; the survival of the real content is what matters here).
+        assert "Use DCGM exporters owned by the platform telemetry team." in md
+        # The line-start heading, not the inline mention, is the boundary.
+        assert md.index(STRATEGY_HEADING) < md.index(STAFF_INPUT_HEADING)
+
+    def test_indented_sme_heading_is_still_a_splice_point(self, jira, art_dir):
+        """Markdown permits up to three leading spaces before an ATX heading;
+        an indented SME heading must still bound the insertion."""
+        existing = (
+            "## Business Need (from RFE)\n\n"
+            "Users need utilization metrics.\n\n"
+            f"  {STAFF_INPUT_HEADING}\n\n"
+            "Use DCGM exporters owned by the platform telemetry team.\n"
+        )
+        jira.create("RHAISTRAT-1011", "Indented SME heading", existing)
+
+        local_file = art_dir / "artifacts" / "strat-tasks" / "RHAISTRAT-1011.md"
+        local_file.write_text(
+            "---\n"
+            "strat_id: RHAISTRAT-1011\n"
+            "source_rfe: RHAIRFE-1011\n"
+            "---\n"
+            f"{STRATEGY_HEADING}\n\n"
+            "### Goal\n\n"
+            "Collect DCGM utilization during GuideLLM runs.\n"
+        )
+
+        result = _run(jira, "RHAISTRAT-1011", local_file)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        md = _get_description_markdown(jira, "RHAISTRAT-1011")
+        assert RFE_REFERENCE_MARKER in md
+        assert "Use DCGM exporters owned by the platform telemetry team." in md
+        verify_staff(md, sme_staff(existing))
 
 
 class TestPushReplacement:
