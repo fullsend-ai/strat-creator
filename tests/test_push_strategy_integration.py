@@ -1,4 +1,5 @@
 """Integration tests for push_strategy.py against jira-emulator."""
+import json
 import os
 import re
 import subprocess
@@ -10,7 +11,7 @@ import urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 import push_strategy
-from jira_utils import RFE_REFERENCE_MARKER, add_attachment, adf_to_markdown
+from jira_utils import RFE_REFERENCE_MARKER, add_attachment, adf_to_markdown, api_call
 from strat_freshness import staff as sme_staff
 from strat_freshness import verify_staff
 
@@ -38,6 +39,32 @@ def _run(jira, issue_key, local_file):
         text=True,
         cwd=PROJECT_ROOT,
     )
+
+
+def _run_managed(jira, issue_key, local_file, workdir, monkeypatch):
+    """Run the push in-process as a managed pipeline run, so the SME freshness
+    guard executes against the emulator. The full pipeline write ledger needs
+    the whole prepared batch (see test_pr93_host_proof.py), so the final
+    description PUT is a plain write; the guard under test runs before it.
+    Returns an object shaped like a subprocess result."""
+    (workdir / "tmp").mkdir(exist_ok=True)
+    (workdir / "tmp" / "strat-input.json").write_text(
+        json.dumps({"run_id": "test-run", "lock_owner": "test-owner"}))
+    for name, value in _env(jira).items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("STRAT_MANAGED_RUN", "1")
+    monkeypatch.setattr(sys, "argv", ["push_strategy.py", issue_key, str(local_file)])
+    monkeypatch.setattr(
+        push_strategy, "update_description",
+        lambda server, user, token, key, adf: api_call(
+            server, f"/issue/{key}", user, token,
+            body={"fields": {"description": adf}}, method="PUT"))
+    try:
+        push_strategy.main()
+    except (SystemExit, ValueError) as exc:
+        code = exc.code if isinstance(exc, SystemExit) else 1
+        return subprocess.CompletedProcess([], code or 0, "", str(exc))
+    return subprocess.CompletedProcess([], 0, "", "")
 
 
 def _get_description_markdown(jira, key):
@@ -266,20 +293,30 @@ class TestFirstPushPreservesSmeInput:
         assert "Collect DCGM utilization during GuideLLM runs" in md
         assert md.index(STRATEGY_HEADING) < md.index(STAFF_INPUT_HEADING)
 
-    def test_inline_mention_is_not_a_splice_point(self, jira, art_dir):
-        """An inline mention or a "###"-level lookalike of the SME heading
-        must not become the insertion point (the splice would split the line
-        and corrupt the description)."""
+    def test_managed_inline_mention_shape_is_rejected(self, jira, art_dir, monkeypatch):
+        """An inline mention and a "###"-level lookalike before the real SME
+        heading make the unanchored staff() extract a wrong fragment from the
+        live description. The anchored splice and the guard would agree on
+        that fragment, so a replace-all SME substitution would delete the real
+        SME content while the push succeeded. A managed run must reject it and
+        leave the description unchanged."""
+        mention_fragment = (
+            "## Staff Engineer / SME Input` section after review.\n\n"
+            "### Staff Engineer Input notes\n\n"
+            "Draft notes live here."
+        )
         existing = (
             "## Business Need (from RFE)\n\n"
-            "Fill the `## Staff Engineer / SME Input` section after review.\n\n"
-            "### Staff Engineer Input notes\n\n"
-            "Draft notes live here.\n\n"
+            "Fill the `" + mention_fragment + "\n\n"
             f"{STAFF_INPUT_HEADING}\n\n"
             "Use DCGM exporters owned by the platform telemetry team.\n"
         )
         jira.create("RHAISTRAT-1010", "Inline mention is not a splice point",
                     existing)
+        before = _get_description_markdown(jira, "RHAISTRAT-1010")
+        # Precondition: the local SME equals what unanchored staff() extracts.
+        local_sme = sme_staff(existing)
+        assert local_sme.startswith("## Staff Engineer / SME Input` section")
 
         local_file = art_dir / "artifacts" / "strat-tasks" / "RHAISTRAT-1010.md"
         local_file.write_text(
@@ -289,22 +326,14 @@ class TestFirstPushPreservesSmeInput:
             "---\n"
             f"{STRATEGY_HEADING}\n\n"
             "### Goal\n\n"
-            "Collect DCGM utilization during GuideLLM runs.\n"
+            "Collect DCGM utilization during GuideLLM runs.\n\n"
+            f"{local_sme}\n"
         )
 
-        result = _run(jira, "RHAISTRAT-1010", local_file)
-        assert result.returncode == 0, f"stderr: {result.stderr}"
-
-        md = _get_description_markdown(jira, "RHAISTRAT-1010")
-        # Exactly one SME heading in the result: the real one. An unanchored
-        # splice would have split the inline mention into a second heading.
-        assert md.count(STAFF_INPUT_HEADING) == 1
-        # The real SME input survives (staff() itself is unanchored, so an
-        # inline mention legitimately changes what it extracts from the
-        # original; the survival of the real content is what matters here).
-        assert "Use DCGM exporters owned by the platform telemetry team." in md
-        # The line-start heading, not the inline mention, is the boundary.
-        assert md.index(STRATEGY_HEADING) < md.index(STAFF_INPUT_HEADING)
+        result = _run_managed(jira, "RHAISTRAT-1010", local_file, art_dir, monkeypatch)
+        assert result.returncode != 0
+        assert "SME input" in result.stderr
+        assert _get_description_markdown(jira, "RHAISTRAT-1010") == before
 
     def test_indented_sme_heading_is_still_a_splice_point(self, jira, art_dir):
         """Markdown permits up to three leading spaces before an ATX heading;
@@ -335,6 +364,137 @@ class TestFirstPushPreservesSmeInput:
         assert RFE_REFERENCE_MARKER in md
         assert "Use DCGM exporters owned by the platform telemetry team." in md
         verify_staff(md, sme_staff(existing))
+
+
+class TestManagedFirstPush:
+    """The same first-push splice under a managed run, where the SME
+    freshness guard executes (the unmanaged tests above never run it)."""
+
+    @staticmethod
+    def _local(art_dir, key, strategy_text, sme, source_rfe=True):
+        fm = f"strat_id: {key}\n"
+        if source_rfe:
+            fm += f"source_rfe: RHAIRFE-{key.split('-')[1]}\n"
+        path = art_dir / "artifacts" / "strat-tasks" / f"{key}.md"
+        path.write_text(
+            f"---\n{fm}---\n"
+            f"{STRATEGY_HEADING}\n\n"
+            f"### Goal\n\n{strategy_text}\n"
+            + (f"\n{sme}\n" if sme else "")
+        )
+        return path
+
+    def test_production_shape(self, jira, art_dir, monkeypatch):
+        existing = (
+            "## Business Need (from RFE)\n\n"
+            "Users need server-side GPU utilization metrics in the catalog.\n\n"
+            f"{STAFF_INPUT_HEADING}\n\n"
+            "Use DCGM exporters owned by the platform telemetry team.\n"
+        )
+        jira.create("RHAISTRAT-1020", "Managed first push", existing)
+        local_file = self._local(art_dir, "RHAISTRAT-1020",
+                                 "Collect DCGM utilization.", sme_staff(existing))
+
+        result = _run_managed(jira, "RHAISTRAT-1020", local_file, art_dir, monkeypatch)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        md = _get_description_markdown(jira, "RHAISTRAT-1020")
+        assert RFE_REFERENCE_MARKER in md
+        assert "Collect DCGM utilization." in md
+        assert md.index(STRATEGY_HEADING) < md.index(STAFF_INPUT_HEADING)
+        after_strategy = md[md.index(STAFF_INPUT_HEADING):]
+        assert "Use DCGM exporters owned by the platform telemetry team." in after_strategy
+        verify_staff(md, sme_staff(existing))
+
+    def test_anchor_miss_is_rejected(self, jira, art_dir, monkeypatch):
+        """Only an h3 SME heading: the anchored splice misses, the append
+        fallback truncates the SME away, and the guard rejects the write."""
+        existing = (
+            "## Business Need (from RFE)\n\n"
+            "Users need utilization metrics.\n\n"
+            "### Staff Engineer / SME Input\n\n"
+            "Use DCGM exporters owned by the platform telemetry team.\n"
+        )
+        jira.create("RHAISTRAT-1021", "Managed anchor miss", existing)
+        before = _get_description_markdown(jira, "RHAISTRAT-1021")
+        local_file = self._local(art_dir, "RHAISTRAT-1021",
+                                 "Collect DCGM utilization.", sme_staff(existing))
+
+        result = _run_managed(jira, "RHAISTRAT-1021", local_file, art_dir, monkeypatch)
+        assert result.returncode != 0
+        assert "SME input" in result.stderr
+        assert _get_description_markdown(jira, "RHAISTRAT-1021") == before
+
+    def test_duplicate_sme_headings_keep_both_sections(self, jira, art_dir, monkeypatch):
+        existing = (
+            "## Business Need (from RFE)\n\n"
+            "Users need utilization metrics.\n\n"
+            f"{STAFF_INPUT_HEADING}\n\n"
+            "First SME section: use DCGM exporters.\n\n"
+            f"{STAFF_INPUT_HEADING}\n\n"
+            "Second SME section: coordinate with telemetry.\n"
+        )
+        jira.create("RHAISTRAT-1022", "Managed duplicate SME headings", existing)
+        local_file = self._local(art_dir, "RHAISTRAT-1022",
+                                 "Collect DCGM utilization.", sme_staff(existing))
+
+        result = _run_managed(jira, "RHAISTRAT-1022", local_file, art_dir, monkeypatch)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        md = _get_description_markdown(jira, "RHAISTRAT-1022")
+        assert "First SME section: use DCGM exporters." in md
+        assert "Second SME section: coordinate with telemetry." in md
+        assert md.count(STAFF_INPUT_HEADING) == 2
+        assert md.index(STRATEGY_HEADING) < md.index(STAFF_INPUT_HEADING)
+        verify_staff(md, sme_staff(existing))
+
+    def test_second_push_on_new_layout(self, jira, art_dir, monkeypatch):
+        existing = (
+            "## Business Need (from RFE)\n\n"
+            "Users need utilization metrics.\n\n"
+            f"{STAFF_INPUT_HEADING}\n\n"
+            "Use DCGM exporters owned by the platform telemetry team.\n"
+        )
+        jira.create("RHAISTRAT-1023", "Managed second push", existing)
+        local_file = self._local(art_dir, "RHAISTRAT-1023",
+                                 "First push strategy.", sme_staff(existing))
+        result1 = _run_managed(jira, "RHAISTRAT-1023", local_file, art_dir, monkeypatch)
+        assert result1.returncode == 0, f"stderr: {result1.stderr}"
+
+        local_file = self._local(art_dir, "RHAISTRAT-1023",
+                                 "Second push strategy.", sme_staff(existing))
+        result2 = _run_managed(jira, "RHAISTRAT-1023", local_file, art_dir, monkeypatch)
+        assert result2.returncode == 0, f"stderr: {result2.stderr}"
+
+        md = _get_description_markdown(jira, "RHAISTRAT-1023")
+        assert md.count(RFE_REFERENCE_MARKER) == 1
+        assert "Second push strategy." in md
+        assert "First push strategy." not in md
+        assert md.count(STAFF_INPUT_HEADING) == 1
+        verify_staff(md, sme_staff(existing))
+
+    def test_clone_shaped_description_appends(self, jira, art_dir, monkeypatch):
+        """An RFE body with its own "##" headings and no SME heading takes the
+        append fallback, as before the splice existed."""
+        existing = (
+            "## Business Need\n\n"
+            "Users need utilization metrics.\n\n"
+            "## Acceptance Criteria\n\n"
+            "Metrics are visible in the catalog.\n"
+        )
+        jira.create("RHAISTRAT-1024", "Managed clone-shaped description", existing)
+        local_file = self._local(art_dir, "RHAISTRAT-1024",
+                                 "Collect DCGM utilization.", None,
+                                 source_rfe=False)
+
+        result = _run_managed(jira, "RHAISTRAT-1024", local_file, art_dir, monkeypatch)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        md = _get_description_markdown(jira, "RHAISTRAT-1024")
+        assert (md.index("## Business Need") < md.index("## Acceptance Criteria")
+                < md.index(STRATEGY_HEADING) < md.index(STAFF_INPUT_HEADING))
+        assert "Metrics are visible in the catalog." in md
+        assert RFE_REFERENCE_MARKER not in md
 
 
 class TestPushReplacement:
