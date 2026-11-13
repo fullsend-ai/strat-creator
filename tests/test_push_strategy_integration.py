@@ -474,6 +474,34 @@ class TestManagedFirstPush:
         assert after["description"] == before["description"]
         assert not after.get("attachment")
 
+    def test_single_sme_with_content_limit_succeeds_via_attachment(
+            self, jira, description_limit, art_dir, monkeypatch):
+        """A single SME section survives the stub, so a forced content limit
+        must fall back to the attachment instead of refusing."""
+        description_limit(1000)
+        existing = (
+            "## Business Need (from RFE)\n\n"
+            "Users need utilization metrics.\n\n"
+            f"{STAFF_INPUT_HEADING}\n\n"
+            "Only SME section: use DCGM exporters.\n"
+        )
+        jira.create("RHAISTRAT-1030", "Single SME limit", existing)
+        local_file = self._local(art_dir, "RHAISTRAT-1030",
+                                 "Collect DCGM utilization. " * 100,
+                                 sme_staff(existing))
+
+        result = _run_managed(jira, "RHAISTRAT-1030", local_file, art_dir, monkeypatch)
+        assert result.returncode == 0, result.stderr
+
+        fields = jira.get("RHAISTRAT-1030")["fields"]
+        attachments = fields.get("attachment", [])
+        assert len(attachments) == 1
+        assert attachments[0]["filename"] == "RHAISTRAT-1030-strategy.md"
+        md = _get_description_markdown(jira, "RHAISTRAT-1030")
+        assert "Only SME section: use DCGM exporters." in md
+        assert md.count(STAFF_INPUT_HEADING) == 1
+        verify_staff(md, sme_staff(existing))
+
     def test_second_push_on_new_layout(self, jira, art_dir, monkeypatch):
         existing = (
             "## Business Need (from RFE)\n\n"

@@ -270,9 +270,13 @@ def extract_tldr_section(strategy_section):
 
 
 def _anchored_sme_sections(md):
-    """Distinct line-anchored Staff Engineer / SME Input sections of a description."""
+    """Distinct line-anchored Staff Engineer / SME Input sections of a description.
+
+    Sections are whitespace-canonicalized so blank-line and trailing-newline
+    differences between assembly paths do not read as dropped content.
+    """
     return {
-        match.group(0).strip()
+        " ".join(match.group(0).split())
         for match in re.finditer(
             r'(?m:^ {0,3})' + STAFF_INPUT_PATTERN + r'.*?(?=\n## (?!#)|\Z)',
             md,
