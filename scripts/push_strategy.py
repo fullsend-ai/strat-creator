@@ -269,6 +269,18 @@ def extract_tldr_section(strategy_section):
     return match.group(1).strip()
 
 
+def _anchored_sme_sections(md):
+    """Distinct line-anchored Staff Engineer / SME Input sections of a description."""
+    return {
+        match.group(0).strip()
+        for match in re.finditer(
+            r'(?m:^ {0,3})' + STAFF_INPUT_PATTERN + r'.*?(?=\n## (?!#)|\Z)',
+            md,
+            re.DOTALL,
+        )
+    }
+
+
 def _build_description_stub(existing_md, strategy_section, staff_input_section,
                             attachment_filename):
     """Build a reduced description with TL;DR stub instead of full strategy."""
@@ -339,9 +351,17 @@ def _push_via_attachment(server, user, token, issue_key, existing_md,
     """Push strategy as attachment + stub description."""
     att_filename = STRATEGY_ATTACHMENT_TEMPLATE.format(issue_key=issue_key)
 
+    stub_md = _build_description_stub(
+        existing_md, strategy_section, staff_input_section, att_filename)
+    # Fail closed before any write: the stub carries only the local SME section,
+    # so it must not drop a live SME section the assembled description kept.
+    dropped = _anchored_sme_sections(existing_md) - _anchored_sme_sections(stub_md)
+    if dropped:
+        print(f"Error: attachment fallback would drop {len(dropped)} SME section(s); "
+              f"refusing to push {issue_key}.", file=sys.stderr)
+        sys.exit(1)
+
     with _attachment_writer_lock(issue_key):
-        stub_md = _build_description_stub(
-            existing_md, strategy_section, staff_input_section, att_filename)
         stub_adf = markdown_to_adf(stub_md)
         _verify_managed_description(server, user, token, issue_key, stub_adf)
 

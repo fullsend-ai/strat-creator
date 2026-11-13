@@ -448,6 +448,32 @@ class TestManagedFirstPush:
         assert md.index(STRATEGY_HEADING) < md.index(STAFF_INPUT_HEADING)
         verify_staff(md, sme_staff(existing))
 
+    def test_duplicate_sme_headings_with_content_limit_refuses(
+            self, jira, description_limit, art_dir, monkeypatch, capsys):
+        """The attachment fallback would keep only the first SME section, so a
+        forced content limit must refuse the push and write nothing."""
+        description_limit(1000)
+        existing = (
+            "## Business Need (from RFE)\n\n"
+            "Users need utilization metrics.\n\n"
+            f"{STAFF_INPUT_HEADING}\n\n"
+            "First SME section: use DCGM exporters.\n\n"
+            f"{STAFF_INPUT_HEADING}\n\n"
+            "Second SME section: coordinate with telemetry.\n"
+        )
+        jira.create("RHAISTRAT-1023", "Managed duplicate SME limit", existing)
+        before = jira.get("RHAISTRAT-1023")["fields"]
+        local_file = self._local(art_dir, "RHAISTRAT-1023",
+                                 "Collect DCGM utilization. " * 100,
+                                 sme_staff(existing))
+
+        result = _run_managed(jira, "RHAISTRAT-1023", local_file, art_dir, monkeypatch)
+        assert result.returncode != 0
+        assert "would drop 1 SME section(s)" in capsys.readouterr().err
+        after = jira.get("RHAISTRAT-1023")["fields"]
+        assert after["description"] == before["description"]
+        assert not after.get("attachment")
+
     def test_second_push_on_new_layout(self, jira, art_dir, monkeypatch):
         existing = (
             "## Business Need (from RFE)\n\n"
