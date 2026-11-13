@@ -474,6 +474,28 @@ class TestManagedFirstPush:
         assert after["description"] == before["description"]
         assert not after.get("attachment")
 
+    def test_equivalent_sme_formatting_with_content_limit_succeeds(
+            self, jira, description_limit, art_dir, monkeypatch):
+        """A representation-only SME difference (split emphasis run) passes the
+        managed freshness check, so the attachment fallback must not refuse it."""
+        description_limit(1000)
+        existing = (
+            "## Business Need (from RFE)\n\n"
+            "Users need utilization metrics.\n\n"
+            f"{STAFF_INPUT_HEADING}\n\n"
+            "Use **DCGM ****exporters** from telemetry.\n"
+        )
+        jira.create("RHAISTRAT-1031", "Equivalent SME limit", existing)
+        local_sme = (f"{STAFF_INPUT_HEADING}\n\n"
+                     "Use **DCGM exporters** from telemetry.")
+        local_file = self._local(art_dir, "RHAISTRAT-1031",
+                                 "Collect DCGM utilization. " * 100, local_sme)
+        monkeypatch.setattr(push_strategy, "add_attachment",
+                            lambda *args, **kwargs: None)
+
+        result = _run_managed(jira, "RHAISTRAT-1031", local_file, art_dir, monkeypatch)
+        assert result.returncode == 0, result.stderr
+
     def test_single_sme_with_content_limit_succeeds_via_attachment(
             self, jira, description_limit, art_dir, monkeypatch):
         """A single SME section survives the stub, so a forced content limit

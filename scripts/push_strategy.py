@@ -24,6 +24,7 @@ import sys
 import tempfile
 import threading
 import urllib.error
+from collections import Counter
 from contextlib import contextmanager
 
 import type_registry
@@ -270,19 +271,22 @@ def extract_tldr_section(strategy_section):
 
 
 def _anchored_sme_sections(md):
-    """Distinct line-anchored Staff Engineer / SME Input sections of a description.
+    """Multiset of line-anchored Staff Engineer / SME Input sections of a description.
 
-    Sections are whitespace-canonicalized so blank-line and trailing-newline
-    differences between assembly paths do not read as dropped content.
+    Each section is reduced with the managed freshness contract's
+    ``canonical_staff()``: Markdown representation differences (blank lines,
+    split emphasis runs) compare equal, while code-block whitespace and
+    duplicate sections stay distinct.
     """
-    return {
-        " ".join(match.group(0).split())
+    from strat_freshness import canonical_staff
+    return Counter(
+        json.dumps(canonical_staff(match.group(0).strip()), sort_keys=True)
         for match in re.finditer(
             r'(?m:^ {0,3})' + STAFF_INPUT_PATTERN + r'.*?(?=\n## (?!#)|\Z)',
             md,
             re.DOTALL,
         )
-    }
+    )
 
 
 def _build_description_stub(existing_md, strategy_section, staff_input_section,
@@ -361,7 +365,7 @@ def _push_via_attachment(server, user, token, issue_key, existing_md,
     # so it must not drop a live SME section the assembled description kept.
     dropped = _anchored_sme_sections(existing_md) - _anchored_sme_sections(stub_md)
     if dropped:
-        print(f"Error: attachment fallback would drop {len(dropped)} SME section(s); "
+        print(f"Error: attachment fallback would drop {sum(dropped.values())} SME section(s); "
               f"refusing to push {issue_key}.", file=sys.stderr)
         sys.exit(1)
 
