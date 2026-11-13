@@ -57,7 +57,11 @@ Scale output depth to match the strategy size. All sizes produce all sections �
 <!-- [P0] Must have — blocks ship -->
 <!-- [P1] Should have — important but not blocking -->
 <!-- [P2] Nice to have — defer if effort exceeds estimate -->
+<!-- [Deferred] Explicitly out of scope for this release -->
 <!-- If ALL items are P0, flag that prioritization may be incomplete. -->
+<!-- When an HLR is already implemented, append status: — **DONE** ([org/repo#NNN](url)) -->
+<!-- Use repository-qualified PR links (e.g., opendatahub-io/models-as-a-service#1363). -->
+<!-- Only mark DONE after verifying the linked PR implements the HLR. -->
 
 ### Dependencies
 <!-- S: 1-3 dependencies. M: 3-5. L: 5-8. XL: 6-10. -->
@@ -72,6 +76,9 @@ Scale output depth to match the strategy size. All sizes produce all sections �
 <!-- Every NFR must cite its source: (RFE), (architecture context: <doc>), or (Staff Engineer / SME Input). -->
 <!-- Do NOT invent numeric thresholds. If no source specifies a metric, flag it in Open Questions. -->
 <!-- Do NOT write: "good performance", "secure access", "high availability" — not testable. -->
+<!-- Each NFR MUST have either a measurable target (e.g., "P95 < 500ms") or an explicit -->
+<!-- "target TBD — blocked on <document type>" note. Unmeasurable NFRs become untestable gaps -->
+<!-- that surface during test plan creation. -->
 - **Performance**: <cite source for each metric; flag missing targets in Open Questions>
 - **Security**: <AuthN/AuthZ, RBAC scope — cite architecture context docs>
 - **Backwards Compatibility**: <migration path, deprecation timeline>
