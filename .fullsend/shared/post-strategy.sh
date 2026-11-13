@@ -8,7 +8,9 @@
 #      (handoff.py) into the target's artifacts/, with the progress record a
 #      later strat-resume run reads (artifacts/strat-progress.json);
 #   2. build the HTML report and pipeline data with the trusted scripts;
-#   3. when RESULTS_REPO_URL is set, push the run to the results repository,
+#   3. add the run's telemetry/ folder (agentic-telemetry/v1: usage.json and the
+#      gzipped Fullsend metrics/spans), after a secret scan of its inputs;
+#   4. when RESULTS_REPO_URL is set, push the run to the results repository,
 #      and to Org Pulse when ORG_PULSE_URL and ORG_PULSE_API_TOKEN are set.
 # Lock release is not done here: the CI cleanup (release-locks.sh) runs
 # whether or not this script runs.
@@ -72,12 +74,37 @@ if [[ -n "${RESULTS_REPO_URL:-}" ]]; then
   export GIT_CONFIG_VALUE_0="Authorization: Basic ${auth}"
   unset auth
   bash "${SHARED}/publish/clone-data-repo.sh" "${RESULTS_REPO_URL}" "${RESULTS}"
-  for dir in strat-tasks strat-reviews strat-originals reports; do rm -rf -- "${RESULTS:?}/${dir}"; done
+  for dir in strat-tasks strat-reviews strat-originals reports telemetry; do rm -rf -- "${RESULTS:?}/${dir}"; done
   rm -f -- "${RESULTS}/strat-skipped.md" "${RESULTS}/strat-tickets.md" "${RESULTS}/pipeline-data.json"
 else
   mkdir -p "${RESULTS}"
 fi
 cp -R "${BUNDLE}/." "${RESULTS}/"
+
+# Telemetry: the same telemetry/ folder epic-decomposer and rfe-autofixer
+# publish; its run_id is the run directory's name (run-<run id>). Fullsend wrote metrics.json before this post-script started; its
+# span log may still grow, so the inputs are frozen on the first attempt and a
+# retry republishes byte-identical files (the run directory is immutable).
+# Publication refuses binary files because it cannot scan them: scan the
+# uncompressed inputs here, before they are gzipped. Never blocks the results.
+TELEMETRY_INPUTS="${PUBLISH_DIR}/telemetry-inputs"
+if [[ ! -f "${TELEMETRY_INPUTS}/.frozen" ]]; then
+  rm -rf -- "${TELEMETRY_INPUTS}"
+  mkdir -p -- "${TELEMETRY_INPUTS}"
+  for name in metrics.json run-telemetry.jsonl; do
+    if [[ -n "${FULLSEND_RUN_DIR:-}" && -f "${FULLSEND_RUN_DIR}/${name}" ]]; then
+      cp -- "${FULLSEND_RUN_DIR}/${name}" "${TELEMETRY_INPUTS}/${name}"
+    fi
+  done
+  if ! python3 "${CLONE}/.fullsend/ci/fullsend-redact.py" check "${TELEMETRY_INPUTS}"; then
+    echo "WARNING: telemetry inputs failed the secret scan; publishing usage.json only" >&2
+    find "${TELEMETRY_INPUTS}" -type f -delete
+  fi
+  touch "${TELEMETRY_INPUTS}/.frozen"
+fi
+python3 "${SHARED}/publish/telemetry_bundle.py" --out "${RESULTS}/telemetry" \
+  --pipeline strat-pipeline --run-id "run-$(field run_id)" --fullsend-run-dir "${TELEMETRY_INPUTS}" \
+  || echo "WARNING: telemetry folder not written" >&2
 
 if [[ -z "${RESULTS_REPO_URL:-}" ]]; then
   echo "INFO: RESULTS_REPO_URL not set; results assembled at ${RESULTS}, nothing pushed"
