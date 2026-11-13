@@ -347,7 +347,13 @@ skip stays incomplete. A later verified run can select those RFEs again. A push 
 `push_refined_strategies.py` pushes: status `Refined`, with a matching
 `jira_key`. A strategy
 refined later, by a retried create, gets a push of its own before its review,
-and a refined strategy no push covers is never reviewed.
+and a refined strategy no push covers is never reviewed. The push script stops
+at the first failure that is not a verified input-change deferral, and saves
+each strategy's outcome to `tmp/strat-push-outcomes.json` as it completes.
+After a nonzero exit, `mark push --partial` records coverage only for the
+strategies pushed and labelled before the failure. The run still fails and
+reviews nothing it refined, but a later prepared run resumes those strategies
+at review instead of refining them again.
 
 The agent cannot skip work by claiming it was skipped. Before the run,
 `prepare_run.py` evaluates `strategy-create`'s gates for every locked RFE:
