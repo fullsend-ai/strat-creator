@@ -493,7 +493,8 @@ def test_initiative_strategy_descriptor(monkeypatch):
     assert jira_utils.build_jql_from_type(twin) == (
         'project = RHAISTRAT AND issuetype = "Initiative" AND labels = "initiative-autofix-opt-in" '
         'AND (labels = "initiative-autofix-rubric-pass") '
-        'AND (labels NOT IN ("strat-creator-processing", "initiative-needs-attention") OR labels IS EMPTY) '
+        'AND (labels NOT IN ("strat-creator-processing", "initiative-needs-attention", "strat-creator-ignore") '
+        'OR labels IS EMPTY) '
         'AND status NOT IN ("Closed", "Resolved") ORDER BY key ASC')
     schemas = artifact_utils._strat_schemas(twin)
     assert (artifact_utils.SCHEMAS[f"{TWIN}-task"], artifact_utils.SCHEMAS[f"{TWIN}-review"]) == (

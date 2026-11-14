@@ -135,7 +135,8 @@ def test_the_initiative_intake_wants_opt_in_and_skips_flagged_items():
     """6. rfe-creator can leave rubric-pass next to needs-attention, and does not tie rubric-pass to opt-in."""
     jql = jira_utils.build_jql_from_type(INITIATIVE)
     assert 'labels = "initiative-autofix-opt-in"' in jql and 'labels = "initiative-autofix-rubric-pass"' in jql
-    assert '"initiative-needs-attention"' in jql.split("labels NOT IN")[1]
+    excluded = jql.split("labels NOT IN")[1]
+    assert '"initiative-needs-attention"' in excluded and '"strat-creator-ignore"' in excluded
 
 
 def test_another_id_does_not_settle_a_shared_prefix_id():
@@ -150,6 +151,7 @@ def test_another_id_does_not_settle_a_shared_prefix_id():
 
 @pytest.mark.parametrize("extra,reason", [
     (["initiative-needs-attention"], "excluded label: initiative-needs-attention"),
+    (["strat-creator-ignore"], "excluded label: strat-creator-ignore"),
     (["strat-creator-processing"], None), ([], None)])
 def test_an_explicit_initiative_key_honours_the_intake_exclusions(monkeypatch, extra, reason):
     """Bot review on #100: an RFE_KEY run skips the discovery query, so a flagged Initiative is skipped here.
