@@ -13,6 +13,7 @@ jql:
   excluded_labels:
     - strat-creator-processing         # the lock, same label as RFEs
     - initiative-needs-attention       # rfe-creator asked a human to look: it can sit next to rubric-pass
+    - strat-creator-ignore             # a human took it out of the pipeline for good (conventions.labels.ignore)
   excluded_statuses:                   # open question: RHAISTRAT's Initiative workflow states (RFEs also exclude Draft)
     - Closed
     - Resolved
