@@ -160,8 +160,8 @@ class TestTypeMode:
 
 class TestSameTicketDiscovery:
     """initiative-strategy runs on the Initiative itself (relation self): the intake gate selects
-    opted-in, rubric-passed Initiatives without the lock, rfe-creator's needs-attention or a human's
-    strat-creator-ignore, and "already processed" is an Initiative carrying a skip_if label.
+    opted-in, rubric-passed Initiatives without the lock, rfe-creator's needs-attention, or either
+    tool's ignore label, and "already processed" is an Initiative carrying a skip_if label.
     rfe-strategy's discovery on the same Jira is unchanged."""
 
     def test_initiatives(self, jira):
@@ -176,6 +176,8 @@ class TestSameTicketDiscovery:
         jira.create("RHAISTRAT-7", "Flagged", "d", labels=[*gate, "initiative-needs-attention"],
                     issue_type="Initiative")
         jira.create("RHAISTRAT-8", "Ignored", "d", labels=[*gate, "strat-creator-ignore"], issue_type="Initiative")
+        jira.create("RHAISTRAT-9", "Ignored by rfe-creator", "d", labels=[*gate, "initiative-ignore"],
+                    issue_type="Initiative")
         env = dict(os.environ, JIRA_SERVER=jira.url, JIRA_USER="admin", JIRA_TOKEN="admin")
 
         result = _run(["--jql-default", "--type", "initiative-strategy", "--verbose"], env=env)
