@@ -69,6 +69,33 @@ def _same_ticket_type(key, fields=None):
     return desc if desc and desc.same_ticket else None
 
 
+def _first_local_draft_allowed(key, fields, labels):
+    """True when ``key`` is a ticket of a same-ticket type that keeps its strategy in the description
+    and carries one of its intake ``quality_labels`` (``discovery.settings``): a person may pull it
+    for a first local refinement before any CI review."""
+    desc = _same_ticket_type(key, fields)
+    if not desc or not desc.strategy_in_description:
+        return False
+    import yaml
+    with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           desc.get("discovery.settings")), encoding="utf-8") as stream:
+        quality = (yaml.safe_load(stream).get("jql") or {}).get("quality_labels") or []
+    return bool(labels & set(quality))
+
+
+def _write_comments(path, key, comments):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"# Comments: {key}\n\n")
+        if not comments:
+            f.write("No comments found.\n")
+        for comment in comments:
+            author = comment.get("author", {}).get("displayName") or "Unknown"
+            body_adf = comment.get("body")
+            body_md = adf_to_markdown(body_adf).strip() if body_adf else ""
+            f.write(f"## {author} — {comment.get('created', '')[:10]}\n\n{body_md}\n\n")
+
+
 def _source_sections(description_md):
     """The description of a same-ticket strategy without the Strategy and Staff Engineer / SME
     Input sections the pipeline writes below the source's own (``strategy_home: description``)."""
@@ -115,7 +142,12 @@ def pull_strategy(server, user, token, strat_key, local_dir=WORKSPACE, *, pipeli
 
     # Validate post-CI labels
     labels = set(fields.get("labels", []))
-    if pipeline_rfe is None and not labels & POST_CI_LABELS:
+    # A same-ticket type that keeps its strategy in the description can be pulled before any CI
+    # run (react-shopping-cart-strategy: a person refines the Shop RFE's HOW locally first): the
+    # ticket then needs its type's intake quality label instead, and starts as a Draft stub.
+    first_draft = (pipeline_rfe is None and not labels & POST_CI_LABELS
+                   and _first_local_draft_allowed(strat_key, fields, labels))
+    if pipeline_rfe is None and not labels & POST_CI_LABELS and not first_draft:
         print(f"Error: {strat_key} does not have a post-CI label "
               f"({', '.join(sorted(POST_CI_LABELS))}). "
               f"Current labels: {', '.join(sorted(labels)) or '(none)'}",
@@ -264,6 +296,18 @@ def pull_strategy(server, user, token, strat_key, local_dir=WORKSPACE, *, pipeli
               file=sys.stderr)
     description_md = reconstruct_business_need(description_md, rfe_md)
 
+    if first_draft:
+        from push_strategy import STAFF_INPUT_TEMPLATE
+        if STRATEGY_HEADING not in description_md:
+            description_md = (
+                description_md.rstrip() + "\n\n" + STRATEGY_HEADING + "\n"
+                "<!-- DO NOT manually modify this section. It is generated and maintained by the pipeline. -->\n"
+                "<!-- Use the Staff Engineer / SME Input section below to provide corrections or guidance. -->\n"
+                "<!-- To be filled by /strategy-refine -->")
+        if not re.search(r"(?m)^## Staff Engineer(?: / SME)? Input", description_md):
+            description_md = description_md.rstrip() + "\n\n" + STAFF_INPUT_TEMPLATE
+        print(f"  First local draft: {strat_key} has no strategy review yet; run /strategy-refine")
+
     if pipeline_rfe is not None:
         from push_strategy import STAFF_INPUT_TEMPLATE
         if RFE_REFERENCE_MARKER in description_md:
@@ -284,7 +328,7 @@ def pull_strategy(server, user, token, strat_key, local_dir=WORKSPACE, *, pipeli
             strat_key if same_ticket else rfe_key or NO_SOURCE_REF,
         work_type.tracker_key_field: strat_key,
         "priority": priority,
-        "status": "Draft" if pipeline_rfe is not None else "Refined",
+        "status": "Draft" if pipeline_rfe is not None or first_draft else "Refined",
         "workflow": None if pipeline_rfe is not None else "local",
         "type": work_type.name,
     }
@@ -326,6 +370,13 @@ def pull_strategy(server, user, token, strat_key, local_dir=WORKSPACE, *, pipeli
     # Fetch review summary from comments
     reviews_dir = os.path.join(local_dir, _DIRS["reviews"])
     strat_comments = get_comments(server, user, token, strat_key)
+    if same_ticket:
+        # The ticket is its own source: its comments (the removed-context comment, triage) are the
+        # source comments refine reads.
+        _write_comments(os.path.join(local_dir, _DIRS["originals"], f"{strat_key}-comments.md"),
+                        strat_key, strat_comments)
+        result["files"].append(os.path.join(local_dir, _DIRS["originals"], f"{strat_key}-comments.md"))
+        print(f"  Source comments: {local_dir}/{_DIRS['originals']}/{strat_key}-comments.md")
     review_md = extract_review_comment(strat_comments)
     if review_md:
         os.makedirs(reviews_dir, exist_ok=True)

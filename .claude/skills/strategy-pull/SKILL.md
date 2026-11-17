@@ -10,7 +10,8 @@ You are pulling a strategy from Jira into the local workspace so a human can rev
 ## Input
 
 `$ARGUMENTS` must contain a strategy key: a RHAISTRAT key (e.g., `RHAISTRAT-1520`), either a Feature cloned from
-an RFE or an Initiative whose strategy lives on the Initiative itself; the scripts tell them apart by issue type. If no key is provided, ask the
+an RFE or an Initiative whose strategy lives on the Initiative itself (the scripts tell them apart by issue type), or a
+TSTAPP Story whose Shop strategy lives in its description (`react-shopping-cart-strategy`). If no key is provided, ask the
 user for one. `RHAISTRAT-NNNN` below stands for whichever key you were given.
 
 ## Pull the Strategy
@@ -42,7 +43,14 @@ The pull creates three folders under `local/`:
   - `RHAISTRAT-NNNN-review-summary.md` — The scoring table and verdict (pass/fail, scores per criterion).
   - `RHAISTRAT-NNNN-review.md` — The full prose review from independent reviewers (detailed analysis per dimension).
 
-If the script exits with code 1 (missing labels or not found), explain that only post-CI strategies can be pulled. If code 2 (missing credentials), tell the user to set `JIRA_SERVER`, `JIRA_USER`, and `JIRA_TOKEN`.
+A `react-shopping-cart-strategy` Story can also be pulled before any CI run, when it has its type's intake label
+(`rsc-creator-autofix-rubric-pass`, the `quality_labels` of its `discovery.settings`). The script then prints
+`First local draft` and writes a Draft stub with the Strategy and Staff Engineer / SME Input templates, plus the
+Story's comments in `local/strat-originals/<KEY>-comments.md`. Tell the user to run `/strategy-refine <KEY>` and
+`/strategy-review <KEY>` locally, then `/strategy-push <KEY>` to write the strategy into the Story description.
+
+If the script exits with code 1 (missing labels or not found), explain that only post-CI strategies (or, for
+`react-shopping-cart-strategy`, Stories with its intake label) can be pulled. If code 2 (missing credentials), tell the user to set `JIRA_SERVER`, `JIRA_USER`, and `JIRA_TOKEN`.
 
 ## After Pulling
 

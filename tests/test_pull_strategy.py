@@ -933,3 +933,35 @@ class TestPullDescriptionHome:
         assert "One catalog entry." in body and body.rstrip().endswith("Keep id 18.")
         original = (local_dir / "strat-originals" / "TSTAPP-92.md").read_text()
         assert original == "## Summary\n\nAdd the bottle.\n"
+
+
+class TestPullFirstLocalDraft:
+    """A Shop RFE's Story can be pulled before any CI run for a first local refinement when it has its
+    type's intake label; without that label (or for a type that keeps its strategy in an attachment)
+    pull still requires a post-CI label."""
+
+    def test_an_intake_labeled_story_pulls_as_a_draft_stub_with_its_comments(self, jira, tmp_path):
+        jira.create("TSTAPP-93", "Add the bottle", "## Summary\n\nAdd the bottle.",
+                    labels=["rsc-creator-autofix-rubric-pass", "rsc-creator-needs-attention"], issue_type="Story")
+        local_dir = tmp_path / "local"
+        result = _run(jira, "TSTAPP-93", local_dir)
+        assert result.returncode == 0, result.stderr
+        assert "First local draft" in result.stdout
+        data, body = read_frontmatter(str(local_dir / "strat-tasks" / "TSTAPP-93.md"))
+        assert (data["status"], data["workflow"], data["type"]) == ("Draft", "local", "react-shopping-cart-strategy")
+        assert body.count(STRATEGY_HEADING) == 1 and "To be filled by /strategy-refine" in body
+        assert body.rstrip().endswith("remove the needs-attention label from Jira.*")
+        assert (local_dir / "strat-originals" / "TSTAPP-93-comments.md").read_text().startswith(
+            "# Comments: TSTAPP-93")
+
+    def test_a_story_without_the_intake_label_is_refused(self, jira, tmp_path):
+        jira.create("TSTAPP-94", "Hand-written", "## Summary\n\nA story.", issue_type="Story")
+        result = _run(jira, "TSTAPP-94", tmp_path / "local")
+        assert result.returncode == 1 and "post-CI label" in result.stderr
+        assert not (tmp_path / "local" / "strat-tasks" / "TSTAPP-94.md").exists()
+
+    def test_an_initiative_still_needs_a_post_ci_label(self, jira, tmp_path):
+        jira.create("RHAISTRAT-2290", "An Initiative", "Grow.", labels=["initiative-autofix-rubric-pass"],
+                    issue_type="Initiative")
+        result = _run(jira, "RHAISTRAT-2290", tmp_path / "local")
+        assert result.returncode == 1 and "post-CI label" in result.stderr
