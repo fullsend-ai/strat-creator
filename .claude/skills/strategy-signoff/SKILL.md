@@ -24,6 +24,8 @@ If it prints `TYPE AMBIGUOUS` and the file exists without a `type:` line, `<type
 strategy files are always stamped, so an unstamped one is an RFE strategy pulled before types existed. If the file
 does not exist, continue to Step 1, which stops. On any other non-zero exit, show its error and stop.
 
+If `<type>`'s `pipeline.stages` has no `signoff` (`react-shopping-cart-strategy`), stop: print `[SKIP] <type> has no sign-off stage — a person typing /fs-code on the ticket is its sign-off` and write nothing to Jira.
+
 ## Step 1: Validate Pre-Conditions
 
 Read the strategy file from `local/strat-tasks/RHAISTRAT-NNNN.md`. Verify it exists.

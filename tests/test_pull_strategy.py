@@ -904,3 +904,32 @@ class TestPullSameTicket:
         assert (local_dir / "strat-originals" / "RHAISTRAT-2200.md").read_text() == "Grow the platform.\n"
         import review_scope
         assert review_scope.inputs(tmp_path, "RHAISTRAT-2200")["source_rfe"] == "RHAISTRAT-2200"
+
+
+class TestPullDescriptionHome:
+    """react-shopping-cart-strategy keeps its strategy in the Story description: pull reads it from there,
+    and the frozen source original is the Shop RFE without the pipeline's sections."""
+
+    def test_pulls_the_strategy_from_the_description(self, jira, tmp_path):
+        jira.create("TSTAPP-92", "Add the bottle", "## Summary\n\nAdd the bottle.",
+                    labels=["strat-creator-needs-attention"], issue_type="Story")
+        push_file = tmp_path / "TSTAPP-92.md"
+        push_file.write_text(f"---\ntype: react-shopping-cart-strategy\n---\n{STRATEGY_HEADING}\n\n"
+                             "### TL;DR\n\nOne catalog entry.\n\n## Staff Engineer / SME Input\n\nKeep id 18.\n")
+        push = subprocess.run([sys.executable, os.path.join(PROJECT_ROOT, "scripts", "push_strategy.py"),
+                               "TSTAPP-92", str(push_file)],
+                              env=_env(jira), capture_output=True, text=True, cwd=PROJECT_ROOT)
+        assert push.returncode == 0, push.stderr
+
+        local_dir = tmp_path / "local"
+        result = _run(jira, "TSTAPP-92", local_dir)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        data, body = read_frontmatter(str(local_dir / "strat-tasks" / "TSTAPP-92.md"))
+        assert {k: data[k] for k in ("strat_id", "source_shop_rfe", "jira_key", "type")} == {
+            "strat_id": "TSTAPP-92", "source_shop_rfe": "TSTAPP-92",
+            "jira_key": "TSTAPP-92", "type": "react-shopping-cart-strategy"}
+        assert body.strip().startswith(
+            f"## Business Need (from Shop RFE)\n\n## Summary\n\nAdd the bottle.\n\n{STRATEGY_HEADING}")
+        assert "One catalog entry." in body and body.rstrip().endswith("Keep id 18.")
+        original = (local_dir / "strat-originals" / "TSTAPP-92.md").read_text()
+        assert original == "## Summary\n\nAdd the bottle.\n"

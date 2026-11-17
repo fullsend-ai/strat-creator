@@ -22,8 +22,9 @@ back to reviewing a directory or the full batch.
 Read `local/strat-tasks/<KEY>.md` if that exact file exists; otherwise read
 `artifacts/strat-tasks/<KEY>.md`. Do not Glob or Grep the strategy directory.
 Use its source field from that file's frontmatter to read only its source RFE: `source_rfe`,
-or `source_initiative` when the file says `type: initiative-strategy` (an Initiative is its
-own source; read "RFE" below as that Initiative):
+`source_initiative` when the file says `type: initiative-strategy` (an Initiative is its
+own source; read "RFE" below as that Initiative), or `source_shop_rfe` when it says
+`type: react-shopping-cart-strategy` (a Shop RFE's Story is its own source):
 `local/strat-originals/<SOURCE_RFE>.md` in local mode, or
 `artifacts/strat-originals/<SOURCE_RFE>.md` in CI mode. If that exact frozen
 CI source does not exist, use `artifacts/rfe-tasks/<SOURCE_RFE>.md` instead.
@@ -32,7 +33,9 @@ Never select another RFE as a substitute. Read only
 
 The loaded strat-creator or strat-pipeline plugin enforces these paths with
 reviewer hooks. Shared architecture context remains available under
-`.context/architecture-context/`. Give Grep and Glob an explicit `path` inside
+`.context/architecture-context/`; for `type: react-shopping-cart-strategy` it is the
+storefront's own docs under `.context/react-shopping-cart-architecture/docs/architecture/`
+instead (written `.context/architecture-context/` below). Give Grep and Glob an explicit `path` inside
 that directory, and give Glob a relative pattern. Never search from the project
 root. Do not read or assess other ticket files, even if they are visible in a
 batch. Other ticket content is not evidence for this strategy.

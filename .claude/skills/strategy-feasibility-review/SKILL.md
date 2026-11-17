@@ -22,8 +22,9 @@ back to reviewing a directory or the full batch.
 Read `local/strat-tasks/<KEY>.md` if that exact file exists; otherwise read
 `artifacts/strat-tasks/<KEY>.md`. Do not Glob or Grep the strategy directory.
 Use its source field from that file's frontmatter to read only its source RFE: `source_rfe`,
-or `source_initiative` when the file says `type: initiative-strategy` (an Initiative is its
-own source; read "RFE" below as that Initiative):
+`source_initiative` when the file says `type: initiative-strategy` (an Initiative is its
+own source; read "RFE" below as that Initiative), or `source_shop_rfe` when it says
+`type: react-shopping-cart-strategy` (a Shop RFE's Story is its own source):
 `local/strat-originals/<SOURCE_RFE>.md` in local mode, or
 `artifacts/strat-originals/<SOURCE_RFE>.md` in CI mode. If that exact frozen
 CI source does not exist, use `artifacts/rfe-tasks/<SOURCE_RFE>.md` instead.
@@ -32,7 +33,9 @@ Never select another RFE as a substitute. Read only
 
 The loaded strat-creator or strat-pipeline plugin enforces these paths with
 reviewer hooks. Shared architecture context remains available under
-`.context/architecture-context/`. Give Grep and Glob an explicit `path` inside
+`.context/architecture-context/`; for `type: react-shopping-cart-strategy` it is the
+storefront's own docs under `.context/react-shopping-cart-architecture/docs/architecture/`
+instead (written `.context/architecture-context/` below). Give Grep and Glob an explicit `path` inside
 that directory, and give Glob a relative pattern. Never search from the project
 root. Do not read or assess other ticket files, even if they are visible in a
 batch. Other ticket content is not evidence for this strategy.
@@ -42,6 +45,8 @@ If the assigned strategy, identity or source RFE cannot be established, return
 Compare this strategy against this source RFE; preserve prior unresolved findings.
 
 ## Architecture Context
+
+For `type: react-shopping-cart-strategy` there is no version, `PLATFORM.md` or overlays: Read `.context/react-shopping-cart-architecture/docs/architecture/ARCHITECTURE.md`, then `constraints.md`, `delivery.md`, the `components/*.md` the change touches and the `decisions/*.md` beside it, and skip the next paragraph and the overlays section. If the Read on `ARCHITECTURE.md` fails, that is the fallback condition below.
 
 Read `.context/architecture-context/LATEST_VERSION` directly with the Read tool to get the version directory name (e.g., `rhoai-3.4-ea.2`). Do NOT use Glob or Bash to check existence first - just Read it; if the file is missing, Read returns an error, which is the fallback condition below. Then Read `.context/architecture-context/architecture/<version>/PLATFORM.md` and relevant component docs. Use these to ground the feasibility assessment in the actual platform. If either Read fails, assess based on the strategy content alone and state that architecture context was not available.
 

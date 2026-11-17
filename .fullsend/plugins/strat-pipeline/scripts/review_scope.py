@@ -142,7 +142,7 @@ def inputs(root, key):
     if not rfe.is_file():
         raise ScopeError("Assigned strategy's source RFE is missing.")
     prior = safe_path(root, f"{mode}/strat-reviews/{key}-review.md")
-    architecture = safe_path(root, ".context/architecture-context")
+    architecture = safe_path(root, found.architecture_dir)
     return {"key": key, "type": found, "source_rfe": source, "strategy": strategy, "rfe": rfe,
             "prior": prior, "architecture": architecture}
 

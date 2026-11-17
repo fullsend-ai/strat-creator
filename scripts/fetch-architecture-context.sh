@@ -11,6 +11,47 @@ if [ -n "${RFE_SKIP_BOOTSTRAP:-}" ]; then
   exit 0
 fi
 
+# Per-type source (as rfe-creator's script): a work-item type whose architecture context lives in its
+# application's own repository names it in its descriptor's pipeline.context_sources args:
+#   --repo <url or local clone> --path <dir in that repo> --dest <dir under .context/> [--ref <branch>]
+# The docs land in <dest>/<path>. --ref picks a branch (e.g. an unmerged docs branch of a local clone).
+# With no flags the RHOAI default below applies, unchanged.
+if [ "${1:-}" != "${1#--}" ]; then
+  REPO="" SUBPATH="" DEST="" REF=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) REPO="${2:-}"; shift 2 ;;
+      --path) SUBPATH="${2:-}"; shift 2 ;;
+      --dest) DEST="${2:-}"; shift 2 ;;
+      --ref) REF="${2:-}"; shift 2 ;;
+      *) echo "ERROR: unknown argument '$1' (expected --repo, --path, --dest, --ref)" >&2; exit 2 ;;
+    esac
+  done
+  if [ -z "$REPO" ] || [ -z "$SUBPATH" ] || [ -z "$DEST" ]; then
+    echo "ERROR: --repo, --path and --dest go together" >&2
+    exit 2
+  fi
+  case "$DEST" in
+    .context/*) ;;
+    *) echo "ERROR: --dest must be under .context/ (got '$DEST')" >&2; exit 2 ;;
+  esac
+  case "$DEST$SUBPATH" in
+    *..*) echo "ERROR: --dest and --path must not contain '..'" >&2; exit 2 ;;
+  esac
+  # A fresh clone every call: the copy is small, and an existing directory without .git
+  # must never make git act on the enclosing checkout (see the RHOAI path below).
+  rm -rf "$DEST"
+  mkdir -p "$(dirname "$DEST")"
+  git clone --quiet --depth 1 --filter=blob:none --sparse ${REF:+--branch "$REF"} "$REPO" "$DEST" || exit 1
+  git -C "$DEST" sparse-checkout set "$SUBPATH" || exit 1
+  if [ ! -d "$DEST/$SUBPATH" ]; then
+    echo "Architecture context not found: $REPO${REF:+@$REF} has no $SUBPATH"
+    exit 1
+  fi
+  echo "Architecture context ready: $DEST/$SUBPATH"
+  exit 0
+fi
+
 CONTEXT_DIR=".context/architecture-context"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 

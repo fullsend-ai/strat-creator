@@ -683,6 +683,11 @@
           },
           "description": "strat-creator. Where the body goes when the tracker rejects the description (push_strategy); rfe-creator PR #172 §3.5 key."
         },
+        "strategy_home": {
+          "type": "string",
+          "enum": ["description", "attachment"],
+          "description": "strat-creator. Where push_strategy writes the Strategy and Staff Engineer / SME Input sections of a relation-self type: 'description' splices them into the ticket's description below its source sections (the clone path, without the source-reference rewrite); 'attachment' (the default for a relation-self type) writes only a new body_overflow.attachment. A clone always writes its description."
+        },
         "section_ownership": {
           "type": "array",
           "minItems": 1,

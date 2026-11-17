@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exact-match pipeline label gate for one RHAISTRAT issue.
+"""Exact-match pipeline label gate for one strategy issue (RHAISTRAT, or a TSTAPP Story).
 
 The strategy skills stop when a STRAT already carries a pipeline verdict
 label. This helper makes that check deterministic: labels are compared by
@@ -41,7 +41,14 @@ PIPELINE_GATE_LABELS = (
     "strat-creator-needs-attention",
 )
 
-STRAT_KEY_RE = re.compile(r"^RHAISTRAT-[1-9][0-9]*$")
+import type_registry  # noqa: E402
+
+# Every registered strategy type's tracker keys: RHAISTRAT- (rfe-strategy, initiative-strategy)
+# and TSTAPP- (react-shopping-cart-strategy, whose strategy lives on the Shop RFE's Story).
+_TYPES = type_registry.load()
+STRAT_KEY_PREFIXES = tuple(sorted({prefix for name in _TYPES.names()
+                                   for prefix in _TYPES.get(name).key_prefixes}))
+STRAT_KEY_RE = re.compile(rf"^(?:{'|'.join(map(re.escape, STRAT_KEY_PREFIXES))})[1-9][0-9]*$")
 
 
 def pipeline_label_gate(labels):
@@ -66,13 +73,14 @@ def fetch_labels(server, user, token, key):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("key", help="RHAISTRAT issue key")
+    parser.add_argument("key", help="strategy issue key (RHAISTRAT-N, TSTAPP-N)")
     parser.add_argument("--labels",
                         help="comma-separated labels to evaluate instead of fetching from Jira")
     args = parser.parse_args(argv)
 
     if not STRAT_KEY_RE.match(args.key):
-        print(f"Error: not a RHAISTRAT key: {args.key!r}", file=sys.stderr)
+        print(f"Error: not a strategy key ({', '.join(STRAT_KEY_PREFIXES)}): {args.key!r}",
+              file=sys.stderr)
         return 1
 
     try:

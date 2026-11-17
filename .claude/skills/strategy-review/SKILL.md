@@ -68,6 +68,8 @@ Read the strategy's frontmatter to get the `jira_key`. If `jira_key` is not null
 python3 ${CLAUDE_SKILL_DIR}/scripts/strat_label_gate.py RHAISTRAT-NNNN
 ```
 
+`RHAISTRAT-NNNN` is the `jira_key`: for a same-ticket type it is the input ticket itself (an Initiative, or the Shop RFE's TSTAPP Story for `react-shopping-cart-strategy`), which the script accepts.
+
 It prints `{"key": ..., "eligible": ..., "gate_label": ..., "gate_labels_present": [...]}`.
 Act only on this JSON — do NOT read or interpret the label list yourself. The
 script matches `strat-creator-rubric-pass` and `strat-creator-needs-attention`
@@ -94,6 +96,8 @@ sign-off, or an active/completed STRAT state. Ordinary resume and discovery
 retain their normal approval gate. Do not remove approval labels to bypass it.
 
 ## Step 2: Fetch Architecture Context
+
+A type whose `pipeline.context_sources` entry named `architecture-context` has `args` (`react-shopping-cart-strategy`: the storefront's `docs/architecture`) has its own source, in `<dest>/<path>` (`python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py get <type> pipeline.context_sources --json`). For such a type, skip the rest of this step: if that directory does not exist, run `bash ${CLAUDE_SKILL_DIR}/scripts/fetch-architecture-context.sh <args>`; with `--architecture-context <path>` in `$ARGUMENTS`, pass `--repo <path>` in place of the entry's `--repo`, plus `--ref <branch>` for `--architecture-ref <branch>`. Everywhere below, read that directory where `.context/architecture-context/` is named (start with its `ARCHITECTURE.md`); there is no `rhoai-*` version, `PLATFORM.md` or overlays.
 
 If `--architecture-context <path>` is in `$ARGUMENTS`, use the local path:
 
@@ -151,7 +155,7 @@ Spawn one agent (model: opus, run_in_background: true, subagent_type: strat-scor
 You are a strategy quality assessor. Your task:
 1. Read `{PROMPT_PATH}` for the full scoring rubric.
 2. Follow its instructions exactly, substituting {KEY} for the strategy key and {RUN_DIR} for the run directory. Read the strategy from {DATA_FILE} (not the path in the rubric's step 1).
-3. If architecture context is available at `.context/architecture-context/`, use Glob and Grep to validate architecture claims against real component docs.
+3. If architecture context is available at `{ARCH_DIR}`, use Glob and Grep to validate architecture claims against real component docs.
 Strategy key: {KEY}
 Data file: {DATA_FILE}
 Run directory: {RUN_DIR}
@@ -162,6 +166,7 @@ Substitute all placeholders:
 - `{DATA_FILE}` → the strategy file path (e.g., `artifacts/strat-tasks/RHAISTRAT-1469.md`)
 - `{KEY}` → the strategy key (e.g., `RHAISTRAT-1469`)
 - `{RUN_DIR}` → `tmp/strat-assess/review`
+- `{ARCH_DIR}` → `.context/architecture-context/`, or the type's own `<dest>/<path>/` (Step 2)
 
 Wait for the scorer agent to complete.
 
@@ -282,7 +287,7 @@ write intent or repeat an uncertain POST to make recovery appear successful.
 ## Step 9: Advise the User
 
 Based on the result:
-- **Approved** (`needs_attention=false`): Tell the user the numeric gate passed and the strategy is ready for sign-off. Also identify any specialist dissent or skipped architecture assessment, which remains for the human reader.
+- **Approved** (`needs_attention=false`): Tell the user the numeric gate passed and the strategy is ready for sign-off (for a type whose `pipeline.stages` has no `signoff`, `react-shopping-cart-strategy`: ready for a person to type `/fs-code` on the Story, which is its sign-off). Also identify any specialist dissent or skipped architecture assessment, which remains for the human reader.
 - **Needs revision** (`needs_attention=true`, verdict=REVISE): List specific issues by dimension. Tell the user to edit the strategy, remove `needs-attention`, and re-run `/strategy-review`.
 - **Fundamental problems** (`needs_attention=true`, verdict=REJECT): Recommend revisiting the RFE or re-running `/strategy-refine` with different constraints.
 

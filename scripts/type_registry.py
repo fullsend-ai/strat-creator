@@ -201,6 +201,23 @@ class Descriptor:
         """True when the strategy lives on its input ticket (``relation.kind: self``), not a clone."""
         return self.get("inputs.0.relation.kind") == "self"
 
+    @property
+    def architecture_dir(self):
+        """Where this type's architecture docs are read: ``<dest>/<path>`` of its
+        ``architecture-context`` context source when that names its own repository (``--repo``,
+        ``--path``, ``--dest`` args), else the shared RHOAI checkout ``.context/architecture-context``."""
+        for source in self.get("pipeline.context_sources", []) or []:
+            args = source.get("args") or []
+            if source.get("name") == "architecture-context" and "--dest" in args and "--path" in args:
+                return f"{args[args.index('--dest') + 1]}/{args[args.index('--path') + 1]}"
+        return ".context/architecture-context"
+
+    @property
+    def strategy_in_description(self):
+        """True when push writes the Strategy and SME sections into the ticket's description: always
+        on a clone; on a same-ticket type only when ``pipeline.strategy_home`` is ``description``."""
+        return not self.same_ticket or self.get("pipeline.strategy_home", "attachment") == "description"
+
     def owns(self, item_id):
         """True when ``item_id`` is one of this type's ids: a full match of ``local_id_pattern``
         (most specific), else a ``key_prefixes`` prefix, else a ``local_prefix`` prefix."""
