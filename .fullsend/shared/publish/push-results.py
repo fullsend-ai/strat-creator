@@ -37,6 +37,18 @@ from strat_side_effects import atomic, locked  # noqa: E402
 # layout epic-decomposer and rfe-autofixer publish too.
 ARTIFACT_DIRS = ("strat-tasks", "strat-reviews", "strat-originals", "reports", "telemetry")
 LOOSE = ("strat-skipped.md", "strat-jira-guide.md", "strat-tickets.md", "pipeline-data.json")
+# Never published any more: the cleaned copy lives in telemetry/raw/. A stray
+# root-level copy is removed before staging so `git add -A` cannot commit the
+# uncleaned log.
+UNPUBLISHED = ("claude-otel.jsonl",)
+
+
+def drop_unpublished(results_dir):
+    for name in UNPUBLISHED:
+        path = Path(results_dir) / name
+        if path.is_file() or path.is_symlink():
+            print(f"WARNING: removing {name} from the results checkout; it is not published")
+            path.unlink()
 
 # Carried from github.com/jctanner-opendatahub-io/strat-creator at 78ab3f1e,
 # .fullsend/scripts/ci/push-results.py (Apache-2.0); see .fullsend/README.md.
@@ -51,6 +63,7 @@ def git(args, cwd):
 
 def organize_run(results_dir, run_id=None, subdir="RHAISTRAT"):
     """Move strategy artifacts into a timestamped run directory."""
+    drop_unpublished(results_dir)
     if run_id is not None:
         return organize_identified_run(results_dir, run_id, subdir)
     rhaistrat_dir = results_dir / subdir
@@ -155,6 +168,7 @@ def organize_identified_run(results_dir, run_id, subdir="RHAISTRAT"):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", subdir):
         raise ValueError("invalid publication folder")
     results_dir = results_dir.resolve(strict=True)
+    drop_unpublished(results_dir)
     state = publication_path(results_dir, ".git/strat-publication.json")
     run_relative = Path(subdir) / ("run-" + run_id)
     run_dir = publication_path(results_dir, run_relative)

@@ -82,29 +82,46 @@ fi
 cp -R "${BUNDLE}/." "${RESULTS}/"
 
 # Telemetry: the same telemetry/ folder epic-decomposer and rfe-autofixer
-# publish; its run_id is the run directory's name (run-<run id>). Fullsend wrote metrics.json before this post-script started; its
-# span log may still grow, so the inputs are frozen on the first attempt and a
-# retry republishes byte-identical files (the run directory is immutable).
-# Publication refuses binary files because it cannot scan them: scan the
-# uncompressed inputs here, before they are gzipped. Never blocks the results.
+# publish; its run_id is the run directory's name (run-<run id>). Fullsend
+# wrote metrics.json before this post-script started; its span log may still
+# grow, so the inputs are frozen on the first attempt and a retry republishes
+# byte-identical files (the run directory is immutable). Publication refuses
+# binary files because it cannot scan them: the uncompressed inputs are scanned
+# here, before they are gzipped, and usage.json after it is written.
+# Telemetry never blocks the results: every failure below publishes fewer
+# telemetry files (or none) and carries on.
 TELEMETRY_INPUTS="${PUBLISH_DIR}/telemetry-inputs"
-if [[ ! -f "${TELEMETRY_INPUTS}/.frozen" ]]; then
-  rm -rf -- "${TELEMETRY_INPUTS}"
-  mkdir -p -- "${TELEMETRY_INPUTS}"
+freeze_telemetry_inputs() {
+  # Runs as an `if` condition, where set -e does not apply: return on any failure.
+  rm -rf -- "${TELEMETRY_INPUTS}" || return 1
+  mkdir -p -- "${TELEMETRY_INPUTS}" || return 1
+  local name
   for name in metrics.json run-telemetry.jsonl; do
     if [[ -n "${FULLSEND_RUN_DIR:-}" && -f "${FULLSEND_RUN_DIR}/${name}" ]]; then
-      cp -- "${FULLSEND_RUN_DIR}/${name}" "${TELEMETRY_INPUTS}/${name}"
+      cp -- "${FULLSEND_RUN_DIR}/${name}" "${TELEMETRY_INPUTS}/${name}" || return 1
     fi
   done
   if ! python3 "${CLONE}/.fullsend/ci/fullsend-redact.py" check "${TELEMETRY_INPUTS}"; then
     echo "WARNING: telemetry inputs failed the secret scan; publishing usage.json only" >&2
-    find "${TELEMETRY_INPUTS}" -type f -delete
+    find "${TELEMETRY_INPUTS}" -type f -delete || return 1
   fi
   touch "${TELEMETRY_INPUTS}/.frozen"
+}
+if [[ ! -f "${TELEMETRY_INPUTS}/.frozen" ]] && ! freeze_telemetry_inputs; then
+  echo "WARNING: telemetry inputs could not be prepared; publishing usage.json only" >&2
+  # Freeze the empty set, so a retry publishes the same (usage.json-only) folder.
+  { rm -rf -- "${TELEMETRY_INPUTS}" && mkdir -p -- "${TELEMETRY_INPUTS}" \
+      && touch "${TELEMETRY_INPUTS}/.frozen"; } || true
 fi
-python3 "${SHARED}/publish/telemetry_bundle.py" --out "${RESULTS}/telemetry" \
-  --pipeline strat-pipeline --run-id "run-$(field run_id)" --fullsend-run-dir "${TELEMETRY_INPUTS}" \
-  || echo "WARNING: telemetry folder not written" >&2
+if ! python3 "${SHARED}/publish/telemetry_bundle.py" --out "${RESULTS}/telemetry" \
+    --pipeline strat-pipeline --run-id "run-$(field run_id)" \
+    --fullsend-run-dir "${TELEMETRY_INPUTS}"; then
+  echo "WARNING: telemetry folder not written" >&2
+  rm -rf -- "${RESULTS:?}/telemetry" || true
+elif ! python3 "${CLONE}/.fullsend/ci/fullsend-redact.py" check "${RESULTS}/telemetry/usage.json"; then
+  echo "WARNING: telemetry usage.json failed the secret scan; not publishing telemetry" >&2
+  rm -rf -- "${RESULTS:?}/telemetry" || true
+fi
 
 if [[ -z "${RESULTS_REPO_URL:-}" ]]; then
   echo "INFO: RESULTS_REPO_URL not set; results assembled at ${RESULTS}, nothing pushed"

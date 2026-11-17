@@ -73,7 +73,8 @@ OTEL_LOG = (
             otel_line(log_record("user_prompt", 0), REQ_A, log_record("tool_result", 2)),
             json.dumps({"ts": "x", "path": "/v1/metrics", "payload": {"resourceMetrics": []}}),
             otel_line(REQ_B, log_record("tool_result", 4)),
-            otel_line(REQ_A),  # exporter retry: same request again
+            # exporter retry: the whole first batch again (prompt, request, tool result)
+            otel_line(log_record("user_prompt", 0), REQ_A, log_record("tool_result", 2)),
             "not json",
         ]
     )
@@ -259,13 +260,15 @@ class TelemetryBundleTest(unittest.TestCase):
             },
         )
 
-    def test_unparseable_metrics_keep_the_raw_file(self):
+    def test_unparseable_metrics_store_no_raw_copy(self):
         (self.run_dir / "metrics.json").write_text("{broken")
         out = self.tmp / "telemetry"
         self.bundle.write_bundle(str(out), "p", fullsend_run_dir=str(self.run_dir))
         usage = self.usage(out)
         self.assertIsNone(usage["source"])
-        self.assertIn("raw/fullsend-metrics.json.gz", usage["raw"])
+        self.assertNotIn("raw/fullsend-metrics.json.gz", usage["raw"])
+        self.assertFalse((out / "raw" / "fullsend-metrics.json.gz").exists())
+        self.assertIn("raw/fullsend-telemetry.jsonl.gz", usage["raw"])
 
     def test_cli(self):
         out = self.tmp / "telemetry"
@@ -338,7 +341,9 @@ class TelemetryBundleTest(unittest.TestCase):
             ["event.name", "tool_name", "session.id", "duration_ms", "success"],
         )
         usage = self.usage(out)
-        self.assertEqual(usage["raw"]["raw/claude-otel.jsonl.gz"]["removed_attributes"], 8)
+        # 4 attributes + the body (log record); the span's free-text name, 2 attributes
+        # and its status message.
+        self.assertEqual(usage["raw"]["raw/claude-otel.jsonl.gz"]["removed_attributes"], 9)
         self.assertEqual(usage["totals"]["cost_usd"], 0.5)  # totals use the original log
 
     def test_log_without_api_requests_has_no_usage_rather_than_zero(self):
@@ -374,6 +379,150 @@ class TelemetryBundleTest(unittest.TestCase):
         self.assertEqual(self.bundle._number("0.5"), 0.5)
         self.assertIsNone(self.bundle._number("n/a"))
         self.assertIsNone(self.bundle._number(True))
+
+    def stored_lines(self, out, name="claude-otel.jsonl.gz"):
+        with gzip.open(out / "raw" / name, "rt") as handle:
+            return [json.loads(line) for line in handle]
+
+    def test_numeric_strings_are_kept_only_for_measurement_keys(self):
+        record = {
+            "attributes": [
+                attr("event.name", "user_prompt"),
+                attr("prompt", "4242"),  # a prompt that is only a number is still content
+                attr("tool_input", "17"),
+                attr("prompt_length", "4"),
+                attr("duration_ms", "92"),
+                attr("cache_read_tokens", "100"),
+                attr("num_hooks", "3"),
+                {"key": "anything", "value": {"intValue": 5}},
+            ]
+        }
+        self.otel.write_text(otel_line(record) + "\n" + otel_line(REQ_A) + "\n")
+        out = self.tmp / "telemetry"
+        self.bundle.write_bundle(str(out), "p", otel_log=str(self.otel))
+        first = self.stored_lines(out)[0]
+        kept = first["payload"]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]
+        self.assertEqual(
+            [a["key"] for a in kept["attributes"]],
+            [
+                "event.name",
+                "prompt_length",
+                "duration_ms",
+                "cache_read_tokens",
+                "num_hooks",
+                "anything",
+            ],
+        )
+
+    def test_stored_records_keep_only_otlp_fields_and_known_names(self):
+        secret = "free text that must not be stored"
+        span = {
+            "name": "claude_code.tool",
+            "traceId": "a" * 32,
+            "spanId": "b" * 16,
+            "traceState": secret,
+            "notAnOtlpField": secret,
+            "events": [{"name": secret, "attributes": []}, {"name": "tool.output"}],
+            "status": {"code": 1, "message": secret},
+        }
+        spans = [span, {"name": "execute_tool Bash"}, {"name": "execute_tool ls -la /etc"}]
+        line = {
+            "resourceSpans": [
+                {
+                    "resource": {"attributes": [attr("service.name", "claude-code")]},
+                    "scopeSpans": [
+                        {
+                            "scope": {
+                                "name": "com.anthropic.claude_code.tracing",
+                                "version": "2.1.186",
+                            },
+                            "spans": spans,
+                        },
+                        {"scope": {"name": secret, "version": secret}, "spans": []},
+                    ],
+                }
+            ],
+            "unknownTopLevel": {"text": secret},
+        }
+        (self.run_dir / "run-telemetry.jsonl").write_text(json.dumps(line) + "\n")
+        out = self.tmp / "telemetry"
+        self.bundle.write_bundle(str(out), "p", fullsend_run_dir=str(self.run_dir))
+        stored = self.stored_lines(out, "fullsend-telemetry.jsonl.gz")[0]
+        self.assertNotIn(secret, json.dumps(stored))
+        self.assertEqual(list(stored), ["resourceSpans"])
+        scopes = stored["resourceSpans"][0]["scopeSpans"]
+        self.assertEqual(
+            scopes[0]["scope"], {"name": "com.anthropic.claude_code.tracing", "version": "2.1.186"}
+        )
+        self.assertEqual(scopes[1]["scope"], {"name": "redacted"})
+        kept = scopes[0]["spans"]
+        self.assertEqual(
+            [s["name"] for s in kept], ["claude_code.tool", "execute_tool Bash", "redacted"]
+        )
+        self.assertEqual(
+            kept[0],
+            {
+                "name": "claude_code.tool",
+                "traceId": "a" * 32,
+                "spanId": "b" * 16,
+                "events": [{"name": "redacted", "attributes": []}, {"name": "tool.output"}],
+                "status": {"code": 1},
+            },
+        )
+
+    def test_retried_batch_is_counted_once(self):
+        out = self.tmp / "telemetry"
+        self.bundle.write_bundle(str(out), "p", otel_log=str(self.otel))
+        totals = self.usage(out)["totals"]
+        self.assertEqual(
+            (totals["api_requests"], totals["tool_calls"], totals["user_prompts"]), (2, 2, 1)
+        )
+
+    def test_metrics_json_is_stored_as_usage_fields_only(self):
+        metrics = dict(FULLSEND_METRICS)
+        metrics.update(
+            runtime_source="/builds/group/project/.fullsend-state/1/config.yaml",
+            override_source="--model flag",
+            unexpected={"text": "free text"},
+            model="claude-opus-5-5",
+        )
+        (self.run_dir / "metrics.json").write_text(json.dumps(metrics))
+        out = self.tmp / "telemetry"
+        self.bundle.write_bundle(str(out), "p", fullsend_run_dir=str(self.run_dir))
+        stored = self.stored_lines(out, "fullsend-metrics.json.gz")[0]
+        self.assertEqual(
+            sorted(stored),
+            [
+                "model",
+                "num_turns",
+                "per_model_usage",
+                "token_usage",
+                "tool_calls",
+                "total_cost_usd",
+            ],
+        )
+        self.assertEqual(stored["model"], "claude-opus-5-5")
+        self.assertEqual(stored["token_usage"]["reasoning"], 54968)
+
+    def test_ci_values_that_are_not_gitlab_formats_are_dropped(self):
+        os.environ.update(
+            CI_PROJECT_PATH="g/p",
+            CI_PIPELINE_ID="7; echo hi",
+            CI_JOB_ID="9",
+            CI_JOB_URL="javascript:alert(1)",
+        )
+        out = self.tmp / "telemetry"
+        self.bundle.write_bundle(str(out), "p", otel_log=str(self.otel))
+        self.assertEqual(
+            self.usage(out)["ci"],
+            {
+                "project": "g/p",
+                "pipeline_id": None,
+                "job_id": "9",
+                "job_name": None,
+                "job_url": None,
+            },
+        )
 
 
 if __name__ == "__main__":

@@ -30,13 +30,20 @@ usage.json:
     raw         per raw file: compressed bytes, uncompressed bytes and sha256 of
                 the stored (cleaned) content, and how many attributes were removed
 
-Raw OTEL logs are cleaned before they are stored, because git keeps them forever
-and Claude Code can be configured (OTEL_LOG_USER_PROMPTS, OTEL_LOG_TOOL_DETAILS,
+Raw files are stored from allowlists only, because git keeps them forever and
+Claude Code can be configured (OTEL_LOG_USER_PROMPTS, OTEL_LOG_TOOL_DETAILS,
 OTEL_LOG_TOOL_CONTENT) to put prompts, commands, file contents and tool output
-in them. Kept: numbers, booleans, numeric strings, and string attributes whose
-key is on SAFE_STRING_KEYS (ids, model, timings, enums). Every other string
-attribute is removed, and so are span status messages; a log body is kept only
-when it is a claude_code.* event name. Totals are computed from the original log, so they are not affected.
+in its log. For OTEL logs and span files, each record is rebuilt from:
+  - OTLP_FIELDS: the structural OTLP fields; any other field is dropped
+    (status messages, traceState, unknown fields included);
+  - attributes: numbers and booleans under any key; strings only when the key is
+    on SAFE_STRING_KEYS (ids, model, enums), or is a measurement key
+    (NUMERIC_STRING_KEYS / NUMERIC_KEY_SUFFIXES) and the value is a number;
+  - names (span, event, metric, scope) and log bodies only when they are in
+    the known vocabulary (SAFE_NAME), else replaced with "redacted".
+metrics.json is stored as its usage fields only (METRICS_FIELDS); if it does
+not parse, no raw copy is kept. CI fields in usage.json must match their
+GitLab formats or are null. Totals are computed from the original inputs.
 
 Totals prefer the Claude Code OTEL log (per-request api_request events), else
 Fullsend's metrics.json. Output is deterministic for the same inputs (no
@@ -98,7 +105,57 @@ SAFE_STRING_KEYS = frozenset({
     "cicd.pipeline.run.url.full",
 })
 NUMERIC_STRING = re.compile(r"^-?\d+(\.\d+)?([eE][-+]?\d+)?$")
-EVENT_BODY = re.compile(r"^claude_code\.[A-Za-z0-9_.]+$")
+# Numeric strings are kept only under measurement keys: a prompt or tool input
+# that happens to be a number is still content.
+NUMERIC_STRING_KEYS = frozenset({
+    "event.sequence", "cost_usd", "cost_usd_micros", "duration_ms", "ttft_ms",
+    "total_duration_ms", "prompt_length", "error_count", "period_days",
+    "artifacts_deleted", "files_past_cutoff", "files_retained_fresh",
+    "history_entries_pruned", "session_files_deleted", "transcripts_deleted",
+    "transcripts_exempted_desktop", "cicd.pipeline.run.id", "attempt",
+})
+NUMERIC_KEY_SUFFIXES = ("_tokens", "_ms", "_bytes", "_usd", "_micros", "_count")
+NUMERIC_KEY_PREFIXES = ("num_",)
+# Structural OTLP fields kept when a stored record is rebuilt (plus the
+# collector's {ts, path, payload} wrapper). Anything else is dropped.
+OTLP_FIELDS = frozenset({
+    "ts", "path", "payload",
+    "resourceLogs", "resourceMetrics", "resourceSpans", "resource", "scope",
+    "scopeLogs", "scopeMetrics", "scopeSpans", "logRecords", "metrics", "spans",
+    "events", "links", "attributes", "key", "value", "stringValue", "intValue",
+    "doubleValue", "boolValue", "name", "version", "body", "status", "code", "kind",
+    "flags", "traceId", "spanId", "parentSpanId", "timeUnixNano",
+    "observedTimeUnixNano", "startTimeUnixNano", "endTimeUnixNano", "severityNumber",
+    "severityText", "droppedAttributesCount", "droppedEventsCount",
+    "droppedLinksCount", "unit", "sum", "gauge", "histogram", "dataPoints",
+    "asDouble", "asInt", "aggregationTemporality", "isMonotonic", "count",
+    "bucketCounts", "explicitBounds", "min", "max",
+})
+# Span, event, metric and scope names, and log bodies, that may be stored.
+SAFE_NAME = re.compile(
+    r"^(?:"
+    r"(?:claude_code|gen_ai|tool)(?:\.[a-z0-9_]+)+"          # claude_code.tool.execution
+    r"|com\.anthropic\.claude_code(?:\.[a-z_]+)*"            # scopes
+    r"|github\.com/fullsend-ai/fullsend(?:/[a-z0-9_]+)*"      # Fullsend scope
+    r"|execute_tool [A-Za-z][A-Za-z0-9_]{0,63}"              # execute_tool Bash
+    r"|agent|run|sandbox_create|create_agent|invoke_agent|chat"
+    r")$"
+)
+PATH_VALUE = re.compile(r"^/v1/(?:logs|metrics|traces)$")
+# The usage fields kept from Fullsend's metrics.json (nested: token_usage, per_model_usage).
+METRICS_FIELDS = ("num_turns", "total_cost_usd", "tool_calls", "iterations", "model",
+                  "requested_model", "runtime", "requested_runtime")
+METRICS_TOKEN_FIELDS = ("input", "output", "reasoning", "cache_creation", "cache_read")
+METRICS_MODEL_FIELDS = ("requests", "input_tokens", "output_tokens",
+                        "cache_creation_input_tokens", "cache_read_input_tokens", "cost_usd")
+IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,99}$")
+CI_FORMATS = {
+    "project": re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_./-]{0,254}$"),
+    "pipeline_id": re.compile(r"^\d{1,20}$"),
+    "job_id": re.compile(r"^\d{1,20}$"),
+    "job_name": re.compile(r"^[A-Za-z0-9_.:\[\], /-]{1,255}$"),
+    "job_url": re.compile(r"^https://[A-Za-z0-9.-]+(?::\d+)?/[A-Za-z0-9_./-]+/-/jobs/\d+$"),
+}
 
 
 def warn(message):
@@ -156,7 +213,7 @@ def summarize_claude_otel(path):
 
     Returns None when the log has no api_request event: no usage data, not $0."""
     totals, by_model = _empty_usage(), {}
-    seen, tool_calls, prompts, stamps, bad = set(), 0, 0, [], 0
+    seen, seen_events, tool_calls, prompts, stamps, bad = set(), set(), 0, 0, [], 0
     with open(path, "rb") as handle:
         for line in handle:
             try:
@@ -172,6 +229,14 @@ def summarize_claude_otel(path):
                     for entry in scope.get("logRecords") or []:
                         attrs = _attributes(entry)
                         name = attrs.get("event.name")
+                        # An exporter retry can resend a whole batch: count each
+                        # event once, whatever its type.
+                        key = (name, attrs.get("session.id"), attrs.get("event.sequence"),
+                               attrs.get("request_id"), attrs.get("tool_use_id"),
+                               attrs.get("prompt.id"), attrs.get("event.timestamp"))
+                        if key in seen_events:
+                            continue
+                        seen_events.add(key)
                         if attrs.get("event.timestamp"):
                             stamps.append(str(attrs["event.timestamp"]))
                         if name == "tool_result":
@@ -179,10 +244,6 @@ def summarize_claude_otel(path):
                         elif name == "user_prompt":
                             prompts += 1
                         if name != "api_request":
-                            continue
-                        key = (attrs.get("session.id"), attrs.get("event.sequence"),
-                               attrs.get("request_id"), attrs.get("event.timestamp"))
-                        if key in seen:  # an exporter retry can resend a batch
                             continue
                         seen.add(key)
                         model = str(attrs.get("model") or "unknown")
@@ -253,68 +314,134 @@ def summarize_fullsend_metrics(path):
             "started_at": None, "finished_at": None}
 
 
+def _numeric_key(key):
+    return (key in NUMERIC_STRING_KEYS or key.endswith(NUMERIC_KEY_SUFFIXES)
+            or key.startswith(NUMERIC_KEY_PREFIXES))
+
+
+def _keep_attribute(item):
+    if not isinstance(item, dict) or not isinstance(item.get("key"), str):
+        return False
+    key, value = item["key"], item.get("value")
+    if not isinstance(value, dict) or len(value) != 1:
+        return False  # array/kvlist/bytes values and malformed entries
+    kind, scalar = next(iter(value.items()))
+    if kind in ("boolValue", "doubleValue") or (kind == "intValue" and _number(scalar) is not None):
+        return True
+    if kind != "stringValue" or not isinstance(scalar, str):
+        return False
+    if key in SAFE_STRING_KEYS:
+        return True
+    return bool(NUMERIC_STRING.match(scalar)) and _numeric_key(key)
+
+
 def _clean(node, removed):
-    """Drop free-text string attributes (and non-event log bodies) in place."""
+    """Rebuild a JSON node from the allowlists (see the module docstring)."""
     if isinstance(node, list):
-        for item in node:
-            _clean(item, removed)
-        return
+        return [_clean(item, removed) for item in node]
     if not isinstance(node, dict):
-        return
-    attributes = node.get("attributes")
-    if isinstance(attributes, list):
-        kept = []
-        for item in attributes:
-            value = _attr_value(item.get("value")) if isinstance(item, dict) else None
-            if (isinstance(value, (bool, int, float))
-                    or (isinstance(value, str) and (NUMERIC_STRING.match(value)
-                                                    or item.get("key") in SAFE_STRING_KEYS))):
-                kept.append(item)
+        return node
+    result = {}
+    for key, value in node.items():
+        if key not in OTLP_FIELDS:
+            removed[0] += 1
+        elif key == "attributes" and isinstance(value, list):
+            kept = [item for item in value if _keep_attribute(item)]
+            removed[0] += len(value) - len(kept)
+            result[key] = kept
+        elif key in ("name", "body"):
+            text = value.get("stringValue") if key == "body" and isinstance(value, dict) else value
+            if isinstance(text, str) and SAFE_NAME.match(text):
+                result[key] = value
+            else:
+                result[key] = {"stringValue": "redacted"} if key == "body" else "redacted"
+                removed[0] += 1
+        elif key == "path":
+            if isinstance(value, str) and PATH_VALUE.match(value):
+                result[key] = value
             else:
                 removed[0] += 1
-        node["attributes"] = kept
-    body = node.get("body")
-    if isinstance(body, dict) and not EVENT_BODY.match(str(body.get("stringValue", ""))):
-        del node["body"]
-        removed[0] += 1
-    status = node.get("status")
-    if isinstance(status, dict) and status.get("message"):  # span error text
-        del status["message"]
-        removed[0] += 1
-    if isinstance(node.get("raw"), str):  # collector fallback for a non-JSON export
-        del node["raw"]
-        removed[0] += 1
-    for key, value in node.items():
-        if key != "attributes":
-            _clean(value, removed)
+        elif key in ("stringValue", "version", "severityText", "unit"):
+            # stringValue only reaches here outside an attribute (e.g. a body);
+            # the others are short library/unit identifiers.
+            if isinstance(value, str) and IDENTIFIER.match(value):
+                result[key] = value
+            else:
+                removed[0] += 1
+        else:
+            result[key] = _clean(value, removed)
+    return result
 
 
-def _store(src, dest, clean):
-    """Gzip src (cleaned line by line when clean) deterministically; the raw-file entry."""
-    digest, size, removed, dropped = hashlib.sha256(), 0, [0], 0
-    with open(src, "rb") as source, open(dest, "wb") as sink:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=sink, mtime=0, compresslevel=9) as out:
+def _metrics_subset(path):
+    """Fullsend metrics.json reduced to its usage fields (raises on unparsable input)."""
+    with open(path, encoding="utf-8") as handle:
+        metrics = json.load(handle)
+    if not isinstance(metrics, dict):
+        raise ValueError("metrics.json is not an object")
+
+    def scalar(value):
+        if isinstance(value, str):
+            return value if IDENTIFIER.match(value) else None
+        return _number(value)
+
+    subset = {key: scalar(metrics.get(key)) for key in METRICS_FIELDS if key in metrics}
+    tokens = metrics.get("token_usage")
+    if isinstance(tokens, dict):
+        subset["token_usage"] = {key: _number(tokens.get(key))
+                                 for key in METRICS_TOKEN_FIELDS if key in tokens}
+    models = metrics.get("per_model_usage")
+    if isinstance(models, dict):
+        subset["per_model_usage"] = {
+            model: {key: _number(usage.get(key)) for key in METRICS_MODEL_FIELDS if key in usage}
+            for model, usage in sorted(models.items())
+            if isinstance(usage, dict) and isinstance(model, str) and IDENTIFIER.match(model)
+        }
+    return subset
+
+
+def _store(src, dest, mode):
+    """Gzip src deterministically after cleaning it; returns the raw-file entry.
+
+    mode: "otel" (rebuild every JSON line from the allowlists, drop non-JSON lines)
+    or "metrics" (store the usage fields of metrics.json only)."""
+    removed, dropped = [0], 0
+    if mode == "metrics":
+        lines = [(json.dumps(_metrics_subset(src), sort_keys=True) + "\n").encode()]
+    else:
+        lines = []
+        with open(src, "rb") as source:
             for line in source:
-                if clean:
-                    try:
-                        record = json.loads(line)
-                    except ValueError:
-                        dropped += 1
-                        continue
-                    _clean(record, removed)
-                    line = (json.dumps(record, separators=(",", ":")) + "\n").encode()
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    dropped += 1
+                    continue
+                cleaned = _clean(record, removed)
+                lines.append((json.dumps(cleaned, separators=(",", ":")) + "\n").encode())
+    digest, size = hashlib.sha256(), 0
+    with open(dest, "wb") as sink:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=sink, mtime=0, compresslevel=9) as out:
+            for line in lines:
                 digest.update(line)
                 size += len(line)
                 out.write(line)
     entry = {"bytes": os.path.getsize(dest), "uncompressed_bytes": size,
              "sha256": digest.hexdigest()}
-    if clean:
+    if mode == "otel":
         entry["removed_attributes"] = removed[0] + dropped
     return entry
 
 
 def _ci():
-    values = {key: os.environ.get(var) or None for key, var in CI_ENV}
+    """GitLab job identity; a value that does not match its GitLab format is null."""
+    values = {}
+    for key, var in CI_ENV:
+        value = os.environ.get(var) or None
+        if value is not None and not CI_FORMATS[key].match(value):
+            warn(f"{var} does not look like a GitLab value; not recorded")
+            value = None
+        values[key] = value
     return values if any(values.values()) else None
 
 
@@ -322,11 +449,14 @@ def _build(out, pipeline, run_id, sources):
     raw_dir = os.path.join(out, "raw")
     os.makedirs(raw_dir)
     raw, summary, source = {}, None, None
-    for kind, src, name, clean in sources:
+    for kind, src, name, mode in sources:
+        target = os.path.join(raw_dir, name)
         try:
-            raw["raw/" + name] = _store(src, os.path.join(raw_dir, name), clean)
-        except OSError as error:
+            raw["raw/" + name] = _store(src, target, mode)
+        except (OSError, ValueError, AttributeError, TypeError) as error:
             warn(f"cannot store {src}: {error}")
+            if os.path.exists(target):
+                os.remove(target)
             continue
         if summary is not None or kind is None:
             continue
@@ -364,18 +494,18 @@ def write_bundle(out, pipeline, run_id=None, otel_log=None, fullsend_run_dir=Non
     sources = []
     if otel_log:
         if os.path.isfile(otel_log):
-            sources.append(("claude-otel", otel_log, CLAUDE_OTEL, True))
+            sources.append(("claude-otel", otel_log, CLAUDE_OTEL, "otel"))
         else:
             warn(f"Claude OTEL log {otel_log} not found")
     if fullsend_run_dir:
         metrics = os.path.join(fullsend_run_dir, "metrics.json")
         spans = os.path.join(fullsend_run_dir, "run-telemetry.jsonl")
         if os.path.isfile(metrics):
-            sources.append(("fullsend-metrics", metrics, FULLSEND_METRICS, False))
+            sources.append(("fullsend-metrics", metrics, FULLSEND_METRICS, "metrics"))
         else:
             warn(f"Fullsend metrics {metrics} not found")
         if os.path.isfile(spans):
-            sources.append((None, spans, FULLSEND_TELEMETRY, True))
+            sources.append((None, spans, FULLSEND_TELEMETRY, "otel"))
 
     out = os.path.abspath(out)
     parent = os.path.dirname(out)

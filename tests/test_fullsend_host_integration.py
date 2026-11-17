@@ -891,6 +891,34 @@ def test_post_script_publishes_usage_only_when_telemetry_fails_the_secret_scan(h
     assert secret not in (telemetry / "usage.json").read_text()
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read a mode-000 file")
+def test_post_script_publishes_when_telemetry_inputs_cannot_be_copied(host, jira, validated_run):
+    jira.create("RHAIRFE-7203", "RFE", "Need.")
+    assert _pre(host, "single", RFE_KEY="RHAIRFE-7203").returncode == 0
+    repo, _, _ = validated_run
+    iteration = host["tmp"] / "iteration"
+    iteration.mkdir()
+    shutil.copy(repo / "output" / "agent-result.json", iteration / "agent-result.json")
+    run = _fullsend_run_dir(host)
+    (run / "metrics.json").chmod(0)  # exists, cannot be copied
+    env = {**host["env"], "REPO_DIR": str(repo), "FULLSEND_VALIDATED_ITERATION_DIR": str(iteration),
+           "FULLSEND_RUN_DIR": str(run), "RESULTS_REPO_URL": "", "RESULTS_PUSH_TOKEN": "",
+           "ORG_PULSE_URL": "", "ORG_PULSE_API_TOKEN": "", "STRAT_PUBLISH_DIR": ""}
+    try:
+        result = subprocess.run(["bash", str(SHARED / "post-strategy.sh")], env=env,
+                                capture_output=True, text=True)
+    finally:
+        (run / "metrics.json").chmod(0o644)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "telemetry inputs could not be prepared" in result.stderr
+    results = run / "publish" / "results"
+    assert (results / "pipeline-data.json").is_file()  # the results are still assembled
+    telemetry = results / "telemetry"
+    assert [p.name for p in telemetry.iterdir()] == ["usage.json"]
+    assert json.loads((telemetry / "usage.json").read_text())["source"] is None
+    assert (run / "publish" / "telemetry-inputs" / ".frozen").is_file()  # retries agree
+
+
 @pytest.mark.parametrize("concurrent", [False, True])
 def test_post_script_retry_does_not_duplicate_remote_run_or_summary(host, jira, validated_run, concurrent):
     jira.create("RHAIRFE-7221", "RFE", "Need.")
