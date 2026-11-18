@@ -39,11 +39,12 @@ field; nothing from the input is copied without its type and format checked:
     (SCALAR_FIELDS: ids, timestamps, enums, counts, measurements) are kept only
     with the type and format their rule allows; any other field is dropped
     (status messages, traceState, unknown and sibling fields included);
-  - attributes are rebuilt as {key, value: {kind: scalar}}: booleans and
-    numbers (real types only) under any key; strings only when the key is on
-    SAFE_STRING_KEYS and the value is a plain identifier (SAFE_VALUE, no spaces
-    or credentials), or the key is a measurement key (NUMERIC_STRING_KEYS /
-    NUMERIC_KEY_SUFFIXES) and the value is a number;
+  - attributes are kept only when their key is in the known vocabulary
+    (ATTRIBUTE_KEYS); any other key is dropped whatever its value. A kept
+    attribute is rebuilt as {key, value: {kind: scalar}}: booleans and numbers
+    as real types; strings only when the key is on SAFE_STRING_KEYS and the
+    value is a plain identifier (SAFE_VALUE, no spaces or credentials), or the
+    key is a measurement key (NUMBER_KEYS) and the value is a number;
   - names (span, event, metric, scope) and log bodies only when they are in
     the known vocabulary (SAFE_NAME), else replaced with "redacted".
 metrics.json is stored as its usage fields only (METRICS_FIELDS); if it does
@@ -51,7 +52,10 @@ not parse, no raw copy is kept. CI fields in usage.json must match their
 GitLab formats or are null. Every file is then checked against the CI secret
 values in the environment (same rule as strat-creator's fullsend-redact.py): a
 raw file with a match is not stored, and a usage.json with a match is not
-written. Totals are computed from the original inputs.
+written. Totals are computed from the original inputs; the strings they
+carry into usage.json (model names, timestamps) must pass the same identifier
+and timestamp checks, or the model is recorded as "unknown" and the timestamp
+is ignored.
 
 Totals prefer the Claude Code OTEL log (per-request api_request events), else
 Fullsend's metrics.json. Output is deterministic for the same inputs (no
@@ -93,7 +97,7 @@ SAFE_STRING_KEYS = frozenset({
     "event.name", "event.timestamp", "session.id", "prompt.id", "message.uuid",
     "request_id", "tool_use_id", "user.id", "terminal.type", "model", "final_model",
     "effort", "speed", "query_source", "agent_id", "agent.name", "agent.source",
-    "agent_type", "subagent_type", "skill.name", "skill.source", "command_name",
+    "parent_agent_id", "agent_type", "subagent_type", "skill.name", "skill.source", "command_name",
     "command_source", "invocation_trigger", "tool_name", "tool_source", "decision",
     "decision_source", "decision_type", "source", "success", "result", "error_type",
     "language", "type", "start_type", "permission_mode", "safe_mode", "managed_only",
@@ -119,17 +123,40 @@ SAFE_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+=,-]{0,199}$")
 URL_KEYS = frozenset({"cicd.pipeline.run.url.full"})
 SAFE_URL = re.compile(r"^https://[A-Za-z0-9.-]+(?::\d+)?(?:/[A-Za-z0-9_.~-]+)*/?$")
 NUMERIC_STRING = re.compile(r"^-?\d+(\.\d+)?([eE][-+]?\d+)?$")
-# Numeric strings are kept only under measurement keys: a prompt or tool input
-# that happens to be a number is still content.
-NUMERIC_STRING_KEYS = frozenset({
+# Measurement keys: their values are numbers (numeric strings included). A
+# prompt or tool input that happens to be a number is still content, so a
+# numeric string is kept only under these keys.
+NUMBER_KEYS = frozenset({
+    # Claude Code events and metrics
     "event.sequence", "cost_usd", "cost_usd_micros", "duration_ms", "ttft_ms",
-    "total_duration_ms", "prompt_length", "error_count", "period_days",
-    "artifacts_deleted", "files_past_cutoff", "files_retained_fresh",
+    "total_duration_ms", "input_tokens", "output_tokens", "cache_read_tokens",
+    "cache_creation_tokens", "cache_creation_1h_tokens", "cache_creation_5m_tokens",
+    "reasoning_tokens", "total_tokens", "total_tool_uses", "tool_input_size_bytes",
+    "tool_result_size_bytes", "prompt_length", "user_prompt_length", "response_length",
+    "content_original_length", "exit_code", "attempt", "iteration",
+    "interaction.duration_ms", "interaction.sequence", "agent_path_count",
+    "command_path_count", "skill_path_count", "num_hooks", "num_success",
+    "num_blocking", "num_non_blocking_error", "num_cancelled", "error_count",
+    "period_days", "artifacts_deleted", "files_past_cutoff", "files_retained_fresh",
     "history_entries_pruned", "session_files_deleted", "transcripts_deleted",
-    "transcripts_exempted_desktop", "cicd.pipeline.run.id", "attempt",
+    "transcripts_exempted_desktop",
+    # OTel GenAI conventions
+    "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens",
+    "gen_ai.usage.reasoning_tokens", "gen_ai.usage.cache_read.input_tokens",
+    "gen_ai.usage.cache_creation.input_tokens",
+    # Fullsend spans
+    "fullsend.cost_usd", "fullsend.iterations", "fullsend.num_turns",
+    "fullsend.tool_calls", "cicd.pipeline.run.id",
 })
-NUMERIC_KEY_SUFFIXES = ("_tokens", "_ms", "_bytes", "_usd", "_micros", "_count")
-NUMERIC_KEY_PREFIXES = ("num_",)
+# Flags: their values are booleans.
+BOOL_KEYS = frozenset({
+    "success", "has_hooks", "has_mcp", "host_owned_mcp", "is_async", "is_built_in",
+    "model_swapped", "content_truncated", "fullsend.prescript.skipped",
+})
+# Every attribute key that may be stored. A key carries text of its own, so an
+# unknown key is dropped even when its value is a boolean or a number. Add a
+# key here only if it is a fixed name, never derived from content.
+ATTRIBUTE_KEYS = SAFE_STRING_KEYS | NUMBER_KEYS | BOOL_KEYS
 # Structural OTLP fields kept when a stored record is rebuilt (plus the
 # collector's {ts, path, payload} wrapper). Containers are rebuilt recursively;
 # every scalar must pass its rule. Anything else is dropped.
@@ -230,6 +257,11 @@ def _attributes(owner):
     return result
 
 
+def _model_name(value):
+    """A model name for usage.json: a plain identifier, else "unknown"."""
+    return value if isinstance(value, str) and IDENTIFIER.match(value) else "unknown"
+
+
 def _empty_usage():
     usage = {"cost_usd": 0.0, "api_requests": 0}
     usage.update({field: 0 for field in TOKEN_FIELDS})
@@ -274,8 +306,9 @@ def summarize_claude_otel(path):
                         if key in seen_events:
                             continue
                         seen_events.add(key)
-                        if attrs.get("event.timestamp"):
-                            stamps.append(str(attrs["event.timestamp"]))
+                        stamp = attrs.get("event.timestamp")
+                        if isinstance(stamp, str) and TIMESTAMP.match(stamp):
+                            stamps.append(stamp)
                         if name == "tool_result":
                             tool_calls += 1
                         elif name == "user_prompt":
@@ -283,7 +316,7 @@ def summarize_claude_otel(path):
                         if name != "api_request":
                             continue
                         seen.add(key)
-                        model = str(attrs.get("model") or "unknown")
+                        model = _model_name(attrs.get("model"))
                         per_model = by_model.setdefault(model, _empty_usage())
                         values = {
                             "cost_usd": _number(attrs.get("cost_usd")) or 0,
@@ -338,22 +371,25 @@ def summarize_fullsend_metrics(path):
     for model, usage in sorted((metrics.get("per_model_usage") or {}).items()):
         if not isinstance(usage, dict):
             continue
-        by_model[model] = _round_usage({
+        if _model_name(model) != model:
+            warn(f"{path}: a per-model entry has an invalid model name; not recorded")
+            continue
+        entry = {
             "cost_usd": _number(usage.get("cost_usd")),
             "input_tokens": _number(usage.get("input_tokens")),
             "output_tokens": _number(usage.get("output_tokens")),
             "cache_read_tokens": _number(usage.get("cache_read_input_tokens")),
             "cache_creation_tokens": _number(usage.get("cache_creation_input_tokens")),
             "reasoning_tokens": None,
-            "api_requests": _number(usage.get("requests")) or None,
-        })
+            "api_requests": _number(usage.get("requests")),
+        }
+        if entry["api_requests"] == 0 and any(entry[field] for field in TOKEN_FIELDS):
+            # Fullsend reports requests: 0 alongside real token usage (the count is
+            # not filled in): unknown, not zero. A zero with no usage stays zero.
+            entry["api_requests"] = None
+        by_model[model] = _round_usage(entry)
     return {"totals": _round_usage(totals, TOTAL_KEYS), "by_model": by_model,
             "started_at": None, "finished_at": None}
-
-
-def _numeric_key(key):
-    return (key in NUMERIC_STRING_KEYS or key.endswith(NUMERIC_KEY_SUFFIXES)
-            or key.startswith(NUMERIC_KEY_PREFIXES))
 
 
 def _rebuild_attribute(item):
@@ -361,8 +397,8 @@ def _rebuild_attribute(item):
     if not isinstance(item, dict):
         return None
     key, value = item.get("key"), item.get("value")
-    if not isinstance(key, str) or not isinstance(value, dict) or len(value) != 1:
-        return None  # array/kvlist/bytes values and malformed entries
+    if key not in ATTRIBUTE_KEYS or not isinstance(value, dict) or len(value) != 1:
+        return None  # unknown keys, array/kvlist/bytes values and malformed entries
     kind, scalar = next(iter(value.items()))
     if kind == "boolValue":
         keep = isinstance(scalar, bool)
@@ -376,7 +412,7 @@ def _rebuild_attribute(item):
         elif key in SAFE_STRING_KEYS:
             keep = bool(SAFE_VALUE.match(scalar))
         else:
-            keep = bool(NUMERIC_STRING.match(scalar)) and _numeric_key(key)
+            keep = key in NUMBER_KEYS and bool(NUMERIC_STRING.match(scalar))
     else:
         keep = False
     return {"key": key, "value": {kind: scalar}} if keep else None

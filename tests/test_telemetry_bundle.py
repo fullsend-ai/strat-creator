@@ -208,6 +208,8 @@ class TelemetryBundleTest(unittest.TestCase):
         self.assertEqual(usage["totals"]["turns"], 4)
         self.assertIsNone(usage["totals"]["user_prompts"])
         self.assertIsNone(usage["totals"]["api_requests"])
+        # Fullsend reports requests: 0 next to real usage: the count is unknown
+        self.assertIsNone(usage["by_model"]["claude-opus-5-5"]["api_requests"])
         self.assertEqual(
             sorted(usage["raw"]),
             ["raw/fullsend-metrics.json.gz", "raw/fullsend-telemetry.jsonl.gz"],
@@ -216,6 +218,16 @@ class TelemetryBundleTest(unittest.TestCase):
             sorted(p.name for p in (out / "raw").iterdir()),
             ["fullsend-metrics.json.gz", "fullsend-telemetry.jsonl.gz"],
         )
+
+    def test_a_model_with_no_usage_records_zero_requests(self):
+        metrics = dict(FULLSEND_METRICS, per_model_usage={
+            **FULLSEND_METRICS["per_model_usage"],
+            "claude-haiku-5-5": {"requests": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0},
+        })
+        (self.run_dir / "metrics.json").write_text(json.dumps(metrics))
+        out = self.tmp / "telemetry"
+        self.bundle.write_bundle(str(out), "p", fullsend_run_dir=str(self.run_dir))
+        self.assertEqual(self.usage(out)["by_model"]["claude-haiku-5-5"]["api_requests"], 0)
 
     def test_claude_otel_wins_when_both_sources_exist(self):
         out = self.tmp / "telemetry"
@@ -394,7 +406,7 @@ class TelemetryBundleTest(unittest.TestCase):
                 attr("duration_ms", "92"),
                 attr("cache_read_tokens", "100"),
                 attr("num_hooks", "3"),
-                {"key": "anything", "value": {"intValue": 5}},
+                {"key": "anything", "value": {"intValue": 5}},  # not a known key
             ]
         }
         self.otel.write_text(otel_line(record) + "\n" + otel_line(REQ_A) + "\n")
@@ -410,7 +422,6 @@ class TelemetryBundleTest(unittest.TestCase):
                 "duration_ms",
                 "cache_read_tokens",
                 "num_hooks",
-                "anything",
             ],
         )
 
@@ -523,10 +534,10 @@ class TelemetryBundleTest(unittest.TestCase):
         record = {
             "attributes": [
                 {"key": "success", "value": {"boolValue": secret}},  # wrong type
-                {"key": "flag", "value": {"boolValue": True}, "extra": secret},  # sibling field
-                {"key": "ratio", "value": {"doubleValue": secret}},
-                {"key": "count", "value": {"intValue": secret}},
-                {"key": "attempts", "value": {"intValue": "3"}},
+                {"key": "has_mcp", "value": {"boolValue": True}, "extra": secret},  # sibling field
+                {"key": "cost_usd", "value": {"doubleValue": secret}},
+                {"key": "exit_code", "value": {"intValue": secret}},
+                {"key": "attempt", "value": {"intValue": "3"}},
                 {"key": "request_id", "value": {"stringValue": "https://u:" + "p@host/x"}},
                 {"key": "cicd.pipeline.run.url.full", "value": {"stringValue": "https://gitlab.com/g/p/-/pipelines/1"}},
                 {
@@ -550,13 +561,60 @@ class TelemetryBundleTest(unittest.TestCase):
         self.assertEqual(
             kept["attributes"],
             [
-                {"key": "flag", "value": {"boolValue": True}},
-                {"key": "attempts", "value": {"intValue": "3"}},
+                {"key": "has_mcp", "value": {"boolValue": True}},
+                {"key": "attempt", "value": {"intValue": "3"}},
                 {"key": "cicd.pipeline.run.url.full", "value": {"stringValue": "https://gitlab.com/g/p/-/pipelines/1"}},
             ],
         )
         self.assertEqual(kept["body"], {"stringValue": "claude_code.api_request"})
         self.assertEqual(sorted(kept), ["attributes", "body", "flags"])
+
+    def test_unknown_attribute_keys_are_dropped_whatever_the_value(self):
+        secret = "confidential merger plan"
+        record = {
+            "attributes": [
+                attr("event.name", "tool_result"),
+                {"key": secret, "value": {"boolValue": True}},
+                {"key": secret, "value": {"intValue": 1}},
+                {"key": secret, "value": {"doubleValue": 1.5}},
+                {"key": secret, "value": {"stringValue": "12"}},
+                # measurement-looking keys are not enough: only the listed names
+                {"key": secret.replace(" ", "_") + "_tokens", "value": {"stringValue": "12"}},
+                {"key": "num_" + secret.replace(" ", "_"), "value": {"intValue": 3}},
+                {"key": "has_hooks", "value": {"boolValue": False}},
+                {"key": "duration_ms", "value": {"doubleValue": 1.5}},
+            ]
+        }
+        self.otel.write_text(otel_line(record) + "\n" + otel_line(REQ_A) + "\n")
+        out = self.tmp / "telemetry"
+        self.bundle.write_bundle(str(out), "p", otel_log=str(self.otel))
+        first = self.stored_lines(out)[0]
+        self.assertNotIn("merger", json.dumps(first))
+        kept = first["payload"]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]
+        self.assertEqual([a["key"] for a in kept["attributes"]], ["event.name", "has_hooks", "duration_ms"])
+
+    def test_usage_json_takes_only_valid_model_names_and_timestamps(self):
+        secret = "confidential merger plan"
+        bad = log_record("api_request", 5, model=secret, cost_usd=0.1, request_id="r5")
+        for item in bad["attributes"]:
+            if item["key"] == "event.timestamp":
+                item["value"] = {"stringValue": secret}
+        self.otel.write_text(otel_line(REQ_A, bad) + "\n")
+        out = self.tmp / "telemetry"
+        self.bundle.write_bundle(str(out), "p", otel_log=str(self.otel))
+        usage = self.usage(out)
+        self.assertNotIn("merger", (out / "usage.json").read_text())
+        self.assertEqual(sorted(usage["by_model"]), ["claude-opus-5-5", "unknown"])
+        self.assertEqual(usage["totals"]["api_requests"], 2)  # still counted
+        self.assertEqual((usage["started_at"], usage["finished_at"]), ("2026-11-13T10:00:01.000Z",) * 2)
+
+        metrics = dict(FULLSEND_METRICS, per_model_usage={
+            **FULLSEND_METRICS["per_model_usage"], secret: {"requests": 1, "cost_usd": 0.1}})
+        (self.run_dir / "metrics.json").write_text(json.dumps(metrics))
+        out = self.tmp / "telemetry-fs"
+        self.bundle.write_bundle(str(out), "p", fullsend_run_dir=str(self.run_dir))
+        self.assertNotIn("merger", (out / "usage.json").read_text())
+        self.assertEqual(sorted(self.usage(out)["by_model"]), ["claude-opus-5-5"])
 
     def test_a_ci_secret_in_an_allowed_field_drops_that_raw_file(self):
         token = "glpat-AbCdEf0123456789"
