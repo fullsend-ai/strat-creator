@@ -9,7 +9,7 @@
 #      later strat-resume run reads (artifacts/strat-progress.json);
 #   2. build the HTML report and pipeline data with the trusted scripts;
 #   3. add the run's telemetry/ folder (agentic-telemetry/v1: usage.json and the
-#      gzipped Fullsend metrics/spans), after a secret scan of its inputs;
+#      gzipped Fullsend metrics/spans), built once, secret-scanned and sealed;
 #   4. when RESULTS_REPO_URL is set, push the run to the results repository,
 #      and to Org Pulse when ORG_PULSE_URL and ORG_PULSE_API_TOKEN are set.
 # Lock release is not done here: the CI cleanup (release-locks.sh) runs
@@ -82,45 +82,48 @@ fi
 cp -R "${BUNDLE}/." "${RESULTS}/"
 
 # Telemetry: the same telemetry/ folder epic-decomposer and rfe-autofixer
-# publish; its run_id is the run directory's name (run-<run id>). Fullsend
-# wrote metrics.json before this post-script started; its span log may still
-# grow, so the inputs are frozen on the first attempt and a retry republishes
-# byte-identical files (the run directory is immutable). Publication refuses
-# binary files because it cannot scan them: the uncompressed inputs are scanned
-# here, before they are gzipped, and usage.json after it is written.
-# Telemetry never blocks the results: every failure below publishes fewer
-# telemetry files (or none) and carries on.
-TELEMETRY_INPUTS="${PUBLISH_DIR}/telemetry-inputs"
-freeze_telemetry_inputs() {
+# publish; its run_id is the run directory's name (run-<run id>). The run
+# directory is immutable, so the telemetry outcome is decided once and sealed in
+# $PUBLISH_DIR/telemetry-sealed (the folder, or the explicit "no telemetry"
+# outcome); every attempt, retries included, republishes exactly that outcome.
+# Fullsend wrote metrics.json before this post-script started; its span log may
+# still grow, which the seal also absorbs. Publication refuses binary files
+# because it cannot scan them: the uncompressed inputs are scanned before they
+# are gzipped, and usage.json after it is written. Building telemetry never
+# blocks the results: a failure seals "no telemetry" and publication goes on.
+# (A GitLab job retry is a new job, so a new run id and run directory.)
+TELEMETRY_SEALED="${PUBLISH_DIR}/telemetry-sealed"
+seal_telemetry() {
   # Runs as an `if` condition, where set -e does not apply: return on any failure.
-  rm -rf -- "${TELEMETRY_INPUTS}" || return 1
-  mkdir -p -- "${TELEMETRY_INPUTS}" || return 1
-  local name
+  local inputs="${PUBLISH_DIR}/telemetry-inputs" build="${PUBLISH_DIR}/telemetry-build" name
+  rm -rf -- "${inputs}" "${build}" "${TELEMETRY_SEALED}" || return 1
+  mkdir -p -- "${inputs}" "${build}" "${TELEMETRY_SEALED}" || return 1
   for name in metrics.json run-telemetry.jsonl; do
     if [[ -n "${FULLSEND_RUN_DIR:-}" && -f "${FULLSEND_RUN_DIR}/${name}" ]]; then
-      cp -- "${FULLSEND_RUN_DIR}/${name}" "${TELEMETRY_INPUTS}/${name}" || return 1
+      cp -- "${FULLSEND_RUN_DIR}/${name}" "${inputs}/${name}" || return 1
     fi
   done
-  if ! python3 "${CLONE}/.fullsend/ci/fullsend-redact.py" check "${TELEMETRY_INPUTS}"; then
+  if ! python3 "${CLONE}/.fullsend/ci/fullsend-redact.py" check "${inputs}"; then
     echo "WARNING: telemetry inputs failed the secret scan; publishing usage.json only" >&2
-    find "${TELEMETRY_INPUTS}" -type f -delete || return 1
+    find "${inputs}" -type f -delete || return 1
   fi
-  touch "${TELEMETRY_INPUTS}/.frozen"
+  python3 "${SHARED}/publish/telemetry_bundle.py" --out "${build}/telemetry" \
+    --pipeline strat-pipeline --run-id "run-$(field run_id)" --fullsend-run-dir "${inputs}" \
+    || return 1
+  python3 "${CLONE}/.fullsend/ci/fullsend-redact.py" check "${build}/telemetry/usage.json" \
+    || return 1
+  mv -- "${build}/telemetry" "${TELEMETRY_SEALED}/telemetry" || return 1
+  touch "${TELEMETRY_SEALED}/.sealed"
 }
-if [[ ! -f "${TELEMETRY_INPUTS}/.frozen" ]] && ! freeze_telemetry_inputs; then
-  echo "WARNING: telemetry inputs could not be prepared; publishing usage.json only" >&2
-  # Freeze the empty set, so a retry publishes the same (usage.json-only) folder.
-  { rm -rf -- "${TELEMETRY_INPUTS}" && mkdir -p -- "${TELEMETRY_INPUTS}" \
-      && touch "${TELEMETRY_INPUTS}/.frozen"; } || true
+if [[ ! -f "${TELEMETRY_SEALED}/.sealed" ]] && ! seal_telemetry; then
+  echo "WARNING: telemetry could not be built; this run publishes no telemetry" >&2
+  { rm -rf -- "${TELEMETRY_SEALED}" && mkdir -p -- "${TELEMETRY_SEALED}" \
+      && touch "${TELEMETRY_SEALED}/.sealed"; } || true
 fi
-if ! python3 "${SHARED}/publish/telemetry_bundle.py" --out "${RESULTS}/telemetry" \
-    --pipeline strat-pipeline --run-id "run-$(field run_id)" \
-    --fullsend-run-dir "${TELEMETRY_INPUTS}"; then
-  echo "WARNING: telemetry folder not written" >&2
-  rm -rf -- "${RESULTS:?}/telemetry" || true
-elif ! python3 "${CLONE}/.fullsend/ci/fullsend-redact.py" check "${RESULTS}/telemetry/usage.json"; then
-  echo "WARNING: telemetry usage.json failed the secret scan; not publishing telemetry" >&2
-  rm -rf -- "${RESULTS:?}/telemetry" || true
+# Publishing the sealed outcome is part of the publication, like the files above.
+rm -rf -- "${RESULTS:?}/telemetry"
+if [[ -d "${TELEMETRY_SEALED}/telemetry" ]]; then
+  cp -R -- "${TELEMETRY_SEALED}/telemetry" "${RESULTS}/telemetry"
 fi
 
 if [[ -z "${RESULTS_REPO_URL:-}" ]]; then

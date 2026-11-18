@@ -3,6 +3,7 @@
 Shared by strat-creator, strat-pipeline, epic-decomposer and rfe-autofixer; only
 SCRIPT differs between the copies."""
 
+import base64
 import gzip
 import importlib.util
 import json
@@ -71,7 +72,7 @@ OTEL_LOG = (
     "\n".join(
         [
             otel_line(log_record("user_prompt", 0), REQ_A, log_record("tool_result", 2)),
-            json.dumps({"ts": "x", "path": "/v1/metrics", "payload": {"resourceMetrics": []}}),
+            json.dumps({"ts": "2026-11-13T10:00:00Z", "path": "/v1/metrics", "payload": {"resourceMetrics": []}}),
             otel_line(REQ_B, log_record("tool_result", 4)),
             # exporter retry: the whole first batch again (prompt, request, tool result)
             otel_line(log_record("user_prompt", 0), REQ_A, log_record("tool_result", 2)),
@@ -126,7 +127,16 @@ USAGE_KEYS = [
     "finished_at",
     "raw",
 ]
-CI_VARS = ("CI_PROJECT_PATH", "CI_PIPELINE_ID", "CI_JOB_ID", "CI_JOB_NAME", "CI_JOB_URL")
+CI_VARS = (
+    "CI_PROJECT_PATH",
+    "CI_PIPELINE_ID",
+    "CI_JOB_ID",
+    "CI_JOB_NAME",
+    "CI_JOB_URL",
+    "RESULTS_PUSH_TOKEN",
+    "JIRA_TOKEN",
+    "JIRA_USER",
+)
 
 
 class TelemetryBundleTest(unittest.TestCase):
@@ -157,9 +167,7 @@ class TelemetryBundleTest(unittest.TestCase):
         usage = self.usage(out)
         self.assertEqual(list(usage), USAGE_KEYS)
         self.assertEqual(usage["schema"], "agentic-telemetry/v1")
-        self.assertEqual(
-            (usage["pipeline"], usage["run_id"], usage["ci"]), ("p", "20261113-100000", None)
-        )
+        self.assertEqual((usage["pipeline"], usage["run_id"], usage["ci"]), ("p", "20261113-100000", None))
         self.assertEqual(usage["source"], "claude-otel")
         self.assertEqual(list(usage["totals"]), TOTAL_KEYS)
         self.assertEqual(
@@ -191,9 +199,7 @@ class TelemetryBundleTest(unittest.TestCase):
 
     def test_fullsend_run_uses_metrics_and_keeps_both_raw_files(self):
         out = self.tmp / "telemetry"
-        self.bundle.write_bundle(
-            str(out), "p", run_id="gitlab-job-1", fullsend_run_dir=str(self.run_dir)
-        )
+        self.bundle.write_bundle(str(out), "p", run_id="gitlab-job-1", fullsend_run_dir=str(self.run_dir))
         usage = self.usage(out)
         self.assertEqual(usage["source"], "fullsend-metrics")
         self.assertEqual(list(usage["totals"]), TOTAL_KEYS)
@@ -213,9 +219,7 @@ class TelemetryBundleTest(unittest.TestCase):
 
     def test_claude_otel_wins_when_both_sources_exist(self):
         out = self.tmp / "telemetry"
-        self.bundle.write_bundle(
-            str(out), "p", otel_log=str(self.otel), fullsend_run_dir=str(self.run_dir)
-        )
+        self.bundle.write_bundle(str(out), "p", otel_log=str(self.otel), fullsend_run_dir=str(self.run_dir))
         usage = self.usage(out)
         self.assertEqual(usage["source"], "claude-otel")
         self.assertEqual(len(usage["raw"]), 3)
@@ -314,7 +318,7 @@ class TelemetryBundleTest(unittest.TestCase):
             "status": {"code": 2, "message": secret},
         }
         line = {
-            "ts": "t",
+            "ts": "2026-11-13T10:00:00Z",
             "path": "/v1/logs",
             "payload": {
                 "resourceLogs": [{"scopeLogs": [{"logRecords": [record]}]}],
@@ -326,9 +330,7 @@ class TelemetryBundleTest(unittest.TestCase):
             json.dumps({"resourceSpans": [{"scopeSpans": [{"spans": [span]}]}]}) + "\n"
         )
         out = self.tmp / "telemetry"
-        self.bundle.write_bundle(
-            str(out), "p", otel_log=str(self.otel), fullsend_run_dir=str(self.run_dir)
-        )
+        self.bundle.write_bundle(str(out), "p", otel_log=str(self.otel), fullsend_run_dir=str(self.run_dir))
         for name in ("claude-otel.jsonl.gz", "fullsend-telemetry.jsonl.gz"):
             with gzip.open(out / "raw" / name, "rt") as handle:
                 stored = handle.read()
@@ -358,9 +360,7 @@ class TelemetryBundleTest(unittest.TestCase):
     def test_empty_otel_log_falls_back_to_fullsend_metrics(self):
         self.otel.write_text("")
         out = self.tmp / "telemetry"
-        self.bundle.write_bundle(
-            str(out), "p", otel_log=str(self.otel), fullsend_run_dir=str(self.run_dir)
-        )
+        self.bundle.write_bundle(str(out), "p", otel_log=str(self.otel), fullsend_run_dir=str(self.run_dir))
         self.assertEqual(self.usage(out)["source"], "fullsend-metrics")
 
     def test_a_failed_write_keeps_the_previous_folder(self):
@@ -451,14 +451,10 @@ class TelemetryBundleTest(unittest.TestCase):
         self.assertNotIn(secret, json.dumps(stored))
         self.assertEqual(list(stored), ["resourceSpans"])
         scopes = stored["resourceSpans"][0]["scopeSpans"]
-        self.assertEqual(
-            scopes[0]["scope"], {"name": "com.anthropic.claude_code.tracing", "version": "2.1.186"}
-        )
+        self.assertEqual(scopes[0]["scope"], {"name": "com.anthropic.claude_code.tracing", "version": "2.1.186"})
         self.assertEqual(scopes[1]["scope"], {"name": "redacted"})
         kept = scopes[0]["spans"]
-        self.assertEqual(
-            [s["name"] for s in kept], ["claude_code.tool", "execute_tool Bash", "redacted"]
-        )
+        self.assertEqual([s["name"] for s in kept], ["claude_code.tool", "execute_tool Bash", "redacted"])
         self.assertEqual(
             kept[0],
             {
@@ -474,9 +470,7 @@ class TelemetryBundleTest(unittest.TestCase):
         out = self.tmp / "telemetry"
         self.bundle.write_bundle(str(out), "p", otel_log=str(self.otel))
         totals = self.usage(out)["totals"]
-        self.assertEqual(
-            (totals["api_requests"], totals["tool_calls"], totals["user_prompts"]), (2, 2, 1)
-        )
+        self.assertEqual((totals["api_requests"], totals["tool_calls"], totals["user_prompts"]), (2, 2, 1))
 
     def test_metrics_json_is_stored_as_usage_fields_only(self):
         metrics = dict(FULLSEND_METRICS)
@@ -523,6 +517,75 @@ class TelemetryBundleTest(unittest.TestCase):
                 "job_url": None,
             },
         )
+
+    def test_attributes_and_bodies_are_rebuilt_from_validated_values(self):
+        secret = "confidential customer text"
+        record = {
+            "attributes": [
+                {"key": "success", "value": {"boolValue": secret}},  # wrong type
+                {"key": "flag", "value": {"boolValue": True}, "extra": secret},  # sibling field
+                {"key": "ratio", "value": {"doubleValue": secret}},
+                {"key": "count", "value": {"intValue": secret}},
+                {"key": "attempts", "value": {"intValue": "3"}},
+                {"key": "request_id", "value": {"stringValue": "https://u:" + "p@host/x"}},
+                {"key": "cicd.pipeline.run.url.full", "value": {"stringValue": "https://gitlab.com/g/p/-/pipelines/1"}},
+                {
+                    "key": "cicd.pipeline.run.url.full",
+                    "value": {"stringValue": "https://tok@gitlab.com/g/p?x=" + secret},
+                },
+                {"key": "model", "value": {"stringValue": "has spaces " + secret}},
+            ],
+            "body": {"stringValue": "claude_code.api_request", "extra": secret},
+            "timeUnixNano": secret,
+            "kind": secret,
+            "flags": 1,
+        }
+        self.otel.write_text(otel_line(record) + "\n" + otel_line(REQ_A) + "\n")
+        out = self.tmp / "telemetry"
+        self.bundle.write_bundle(str(out), "p", otel_log=str(self.otel))
+        first = self.stored_lines(out)[0]
+        self.assertNotIn(secret, json.dumps(first))
+        self.assertNotIn("p@host", json.dumps(first))
+        kept = first["payload"]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]
+        self.assertEqual(
+            kept["attributes"],
+            [
+                {"key": "flag", "value": {"boolValue": True}},
+                {"key": "attempts", "value": {"intValue": "3"}},
+                {"key": "cicd.pipeline.run.url.full", "value": {"stringValue": "https://gitlab.com/g/p/-/pipelines/1"}},
+            ],
+        )
+        self.assertEqual(kept["body"], {"stringValue": "claude_code.api_request"})
+        self.assertEqual(sorted(kept), ["attributes", "body", "flags"])
+
+    def test_a_ci_secret_in_an_allowed_field_drops_that_raw_file(self):
+        token = "glpat-AbCdEf0123456789"
+        os.environ["RESULTS_PUSH_TOKEN"] = token
+        leak = log_record("api_request", 9, model="claude-opus-5-5", cost_usd=0.1, request_id=token)
+        self.otel.write_text(otel_line(leak) + "\n")
+        out = self.tmp / "telemetry"
+        self.bundle.write_bundle(str(out), "p", otel_log=str(self.otel))
+        usage = self.usage(out)
+        self.assertNotIn("raw/claude-otel.jsonl.gz", usage["raw"])
+        self.assertFalse((out / "raw").exists())
+        self.assertEqual(usage["source"], "claude-otel")  # totals still come from the log
+        self.assertNotIn(token, (out / "usage.json").read_text())
+
+    def test_secret_values_follow_the_redaction_rule(self):
+        env = {
+            "JIRA_TOKEN": "jira-token-123",
+            "JIRA_USER": "bot",
+            "SHORT_TOKEN": "abc",
+            "PLAIN_VALUE": "visible-value-1",
+            "RESULTS_PUSH_TOKEN": "push-token-123",
+        }
+        values = {v.decode() for v in self.bundle._secret_values(env)}
+        self.assertIn("jira-token-123", values)
+        self.assertIn("push-token-123", values)
+        self.assertNotIn("abc", values)
+        self.assertNotIn("visible-value-1", values)
+        self.assertIn(base64.b64encode(b"bot:jira-token-123").decode(), values)
+        self.assertIn(base64.b64encode(b"oauth2:push-token-123").decode(), values)
 
 
 if __name__ == "__main__":

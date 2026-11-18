@@ -33,17 +33,25 @@ usage.json:
 Raw files are stored from allowlists only, because git keeps them forever and
 Claude Code can be configured (OTEL_LOG_USER_PROMPTS, OTEL_LOG_TOOL_DETAILS,
 OTEL_LOG_TOOL_CONTENT) to put prompts, commands, file contents and tool output
-in its log. For OTEL logs and span files, each record is rebuilt from:
-  - OTLP_FIELDS: the structural OTLP fields; any other field is dropped
-    (status messages, traceState, unknown fields included);
-  - attributes: numbers and booleans under any key; strings only when the key is
-    on SAFE_STRING_KEYS (ids, model, enums), or is a measurement key
-    (NUMERIC_STRING_KEYS / NUMERIC_KEY_SUFFIXES) and the value is a number;
+in its log. For OTEL logs and span files, each record is rebuilt field by
+field; nothing from the input is copied without its type and format checked:
+  - containers (CONTAINER_FIELDS) are rebuilt recursively; structural scalars
+    (SCALAR_FIELDS: ids, timestamps, enums, counts, measurements) are kept only
+    with the type and format their rule allows; any other field is dropped
+    (status messages, traceState, unknown and sibling fields included);
+  - attributes are rebuilt as {key, value: {kind: scalar}}: booleans and
+    numbers (real types only) under any key; strings only when the key is on
+    SAFE_STRING_KEYS and the value is a plain identifier (SAFE_VALUE, no spaces
+    or credentials), or the key is a measurement key (NUMERIC_STRING_KEYS /
+    NUMERIC_KEY_SUFFIXES) and the value is a number;
   - names (span, event, metric, scope) and log bodies only when they are in
     the known vocabulary (SAFE_NAME), else replaced with "redacted".
 metrics.json is stored as its usage fields only (METRICS_FIELDS); if it does
 not parse, no raw copy is kept. CI fields in usage.json must match their
-GitLab formats or are null. Totals are computed from the original inputs.
+GitLab formats or are null. Every file is then checked against the CI secret
+values in the environment (same rule as strat-creator's fullsend-redact.py): a
+raw file with a match is not stored, and a usage.json with a match is not
+written. Totals are computed from the original inputs.
 
 Totals prefer the Claude Code OTEL log (per-request api_request events), else
 Fullsend's metrics.json. Output is deterministic for the same inputs (no
@@ -54,6 +62,7 @@ Python 3.9+, standard library only.
 """
 
 import argparse
+import base64
 import gzip
 import hashlib
 import json
@@ -104,6 +113,11 @@ SAFE_STRING_KEYS = frozenset({
     "fullsend.security_trace_id", "fullsend.harness.content_sha", "vcs.provider.name",
     "cicd.pipeline.run.url.full",
 })
+# Values allowed under SAFE_STRING_KEYS: plain identifiers (no spaces, no
+# userinfo/query characters). The one URL key must be a plain https URL.
+SAFE_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+=,-]{0,199}$")
+URL_KEYS = frozenset({"cicd.pipeline.run.url.full"})
+SAFE_URL = re.compile(r"^https://[A-Za-z0-9.-]+(?::\d+)?(?:/[A-Za-z0-9_.~-]+)*/?$")
 NUMERIC_STRING = re.compile(r"^-?\d+(\.\d+)?([eE][-+]?\d+)?$")
 # Numeric strings are kept only under measurement keys: a prompt or tool input
 # that happens to be a number is still content.
@@ -117,20 +131,43 @@ NUMERIC_STRING_KEYS = frozenset({
 NUMERIC_KEY_SUFFIXES = ("_tokens", "_ms", "_bytes", "_usd", "_micros", "_count")
 NUMERIC_KEY_PREFIXES = ("num_",)
 # Structural OTLP fields kept when a stored record is rebuilt (plus the
-# collector's {ts, path, payload} wrapper). Anything else is dropped.
-OTLP_FIELDS = frozenset({
-    "ts", "path", "payload",
-    "resourceLogs", "resourceMetrics", "resourceSpans", "resource", "scope",
+# collector's {ts, path, payload} wrapper). Containers are rebuilt recursively;
+# every scalar must pass its rule. Anything else is dropped.
+CONTAINER_FIELDS = frozenset({
+    "payload", "resourceLogs", "resourceMetrics", "resourceSpans", "resource", "scope",
     "scopeLogs", "scopeMetrics", "scopeSpans", "logRecords", "metrics", "spans",
-    "events", "links", "attributes", "key", "value", "stringValue", "intValue",
-    "doubleValue", "boolValue", "name", "version", "body", "status", "code", "kind",
-    "flags", "traceId", "spanId", "parentSpanId", "timeUnixNano",
-    "observedTimeUnixNano", "startTimeUnixNano", "endTimeUnixNano", "severityNumber",
-    "severityText", "droppedAttributesCount", "droppedEventsCount",
-    "droppedLinksCount", "unit", "sum", "gauge", "histogram", "dataPoints",
-    "asDouble", "asInt", "aggregationTemporality", "isMonotonic", "count",
-    "bucketCounts", "explicitBounds", "min", "max",
+    "events", "links", "status", "sum", "gauge", "histogram", "dataPoints",
 })
+HEX_ID = re.compile(r"^[0-9a-fA-F]{0,64}$")
+UINT = re.compile(r"^\d{1,20}$")
+TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})?$")
+
+
+def _is_int(value):
+    return (isinstance(value, int) and not isinstance(value, bool)) or (
+        isinstance(value, str) and bool(UINT.match(value)))
+
+
+def _is_number(value):
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)) or (
+        isinstance(value, str) and bool(NUMERIC_STRING.match(value)))
+
+
+SCALAR_FIELDS = {
+    "traceId": lambda v: isinstance(v, str) and bool(HEX_ID.match(v)),
+    "spanId": lambda v: isinstance(v, str) and bool(HEX_ID.match(v)),
+    "parentSpanId": lambda v: isinstance(v, str) and bool(HEX_ID.match(v)),
+    "ts": lambda v: isinstance(v, str) and bool(TIMESTAMP.match(v)),
+    "isMonotonic": lambda v: isinstance(v, bool),
+    "bucketCounts": lambda v: isinstance(v, list) and all(_is_int(x) for x in v),
+    "explicitBounds": lambda v: isinstance(v, list) and all(_is_number(x) for x in v),
+}
+for _field in ("timeUnixNano", "observedTimeUnixNano", "startTimeUnixNano", "endTimeUnixNano",
+               "code", "kind", "flags", "severityNumber", "droppedAttributesCount",
+               "droppedEventsCount", "droppedLinksCount", "aggregationTemporality", "count"):
+    SCALAR_FIELDS[_field] = _is_int
+for _field in ("asDouble", "asInt", "min", "max"):
+    SCALAR_FIELDS[_field] = _is_number
 # Span, event, metric and scope names, and log bodies, that may be stored.
 SAFE_NAME = re.compile(
     r"^(?:"
@@ -319,57 +356,72 @@ def _numeric_key(key):
             or key.startswith(NUMERIC_KEY_PREFIXES))
 
 
-def _keep_attribute(item):
-    if not isinstance(item, dict) or not isinstance(item.get("key"), str):
-        return False
-    key, value = item["key"], item.get("value")
-    if not isinstance(value, dict) or len(value) != 1:
-        return False  # array/kvlist/bytes values and malformed entries
+def _rebuild_attribute(item):
+    """A new {key, value: {kind: scalar}} from validated parts, or None to drop it."""
+    if not isinstance(item, dict):
+        return None
+    key, value = item.get("key"), item.get("value")
+    if not isinstance(key, str) or not isinstance(value, dict) or len(value) != 1:
+        return None  # array/kvlist/bytes values and malformed entries
     kind, scalar = next(iter(value.items()))
-    if kind in ("boolValue", "doubleValue") or (kind == "intValue" and _number(scalar) is not None):
-        return True
-    if kind != "stringValue" or not isinstance(scalar, str):
-        return False
-    if key in SAFE_STRING_KEYS:
-        return True
-    return bool(NUMERIC_STRING.match(scalar)) and _numeric_key(key)
+    if kind == "boolValue":
+        keep = isinstance(scalar, bool)
+    elif kind == "doubleValue":
+        keep = isinstance(scalar, (int, float)) and not isinstance(scalar, bool)
+    elif kind == "intValue":
+        keep = _is_int(scalar)
+    elif kind == "stringValue" and isinstance(scalar, str):
+        if key in URL_KEYS:
+            keep = bool(SAFE_URL.match(scalar))
+        elif key in SAFE_STRING_KEYS:
+            keep = bool(SAFE_VALUE.match(scalar))
+        else:
+            keep = bool(NUMERIC_STRING.match(scalar)) and _numeric_key(key)
+    else:
+        keep = False
+    return {"key": key, "value": {kind: scalar}} if keep else None
 
 
 def _clean(node, removed):
-    """Rebuild a JSON node from the allowlists (see the module docstring)."""
-    if isinstance(node, list):
-        return [_clean(item, removed) for item in node]
-    if not isinstance(node, dict):
-        return node
+    """Rebuild a JSON object from the allowlists (see the module docstring)."""
     result = {}
     for key, value in node.items():
-        if key not in OTLP_FIELDS:
-            removed[0] += 1
-        elif key == "attributes" and isinstance(value, list):
-            kept = [item for item in value if _keep_attribute(item)]
+        if key == "attributes" and isinstance(value, list):
+            kept = [a for a in (_rebuild_attribute(item) for item in value) if a is not None]
             removed[0] += len(value) - len(kept)
             result[key] = kept
-        elif key in ("name", "body"):
-            text = value.get("stringValue") if key == "body" and isinstance(value, dict) else value
-            if isinstance(text, str) and SAFE_NAME.match(text):
-                result[key] = value
-            else:
-                result[key] = {"stringValue": "redacted"} if key == "body" else "redacted"
-                removed[0] += 1
+        elif key == "name":
+            ok = isinstance(value, str) and SAFE_NAME.match(value)
+            result[key] = value if ok else "redacted"
+            removed[0] += 0 if ok else 1
+        elif key == "body":
+            text = value.get("stringValue") if isinstance(value, dict) else None
+            ok = isinstance(text, str) and SAFE_NAME.match(text)
+            result[key] = {"stringValue": text if ok else "redacted"}
+            removed[0] += 0 if ok and len(value) == 1 else 1
         elif key == "path":
             if isinstance(value, str) and PATH_VALUE.match(value):
                 result[key] = value
             else:
                 removed[0] += 1
-        elif key in ("stringValue", "version", "severityText", "unit"):
-            # stringValue only reaches here outside an attribute (e.g. a body);
-            # the others are short library/unit identifiers.
+        elif key in ("version", "severityText", "unit"):
             if isinstance(value, str) and IDENTIFIER.match(value):
                 result[key] = value
             else:
                 removed[0] += 1
-        else:
+        elif key in SCALAR_FIELDS:
+            if SCALAR_FIELDS[key](value):
+                result[key] = value
+            else:
+                removed[0] += 1
+        elif key in CONTAINER_FIELDS and isinstance(value, dict):
             result[key] = _clean(value, removed)
+        elif key in CONTAINER_FIELDS and isinstance(value, list):
+            items = [_clean(item, removed) for item in value if isinstance(item, dict)]
+            removed[0] += len(value) - len(items)
+            result[key] = items
+        else:
+            removed[0] += 1
     return result
 
 
@@ -400,7 +452,53 @@ def _metrics_subset(path):
     return subset
 
 
-def _store(src, dest, mode):
+SECRET_NAME = re.compile(r"TOKEN|PASSWORD|SECRET|CREDENTIALS|API_KEY|SERVICE_ACCOUNT_KEY")
+KEY_FILE_VARS = ("GOOGLE_APPLICATION_CREDENTIALS", "AIPCC_CICD_GCP_SERVICE_ACCOUNT_KEY")
+BASIC_AUTH_PAIRS = (("JIRA_USER", "JIRA_TOKEN"), ("RESULTS_GIT_USER", "RESULTS_PUSH_TOKEN"))
+
+
+class SecretFound(ValueError):
+    """A stored file would contain a CI secret value."""
+
+
+def _secret_values(env=None):
+    """CI secret values to keep out of git: the rule of strat-creator's fullsend-redact.py."""
+    env = os.environ if env is None else env
+    values = set()
+    for name, value in env.items():
+        if not value or not SECRET_NAME.search(name):
+            continue
+        if len(value) >= 8:
+            values.add(value)
+        if name in KEY_FILE_VARS:
+            try:
+                with open(value, encoding="utf-8") as handle:
+                    contents = handle.read()
+                data = json.loads(contents)
+            except (OSError, ValueError):
+                continue
+            values.add(contents)
+            private_key = data.get("private_key", "") if isinstance(data, dict) else ""
+            values.update(line for line in private_key.splitlines() if len(line) >= 8)
+            if private_key:
+                values.add(private_key)
+                values.add(json.dumps(private_key)[1:-1])
+    for user_var, token_var in BASIC_AUTH_PAIRS:
+        user = env.get(user_var) or ("oauth2" if user_var == "RESULTS_GIT_USER" else "")
+        token = env.get(token_var, "")
+        if user and token:
+            values.add(base64.b64encode(f"{user}:{token}".encode()).decode())
+    return sorted((v.encode() for v in values if v), key=len, reverse=True)
+
+
+def _check_secrets(chunks, secrets, what):
+    for chunk in chunks:
+        for secret in secrets:
+            if secret in chunk:
+                raise SecretFound(f"{what} contains a CI secret value; not stored")
+
+
+def _store(src, dest, mode, secrets=()):
     """Gzip src deterministically after cleaning it; returns the raw-file entry.
 
     mode: "otel" (rebuild every JSON line from the allowlists, drop non-JSON lines)
@@ -417,8 +515,12 @@ def _store(src, dest, mode):
                 except ValueError:
                     dropped += 1
                     continue
+                if not isinstance(record, dict):
+                    dropped += 1
+                    continue
                 cleaned = _clean(record, removed)
                 lines.append((json.dumps(cleaned, separators=(",", ":")) + "\n").encode())
+    _check_secrets(lines, secrets, os.path.basename(dest))
     digest, size = hashlib.sha256(), 0
     with open(dest, "wb") as sink:
         with gzip.GzipFile(filename="", mode="wb", fileobj=sink, mtime=0, compresslevel=9) as out:
@@ -448,16 +550,17 @@ def _ci():
 def _build(out, pipeline, run_id, sources):
     raw_dir = os.path.join(out, "raw")
     os.makedirs(raw_dir)
+    secrets = _secret_values()
     raw, summary, source = {}, None, None
     for kind, src, name, mode in sources:
         target = os.path.join(raw_dir, name)
         try:
-            raw["raw/" + name] = _store(src, target, mode)
+            raw["raw/" + name] = _store(src, target, mode, secrets)
         except (OSError, ValueError, AttributeError, TypeError) as error:
+            # Only the raw copy is lost: totals are still read from the input.
             warn(f"cannot store {src}: {error}")
             if os.path.exists(target):
                 os.remove(target)
-            continue
         if summary is not None or kind is None:
             continue
         try:
@@ -481,9 +584,10 @@ def _build(out, pipeline, run_id, sources):
         "finished_at": summary["finished_at"],
         "raw": dict(sorted(raw.items())),
     }
+    text = json.dumps(usage, indent=2) + "\n"
+    _check_secrets([text.encode()], secrets, "usage.json")  # raises: no folder at all
     with open(os.path.join(out, "usage.json"), "w", encoding="utf-8") as handle:
-        json.dump(usage, handle, indent=2)
-        handle.write("\n")
+        handle.write(text)
     if not os.listdir(raw_dir):
         os.rmdir(raw_dir)  # git does not keep empty directories anyway
     return usage

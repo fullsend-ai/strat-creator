@@ -910,13 +910,67 @@ def test_post_script_publishes_when_telemetry_inputs_cannot_be_copied(host, jira
     finally:
         (run / "metrics.json").chmod(0o644)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "telemetry inputs could not be prepared" in result.stderr
+    assert "telemetry could not be built" in result.stderr
     results = run / "publish" / "results"
     assert (results / "pipeline-data.json").is_file()  # the results are still assembled
-    telemetry = results / "telemetry"
-    assert [p.name for p in telemetry.iterdir()] == ["usage.json"]
-    assert json.loads((telemetry / "usage.json").read_text())["source"] is None
-    assert (run / "publish" / "telemetry-inputs" / ".frozen").is_file()  # retries agree
+    assert not (results / "telemetry").exists()  # the sealed "no telemetry" outcome
+    sealed = run / "publish" / "telemetry-sealed"
+    assert (sealed / ".sealed").is_file() and not (sealed / "telemetry").exists()
+
+
+def test_retry_republishes_the_sealed_telemetry_outcome(host, jira, validated_run):
+    """A telemetry build failure on the first attempt seals "no telemetry". The run is
+    published, then the attempt fails later (here: the summary push). On retry the failure
+    is gone and telemetry would build, but the retry must republish the sealed outcome: the
+    immutable run directory would otherwise reject it and block recovery."""
+    jira.create("RHAIRFE-7204", "RFE", "Need.")
+    assert _pre(host, "single", RFE_KEY="RHAIRFE-7204").returncode == 0
+    repo, _, _ = validated_run
+    remote, initial = host["tmp"] / "results.git", host["tmp"] / "initial"
+    remote.mkdir()
+    _git(remote, "init", "--bare", "--initial-branch=main")
+    _git(host["tmp"], "clone", str(remote), str(initial))
+    (initial / "README.md").write_text("Isolated result publication.\n")
+    _git(initial, "add", "README.md")
+    _git(initial, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-m", "initial")
+    _git(initial, "push", "origin", "main")
+    iteration = host["tmp"] / "iteration"
+    iteration.mkdir()
+    shutil.copy(repo / "output/agent-result.json", iteration / "agent-result.json")
+    run = _fullsend_run_dir(host)
+    env = {**host["env"], "REPO_DIR": str(repo), "FULLSEND_VALIDATED_ITERATION_DIR": str(iteration),
+           "FULLSEND_RUN_DIR": str(run), "RESULTS_REPO_URL": str(remote),
+           "RESULTS_PUSH_TOKEN": "isolated-local-placeholder", "ORG_PULSE_URL": "", "ORG_PULSE_API_TOKEN": ""}
+    # First attempt: the telemetry build fails (a CI secret value that usage.json would
+    # contain: its run id), and the summary push (the second push) fails.
+    binary = host["tmp"] / "bin"
+    binary.mkdir()
+    (binary / "git").write_text('''#!/usr/bin/env bash
+if [[ "${1:-}" == push && -f "$FAIL_SECOND_PUSH" ]]; then
+  count=$(cat "$FAIL_SECOND_PUSH"); echo $((count + 1)) > "$FAIL_SECOND_PUSH"
+  if [[ "$count" -ge 1 ]]; then echo "simulated push failure" >&2; exit 1; fi
+fi
+exec "$REAL_GIT" "$@"
+''')
+    (binary / "git").chmod(0o755)
+    marker = host["tmp"] / "pushes"
+    marker.write_text("0")
+    failing = {**env, "REAL_GIT": shutil.which("git"), "FAIL_SECOND_PUSH": str(marker),
+               "PATH": str(binary) + os.pathsep + env["PATH"], "TELEMETRY_TEST_TOKEN": "run-run-2"}
+    first = subprocess.run(["bash", str(SHARED / "post-strategy.sh")], env=failing,
+                           capture_output=True, text=True)
+    assert first.returncode != 0, first.stdout + first.stderr  # failed after the run was pushed
+    published = set(_git(remote, "ls-tree", "-r", "--name-only", "main").split())
+    assert "RHAISTRAT/run-run-2/.publication.json" in published
+    assert not any("/telemetry/" in p for p in published)
+    # Retry: everything works now, and telemetry could be built from the readable inputs.
+    second = subprocess.run(["bash", str(SHARED / "post-strategy.sh")], env=env,
+                            capture_output=True, text=True)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "immutable run already published" not in second.stdout + second.stderr
+    published = set(_git(remote, "ls-tree", "-r", "--name-only", "main").split())
+    assert not any("/telemetry/" in p for p in published)  # still the sealed outcome
+    assert "RHAISTRAT/summary.json" in published
 
 
 @pytest.mark.parametrize("concurrent", [False, True])
