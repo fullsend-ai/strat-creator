@@ -49,6 +49,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -202,15 +203,24 @@ class Descriptor:
         return self.get("inputs.0.relation.kind") == "self"
 
     @property
-    def architecture_dir(self):
-        """Where this type's architecture docs are read: ``<dest>/<path>`` of its
-        ``architecture-context`` context source when that names its own repository (``--repo``,
-        ``--path``, ``--dest`` args), else the shared RHOAI checkout ``.context/architecture-context``."""
+    def architecture_fetch_args(self):
+        """The args of this type's ``architecture-context`` context source when that names its own
+        repository (``--repo``, ``--path``, ``--dest``), else ``None`` (the shared RHOAI checkout)."""
         for source in self.get("pipeline.context_sources", []) or []:
             args = source.get("args") or []
-            if source.get("name") == "architecture-context" and "--dest" in args and "--path" in args:
-                return f"{args[args.index('--dest') + 1]}/{args[args.index('--path') + 1]}"
-        return ".context/architecture-context"
+            if source.get("name") == "architecture-context" and all(
+                    flag in args[:-1] for flag in ("--dest", "--path")):  # each flag followed by its value
+                return list(args)
+        return None
+
+    @property
+    def architecture_dir(self):
+        """Where this type's architecture docs are read: ``<dest>/<path>`` of its own architecture
+        source (``architecture_fetch_args``), else the shared RHOAI checkout ``.context/architecture-context``."""
+        args = self.architecture_fetch_args
+        if args is None:
+            return ".context/architecture-context"
+        return f"{args[args.index('--dest') + 1]}/{args[args.index('--path') + 1]}"
 
     @property
     def strategy_in_description(self):
@@ -583,6 +593,16 @@ def _cmd_get(reg, args):
     return 0
 
 
+def _cmd_arch_source(reg, args):
+    """``ARCH_DIR=<dir>`` and ``ARCH_FETCH_ARGS=<args>``: where the type reads its architecture docs
+    and the fetch script's args for its own source, shell-quoted (empty for the RHOAI default)."""
+    desc = reg.get(args.type)
+    fetch = desc.architecture_fetch_args
+    print(f"ARCH_DIR={desc.architecture_dir}")
+    print(f"ARCH_FETCH_ARGS={shlex.join(fetch) if fetch else ''}")
+    return 0
+
+
 def _cmd_resolve(reg, args):
     result = resolve(reg, explicit_type=args.type, artifact=args.artifact, ids=args.ids,
                      headless=args.headless)
@@ -607,6 +627,9 @@ def _build_parser():
     get.add_argument("path")
     get.add_argument("--json", action="store_true")
     get.set_defaults(func=_cmd_get)
+    arch = sub.add_parser("arch-source", help="a type's architecture docs dir and its shell-quoted fetch args")
+    arch.add_argument("type")
+    arch.set_defaults(func=_cmd_arch_source)
     resolve_ = sub.add_parser("resolve", help="resolve the type of a run and print the TYPE RESOLVED line")
     resolve_.add_argument("--type", default=None, help="explicit type (rung 1)")
     resolve_.add_argument("--artifact", default=None, metavar="PATH",

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Pull a RHAISTRAT issue from Jira into the local/ workspace for human review.
+"""Pull a strategy issue from Jira into the local/ workspace for human review.
 
 Fetches the strategy description, linked RFE context, and review comments.
 Only works on post-CI strategies (must have strat-creator-rubric-pass or
-strat-creator-needs-attention label).
+strat-creator-needs-attention label), except a first local draft: a Story of a
+same-ticket type that keeps its strategy in the description
+(react-shopping-cart-strategy) that passes its type's intake gate.
 
 Usage:
     python3 scripts/pull_strategy.py RHAISTRAT-1520
@@ -71,16 +73,20 @@ def _same_ticket_type(key, fields=None):
 
 def _first_local_draft_allowed(key, fields, labels):
     """True when ``key`` is a ticket of a same-ticket type that keeps its strategy in the description
-    and carries one of its intake ``quality_labels`` (``discovery.settings``): a person may pull it
-    for a first local refinement before any CI review."""
+    and passes its intake gate (``discovery.settings`` jql): one of its ``quality_labels``, none of its
+    ``excluded_labels``, and a status outside ``excluded_statuses``. A person may then pull it for a
+    first local refinement before any CI review."""
     desc = _same_ticket_type(key, fields)
     if not desc or not desc.strategy_in_description:
         return False
     import yaml
-    with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                           desc.get("discovery.settings")), encoding="utf-8") as stream:
-        quality = (yaml.safe_load(stream).get("jql") or {}).get("quality_labels") or []
-    return bool(labels & set(quality))
+    # PLUGIN_ROOT resolves symlinks: run through a skill's scripts/ link, __file__ sits in the skill dir.
+    with open(type_registry.PLUGIN_ROOT / desc.get("discovery.settings"), encoding="utf-8") as stream:
+        jql = yaml.safe_load(stream).get("jql") or {}
+    status = (fields.get("status") or {}).get("name")
+    return (bool(labels & set(jql.get("quality_labels") or []))
+            and not labels & set(jql.get("excluded_labels") or [])
+            and status not in (jql.get("excluded_statuses") or []))
 
 
 def _write_comments(path, key, comments):
@@ -137,7 +143,7 @@ def pull_strategy(server, user, token, strat_key, local_dir=WORKSPACE, *, pipeli
     # Fetch the STRAT issue
     issue = get_issue(server, user, token, strat_key,
                       fields=["summary", "description", "labels",
-                              "priority", "issuelinks", "attachment", "issuetype"])
+                              "priority", "issuelinks", "attachment", "issuetype", "status"])
     fields = issue.get("fields", {})
 
     # Validate post-CI labels
@@ -370,9 +376,9 @@ def pull_strategy(server, user, token, strat_key, local_dir=WORKSPACE, *, pipeli
     # Fetch review summary from comments
     reviews_dir = os.path.join(local_dir, _DIRS["reviews"])
     strat_comments = get_comments(server, user, token, strat_key)
-    if same_ticket:
+    if same_ticket and same_ticket.strategy_in_description:
         # The ticket is its own source: its comments (the removed-context comment, triage) are the
-        # source comments refine reads.
+        # source comments refine reads. (initiative-strategy keeps its pull output unchanged.)
         _write_comments(os.path.join(local_dir, _DIRS["originals"], f"{strat_key}-comments.md"),
                         strat_key, strat_comments)
         result["files"].append(os.path.join(local_dir, _DIRS["originals"], f"{strat_key}-comments.md"))

@@ -640,3 +640,42 @@ def test_where_each_type_keeps_its_strategy_and_reads_its_architecture():
     shop = REG.get(SHOP)
     assert "signoff" not in shop.get("pipeline.stages") and "summary_prefix" not in shop.get("conventions")
     assert shop.get("pipeline.dimensions.3.condition.context_exists") == shop.architecture_dir
+
+
+def test_gate1_eval_is_optional_and_context_args_are_plain_words(tmp_path, capsys):
+    """A descriptor without an eval block is valid (the demo type has none); a context-source arg
+    that is not one plain word (whitespace, shell metacharacters, '..') is refused."""
+    def drop_eval(data):
+        del data["eval"]
+
+    def unsafe_args(data):
+        data["pipeline"]["context_sources"][0]["args"] = [
+            "--repo", "https://example.invalid/x;touch pwned", "--path", "../up", "--dest", ".context/x"]
+
+    assert validate_types.main(["--root", str(_dropin(tmp_path / "a", "no-eval-strategy", drop_eval))]) == 0
+    capsys.readouterr()
+    assert validate_types.main(["--root", str(_dropin(tmp_path / "b", "unsafe-args-strategy", unsafe_args))]) == 1
+    out = capsys.readouterr().out
+    assert "x;touch pwned' does not match" in out and "'../up' does not match" in out
+
+
+def test_arch_source_prints_the_docs_dir_and_shell_quoted_fetch_args():
+    """The skills build the fetch command from `type_registry.py arch-source`, never by joining the
+    descriptor's args themselves."""
+    def arch_source(name):
+        process = subprocess.run([sys.executable, str(REPO / "scripts/type_registry.py"), "arch-source", name],
+                                 capture_output=True, text=True, check=True)
+        return process.stdout.splitlines()
+
+    assert arch_source(SHIPPED) == ["ARCH_DIR=.context/architecture-context", "ARCH_FETCH_ARGS="]
+    assert arch_source(SHOP) == [
+        "ARCH_DIR=.context/react-shopping-cart-architecture/docs/architecture",
+        "ARCH_FETCH_ARGS=--repo https://github.com/fullsend-ai/react-shopping-cart --path docs/architecture"
+        " --dest .context/react-shopping-cart-architecture"]
+
+
+def test_build_dataset_refuses_a_type_without_an_eval_block():
+    assert REG.get(SHOP).get("eval", None) is None
+    process = subprocess.run([sys.executable, str(REPO / "eval/scripts/build_dataset.py"), "--type", SHOP],
+                             capture_output=True, text=True)
+    assert process.returncode == 1 and f"type {SHOP} has no eval block" in process.stderr

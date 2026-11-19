@@ -97,7 +97,7 @@ retain their normal approval gate. Do not remove approval labels to bypass it.
 
 ## Step 2: Fetch Architecture Context
 
-A type whose `pipeline.context_sources` entry named `architecture-context` has `args` (`react-shopping-cart-strategy`: the storefront's `docs/architecture`) has its own source, in `<dest>/<path>` (`python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py get <type> pipeline.context_sources --json`). For such a type, skip the rest of this step: if that directory does not exist, run `bash ${CLAUDE_SKILL_DIR}/scripts/fetch-architecture-context.sh <args>`; with `--architecture-context <path>` in `$ARGUMENTS`, pass `--repo <path>` in place of the entry's `--repo`, plus `--ref <branch>` for `--architecture-ref <branch>`. Everywhere below, read that directory where `.context/architecture-context/` is named (start with its `ARCHITECTURE.md`); there is no `rhoai-*` version, `PLATFORM.md` or overlays.
+A type whose `pipeline.context_sources` entry named `architecture-context` has `args` (`react-shopping-cart-strategy`: the storefront's `docs/architecture`) has its own source: `python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py arch-source <type>` prints `ARCH_DIR=<dir>` and `ARCH_FETCH_ARGS=<args>` (already shell-quoted; empty for the shared RHOAI checkout). For a type with non-empty `ARCH_FETCH_ARGS`, skip the rest of this step: if `ARCH_DIR` does not exist, run `bash ${CLAUDE_SKILL_DIR}/scripts/fetch-architecture-context.sh <ARCH_FETCH_ARGS>`, pasting the args as printed; with `--architecture-context <path>` in `$ARGUMENTS`, pass `--repo <path>` in place of the entry's `--repo`, plus `--ref <branch>` for `--architecture-ref <branch>`. Everywhere below, read that directory where `.context/architecture-context/` is named (start with its `ARCHITECTURE.md`); there is no `rhoai-*` version, `PLATFORM.md` or overlays.
 
 If `--architecture-context <path>` is in `$ARGUMENTS`, use the local path:
 
@@ -166,7 +166,7 @@ Substitute all placeholders:
 - `{DATA_FILE}` → the strategy file path (e.g., `artifacts/strat-tasks/RHAISTRAT-1469.md`)
 - `{KEY}` → the strategy key (e.g., `RHAISTRAT-1469`)
 - `{RUN_DIR}` → `tmp/strat-assess/review`
-- `{ARCH_DIR}` → `.context/architecture-context/`, or the type's own `<dest>/<path>/` (Step 2)
+- `{ARCH_DIR}` → `.context/architecture-context/`, or the type's own `ARCH_DIR` from `arch-source` (Step 2)
 
 Wait for the scorer agent to complete.
 

@@ -1174,3 +1174,11 @@ class TestPushDescriptionHome:
         result = _run(jira, "TSTAPP-91", local_file)
         assert result.returncode == 1 and "type: react-shopping-cart-strategy" in result.stderr, result.stderr
         assert "A strategy." not in _get_description_markdown(jira, "TSTAPP-91")
+
+    def test_a_shop_strategy_never_lands_on_another_types_ticket(self, jira, art_dir):
+        """A file stamped react-shopping-cart-strategy pushed to an RHAISTRAT Feature is refused, so a
+        Shop strategy never rewrites a clone's description."""
+        jira.create("RHAISTRAT-1700", "A Feature", "Business need.", issue_type="Feature")
+        result = _run(jira, "RHAISTRAT-1700", self._local(art_dir, "A shop how."))
+        assert result.returncode == 1 and "stamped 'type: react-shopping-cart-strategy'" in result.stderr
+        assert "A shop how." not in _get_description_markdown(jira, "RHAISTRAT-1700")

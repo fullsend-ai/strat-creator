@@ -16,7 +16,7 @@ from rfe-creator PR #172 §3.5.
 |---|---|---|
 | `rfe-strategy` | RHAIRFE Feature Request → RHAISTRAT Feature (Cloners link) | today's pipeline, plus the `type:` stamp on task files; every value is a live literal with its `file:line @ cc1ba8c` |
 | `initiative-strategy` | RHAISTRAT Initiative → the same ticket (`relation.kind: self`) | draft twin; the open questions are marked inline |
-| `react-shopping-cart-strategy` | TSTAPP Story (a Shop RFE from rfe-creator's `react-shopping-cart`) → the same Story (`relation.kind: self`) | demo storefront; run by hand with the skills; the strategy goes in the Story description (`pipeline.strategy_home: description`), no sign-off stage (`/fs-code` is the sign-off), the storefront's own `docs/architecture` |
+| `react-shopping-cart-strategy` | TSTAPP Story (a Shop RFE from rfe-creator's `react-shopping-cart`) → the same Story (`relation.kind: self`) | the React demo storefront [fullsend-ai/react-shopping-cart](https://github.com/fullsend-ai/react-shopping-cart); run by hand with the skills; the strategy goes in the Story description (`pipeline.strategy_home: description`), no sign-off stage (`/fs-code` is the sign-off), the storefront's own `docs/architecture` |
 
 ## Selecting a type
 
@@ -53,9 +53,13 @@ is no `tracker_ref`: `jira_key` (`identity.tracker_key_field`) already holds the
    `relation.kind: self` the strategy runs on the input ticket: strategy-create names the task file by its key,
    clones nothing and starts from the newest `pipeline.body_overflow.attachment`, strategy-refine leaves the Jira
    push to `push_refined_strategies.py`, `push_strategy.py` writes only that attachment (never the ticket's summary
-   or description) unless `pipeline.strategy_home` is `description`, when it replaces only the Strategy and SME
-   sections below the ticket's own, `pull_strategy.py` reads the newest one back under the `section_ownership[0]` heading and the
+   or description), `pull_strategy.py` reads the newest one back under the `section_ownership[0]` heading and the
    ticket's description, and strategy-signoff skips the `[DRAFT]` strip for a type without a `summary_prefix`.
+   With `pipeline.strategy_home: description` (`react-shopping-cart-strategy`) the strategy lives in the ticket's
+   description instead: strategy-refine pushes it as for a clone, `push_strategy.py` replaces only the Strategy and
+   SME sections below the ticket's own (the attachment only on overflow), and `pull_strategy.py` reads them from the
+   description, writes the ticket's comments as its source comments, and can pull a ticket that passes the type's
+   intake gate before any review (a first local draft).
 3. `make lint`, then `make test-unit`. `tests/test_type_registry.py` lists the shipped types: add yours to
    `SHIPPED_ALL` and bump the counts in `test_shipped_types` and `test_gate1_passes_on_the_shipped_types`.
 4. Select it with `--type <name>`: `list-rfe-ids.py` and the create, refine, review and sign-off skills take it. The

@@ -1,6 +1,6 @@
 ---
 name: strategy-pull
-description: Pull a strategy (a RHAISTRAT issue, or an Initiative's strategy) from Jira into the local/ workspace for human review. Only works on post-CI strategies.
+description: Pull a strategy (a RHAISTRAT issue, an Initiative's strategy, or a Shop RFE's TSTAPP Story) from Jira into the local/ workspace for human review. Only works on post-CI strategies, except a Shop RFE's first local draft.
 user-invocable: true
 allowed-tools: Read, Write, Bash, Glob, Grep
 ---

@@ -18,7 +18,6 @@
     "pipeline",
     "snapshot",
     "reporting",
-    "eval",
     "inputs"
   ],
   "additionalProperties": false,
@@ -127,7 +126,7 @@
     },
     "snapshot": { "$ref": "#/$defs/snapshot" },
     "reporting": { "$ref": "#/$defs/reporting" },
-    "eval": { "$ref": "#/$defs/eval" },
+    "eval": { "$ref": "#/$defs/eval", "description": "strat-creator. Optional: a type without it (react-shopping-cart-strategy, a demo type) has no eval, and eval/scripts/build_dataset.py refuses it." },
     "discovery": {
       "type": "object",
       "required": ["settings"],
@@ -607,7 +606,7 @@
             "properties": {
               "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
               "bootstrap": { "$ref": "#/$defs/repo_path", "description": "Script the SETUP phase runs from the plugin root." },
-              "args": { "type": "array", "items": { "type": "string" }, "description": "Extra argv after the script path (e.g. ['--type', 'rfe'])." },
+              "args": { "type": "array", "items": { "type": "string", "pattern": "^(?!.*\\.\\.)[A-Za-z0-9._:/@=+-]+$" }, "description": "Extra argv after the script path (e.g. ['--type', 'rfe'], or the architecture fetch's ['--repo', <url>, '--path', <dir>, '--dest', '.context/<dir>']). Each arg is one plain word: no whitespace, shell metacharacters or '..'. type_registry.py arch-source prints them shell-quoted for the skills." },
               "required": { "type": "boolean", "description": "Whether a failure is fatal. No consumer at PR-1: SETUP runs its commands concurrently and only logs exit codes." }
             }
           },

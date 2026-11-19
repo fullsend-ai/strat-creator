@@ -896,6 +896,7 @@ class TestPullSameTicket:
             "strat_id": "RHAISTRAT-2200", "source_initiative": "RHAISTRAT-2200",
             "jira_key": "RHAISTRAT-2200", "type": "initiative-strategy"}
         assert "source_rfe" not in data
+        assert not (local_dir / "strat-originals" / "RHAISTRAT-2200-comments.md").exists()  # Shop-only file
         heading = "## Business Need (from Initiative)"
         assert body.strip().startswith(f"{heading}\n\nGrow the platform.\n\n{STRATEGY_HEADING}")
         assert "Second strategy." in body and "First strategy." not in body
@@ -942,7 +943,7 @@ class TestPullFirstLocalDraft:
 
     def test_an_intake_labeled_story_pulls_as_a_draft_stub_with_its_comments(self, jira, tmp_path):
         jira.create("TSTAPP-93", "Add the bottle", "## Summary\n\nAdd the bottle.",
-                    labels=["rsc-creator-autofix-rubric-pass", "rsc-creator-needs-attention"], issue_type="Story")
+                    labels=["rsc-creator-autofix-rubric-pass"], issue_type="Story")
         local_dir = tmp_path / "local"
         result = _run(jira, "TSTAPP-93", local_dir)
         assert result.returncode == 0, result.stderr
@@ -953,6 +954,19 @@ class TestPullFirstLocalDraft:
         assert body.rstrip().endswith("remove the needs-attention label from Jira.*")
         assert (local_dir / "strat-originals" / "TSTAPP-93-comments.md").read_text().startswith(
             "# Comments: TSTAPP-93")
+
+    @pytest.mark.parametrize("labels, status", [
+        pytest.param(["rsc-creator-autofix-rubric-pass", "rsc-creator-needs-attention"], None, id="needs-attention"),
+        pytest.param(["rsc-creator-autofix-rubric-pass", "rsc-creator-ignore"], None, id="ignored"),
+        pytest.param(["rsc-creator-autofix-rubric-pass"], "Closed", id="closed"),
+    ])
+    def test_a_story_the_intake_gate_excludes_is_refused(self, jira, tmp_path, labels, status):
+        """The first-draft pull applies the whole intake gate of config/react-shopping-cart-settings.yaml."""
+        jira.create("TSTAPP-95", "Excluded", "## Summary\n\nA story.", labels=labels, issue_type="Story",
+                    status=status)
+        result = _run(jira, "TSTAPP-95", tmp_path / "local")
+        assert result.returncode == 1 and "post-CI label" in result.stderr
+        assert not (tmp_path / "local" / "strat-tasks" / "TSTAPP-95.md").exists()
 
     def test_a_story_without_the_intake_label_is_refused(self, jira, tmp_path):
         jira.create("TSTAPP-94", "Hand-written", "## Summary\n\nA story.", issue_type="Story")

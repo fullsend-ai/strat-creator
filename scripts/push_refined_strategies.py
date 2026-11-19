@@ -117,8 +117,9 @@ def main():
               file=sys.stderr)
         return 2
 
-    # Every registered type's tracker keys (RHAISTRAT-, shared by both); a local STRAT-/ISTRAT- draft has no issue yet.
-    # push_strategy.py writes a same-ticket key (relation self) only as its strategy attachment.
+    # Every registered type's tracker keys (RHAISTRAT-, and TSTAPP- for react-shopping-cart-strategy); a local
+    # STRAT-/ISTRAT-/RSCSTRAT- draft has no issue yet. push_strategy.py writes a same-ticket key (relation self) only
+    # as its strategy attachment, unless its type keeps the strategy in the description (strategy_home: description).
     prefixes = [p for desc in type_registry.load() for p in desc.key_prefixes]
     files = sorted({f for p in prefixes for f in glob.glob(os.path.join(args.artifacts_dir, f"{p}*.md"))})
     if not files:
