@@ -14,6 +14,7 @@ Data repo structure:
             strat-reviews/
             strat-originals/
             reports/
+            telemetry/          # usage.json + raw/*.gz (agentic-telemetry/v1)
         20260412-100000/
         current -> 20260412-100000
 """
@@ -32,8 +33,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from strat_side_effects import atomic, locked  # noqa: E402
 
-ARTIFACT_DIRS = ("strat-tasks", "strat-reviews", "strat-originals", "reports")
-LOOSE = ("strat-skipped.md", "strat-jira-guide.md", "strat-tickets.md", "pipeline-data.json", "claude-otel.jsonl")
+# telemetry/ is the run's agentic-telemetry/v1 folder (telemetry_bundle.py), the
+# layout epic-decomposer and rfe-autofixer publish too.
+ARTIFACT_DIRS = ("strat-tasks", "strat-reviews", "strat-originals", "reports", "telemetry")
+LOOSE = ("strat-skipped.md", "strat-jira-guide.md", "strat-tickets.md", "pipeline-data.json")
+# Never published any more: the cleaned copy lives in telemetry/raw/. A stray
+# root-level copy is removed before staging so `git add -A` cannot commit the
+# uncleaned log.
+UNPUBLISHED = ("claude-otel.jsonl",)
+
+
+def drop_unpublished(results_dir):
+    for name in UNPUBLISHED:
+        path = Path(results_dir) / name
+        if path.is_file() or path.is_symlink():
+            print(f"WARNING: removing {name} from the results checkout; it is not published")
+            path.unlink()
 
 # Carried from github.com/jctanner-opendatahub-io/strat-creator at 78ab3f1e,
 # .fullsend/scripts/ci/push-results.py (Apache-2.0); see .fullsend/README.md.
@@ -48,6 +63,7 @@ def git(args, cwd):
 
 def organize_run(results_dir, run_id=None, subdir="RHAISTRAT"):
     """Move strategy artifacts into a timestamped run directory."""
+    drop_unpublished(results_dir)
     if run_id is not None:
         return organize_identified_run(results_dir, run_id, subdir)
     rhaistrat_dir = results_dir / subdir
@@ -57,7 +73,7 @@ def organize_run(results_dir, run_id=None, subdir="RHAISTRAT"):
     run_dir = rhaistrat_dir / ts
 
     # Collect artifacts written by Claude
-    artifact_dirs = ["strat-tasks", "strat-reviews", "strat-originals", "reports"]
+    artifact_dirs = list(ARTIFACT_DIRS)
     has_artifacts = False
 
     for d in artifact_dirs:
@@ -84,8 +100,7 @@ def organize_run(results_dir, run_id=None, subdir="RHAISTRAT"):
         if src.is_dir():
             shutil.rmtree(src)
     # Copy loose artifact files into the run directory
-    for name in ["strat-skipped.md", "strat-jira-guide.md", "strat-tickets.md",
-                  "pipeline-data.json", "claude-otel.jsonl"]:
+    for name in LOOSE:
         src = results_dir / name
         if src.exists():
             shutil.copy2(src, run_dir / name)
@@ -153,6 +168,7 @@ def organize_identified_run(results_dir, run_id, subdir="RHAISTRAT"):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", subdir):
         raise ValueError("invalid publication folder")
     results_dir = results_dir.resolve(strict=True)
+    drop_unpublished(results_dir)
     state = publication_path(results_dir, ".git/strat-publication.json")
     run_relative = Path(subdir) / ("run-" + run_id)
     run_dir = publication_path(results_dir, run_relative)
