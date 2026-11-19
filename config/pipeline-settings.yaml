@@ -41,6 +41,7 @@ jql:
     # 3.7 milestones — RHAII, RHOAI, RHELAI
     - "3.7 EA RHAII RELEASE"
     - "3.7 EA RHOAI RELEASE"
+    - "3.7 EA1 RHOAI RELEASE"
     - "3.7 EA RHELAI RELEASE"
     - "3.7 GA  RHAII RELEASE"   # double space matches the Jira version name
     - "3.7 GA RHOAI RELEASE"
