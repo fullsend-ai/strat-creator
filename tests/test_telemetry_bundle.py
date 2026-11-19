@@ -509,6 +509,38 @@ class TelemetryBundleTest(unittest.TestCase):
         self.assertEqual(stored["model"], "claude-opus-5-5")
         self.assertEqual(stored["token_usage"]["reasoning"], 54968)
 
+    def test_names_and_numbers_in_metrics_are_validated(self):
+        credential = "user:" + "tok3n@gitlab.example.com"
+        metrics = dict(FULLSEND_METRICS)
+        metrics.update(
+            model=credential,
+            requested_model="https://gitlab.example.com/x",
+            runtime="claude",
+            requested_runtime="claude-opus-4-5@20251101",
+            num_turns="free-text",  # identifier-shaped text in a number field
+            iterations="3",
+            per_model_usage={
+                **FULLSEND_METRICS["per_model_usage"],
+                credential: {"requests": 1, "cost_usd": 0.1},
+                "us.anthropic.claude-sonnet-4-5-v1:0": {"requests": 1, "cost_usd": 0.1},
+            },
+        )
+        (self.run_dir / "metrics.json").write_text(json.dumps(metrics))
+        out = self.tmp / "telemetry"
+        self.bundle.write_bundle(str(out), "p", fullsend_run_dir=str(self.run_dir))
+        stored = self.stored_lines(out, "fullsend-metrics.json.gz")[0]
+        self.assertNotIn("tok3n", json.dumps(stored))
+        self.assertNotIn("tok3n", (out / "usage.json").read_text())
+        self.assertIsNone(stored["model"])
+        self.assertIsNone(stored["requested_model"])
+        self.assertEqual(stored["runtime"], "claude")
+        self.assertEqual(stored["requested_runtime"], "claude-opus-4-5@20251101")
+        self.assertIsNone(stored["num_turns"])
+        self.assertEqual(stored["iterations"], 3)
+        expected_models = ["claude-opus-5-5", "us.anthropic.claude-sonnet-4-5-v1:0"]
+        self.assertEqual(sorted(stored["per_model_usage"]), expected_models)
+        self.assertEqual(sorted(self.usage(out)["by_model"]), expected_models)
+
     def test_ci_values_that_are_not_gitlab_formats_are_dropped(self):
         os.environ.update(
             CI_PROJECT_PATH="g/p",

@@ -207,12 +207,17 @@ SAFE_NAME = re.compile(
 )
 PATH_VALUE = re.compile(r"^/v1/(?:logs|metrics|traces)$")
 # The usage fields kept from Fullsend's metrics.json (nested: token_usage, per_model_usage).
-METRICS_FIELDS = ("num_turns", "total_cost_usd", "tool_calls", "iterations", "model",
-                  "requested_model", "runtime", "requested_runtime")
+METRICS_NUMBER_FIELDS = ("num_turns", "total_cost_usd", "tool_calls", "iterations")
+METRICS_NAME_FIELDS = ("model", "requested_model", "runtime", "requested_runtime")
+METRICS_FIELDS = METRICS_NUMBER_FIELDS + METRICS_NAME_FIELDS
 METRICS_TOKEN_FIELDS = ("input", "output", "reasoning", "cache_creation", "cache_read")
 METRICS_MODEL_FIELDS = ("requests", "input_tokens", "output_tokens",
                         "cache_creation_input_tokens", "cache_read_input_tokens", "cost_usd")
-IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,99}$")
+IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+# Model and runtime names: an identifier, optionally with a date version
+# (claude-opus-4-5@20251101) and a numeric revision (...-v1:0). No other "@",
+# ":" or "/", so URL userinfo (user:token@host) and URLs never match.
+MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}(?:@\d{8})?(?::\d{1,3})?$")
 CI_FORMATS = {
     "project": re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_./-]{0,254}$"),
     "pipeline_id": re.compile(r"^\d{1,20}$"),
@@ -259,7 +264,7 @@ def _attributes(owner):
 
 def _model_name(value):
     """A model name for usage.json: a plain identifier, else "unknown"."""
-    return value if isinstance(value, str) and IDENTIFIER.match(value) else "unknown"
+    return value if isinstance(value, str) and MODEL_NAME.match(value) else "unknown"
 
 
 def _empty_usage():
@@ -468,12 +473,11 @@ def _metrics_subset(path):
     if not isinstance(metrics, dict):
         raise ValueError("metrics.json is not an object")
 
-    def scalar(value):
-        if isinstance(value, str):
-            return value if IDENTIFIER.match(value) else None
-        return _number(value)
+    def name(value):
+        return value if isinstance(value, str) and MODEL_NAME.match(value) else None
 
-    subset = {key: scalar(metrics.get(key)) for key in METRICS_FIELDS if key in metrics}
+    subset = {key: _number(metrics.get(key)) for key in METRICS_NUMBER_FIELDS if key in metrics}
+    subset.update({key: name(metrics.get(key)) for key in METRICS_NAME_FIELDS if key in metrics})
     tokens = metrics.get("token_usage")
     if isinstance(tokens, dict):
         subset["token_usage"] = {key: _number(tokens.get(key))
@@ -483,7 +487,7 @@ def _metrics_subset(path):
         subset["per_model_usage"] = {
             model: {key: _number(usage.get(key)) for key in METRICS_MODEL_FIELDS if key in usage}
             for model, usage in sorted(models.items())
-            if isinstance(usage, dict) and isinstance(model, str) and IDENTIFIER.match(model)
+            if isinstance(usage, dict) and name(model) is not None
         }
     return subset
 
