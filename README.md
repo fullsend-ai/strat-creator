@@ -57,7 +57,7 @@ In JQL mode, RFEs go through a two-stage filter before reaching the skills:
 
 **Stage 1 — Jira-side (JQL query):**
 - Must be in `RHAIRFE` project
-- Must have at least one label in `jql.required_labels` or a Target Version in `jql.target_versions`
+- Must have at least one label in `jql.required_labels` or one of the resolved Target Versions: the live, unreleased Jira versions of each `jql.target_version_trains` entry (named `<train> <EA|EAn|GA> <RHAII|RHOAI|RHELAI> RELEASE`) plus `jql.extra_target_versions`, or `jql.target_versions` verbatim when that override is set. A train that matches no version fails the run. `python3 scripts/target_versions.py` prints the resolved list
 - Must have at least one label in `jql.quality_labels` when that list is configured
 - Must NOT have a status in `jql.excluded_statuses`
 - Ordered by `key ASC` for deterministic batching

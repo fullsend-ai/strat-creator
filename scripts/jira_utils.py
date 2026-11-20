@@ -218,8 +218,87 @@ def query_label_counts(server, user, token, labels):
     return counts
 
 
-def build_jql_from_config(config_path):
-    """Build a JQL query string from pipeline-settings.yaml."""
+# --- Intake target versions ---
+# A release train's live Target Versions are named "<train> <event> <product> RELEASE" (e.g.
+# "3.7 EA1 RHOAI RELEASE"). Whitespace runs are tolerated so a name Jira spells with a double
+# space still resolves; the JQL quotes the live name verbatim.
+TARGET_VERSION_PRODUCTS = ("RHAII", "RHOAI", "RHELAI")
+_TARGET_VERSION_RE = re.compile(
+    r"^(?P<train>\S+)\s+(?P<event>EA\d*|GA)\s+"
+    rf"(?P<product>{'|'.join(TARGET_VERSION_PRODUCTS)})\s+RELEASE$")
+
+
+class TargetVersionError(ValueError):
+    """The intake gate's target versions could not be resolved (a train matched nothing)."""
+
+
+def _target_version_order(match):
+    """Sort key: event (EA, EA1, EA2, ..., GA), then product (TARGET_VERSION_PRODUCTS order)."""
+    event = match["event"]
+    rank = (1, 0) if event == "GA" else (0, int(event[2:] or 0))
+    return rank, TARGET_VERSION_PRODUCTS.index(match["product"])
+
+
+def resolve_target_versions(jql_cfg, project_versions=None):
+    """The Target Version names a settings file's ``jql`` block matches, in a stable order.
+
+    ``target_versions``, when non-empty, is an explicit full override and is returned verbatim.
+    Otherwise each ``target_version_trains`` entry resolves to the project's live versions that
+    are neither released nor archived and are named ``<train> <EA|EAn|GA> <product> RELEASE``,
+    in train order, then event order, then product order; ``extra_target_versions`` (values
+    issues hold with no backing version in Jira) follow, deduplicated.
+
+    ``project_versions`` is the project's version list (``get_project_versions``); when None and
+    a train is configured, it is fetched with the JIRA_* credentials. A train that resolves to
+    no version raises TargetVersionError: a renamed or missing version must fail the run, not
+    silently drop RFEs from discovery. A live unreleased version of a train whose name does not
+    fit the pattern is skipped with a warning on stderr.
+    """
+    explicit = list(jql_cfg.get("target_versions") or [])
+    if explicit:
+        return explicit
+    trains = jql_cfg.get("target_version_trains") or []
+    extra = [str(v) for v in jql_cfg.get("extra_target_versions") or []]
+    project = jql_cfg.get("project", _TYPE.get("inputs.0.jira.project"))
+    resolved = []
+    for train in trains:
+        if not isinstance(train, str):
+            # An unquoted YAML 3.10 is the float 3.1: refuse rather than resolve the wrong train.
+            raise TargetVersionError(f"target_version_trains entry {train!r} must be a quoted string")
+    if trains and project_versions is None:
+        server, user, token = require_env()
+        if not all([server, user, token]):
+            raise TargetVersionError("JIRA_SERVER, JIRA_USER, JIRA_TOKEN are required to resolve "
+                                     "jql.target_version_trains")
+        project_versions = get_project_versions(server, user, token, project)
+    for train in trains:
+        matched = []
+        for version in project_versions or []:
+            name = version.get("name") or ""
+            if name.split()[:1] != [train] or version.get("released") or version.get("archived"):
+                continue
+            m = _TARGET_VERSION_RE.match(name)
+            if not m or m["train"] != train:
+                print(f"warning: skipping target version {name!r} of train {train}: not named "
+                      f"'<train> <EA|EAn|GA> <{'|'.join(TARGET_VERSION_PRODUCTS)}> RELEASE'",
+                      file=sys.stderr)
+                continue
+            matched.append((_target_version_order(m), name))
+        if not matched:
+            raise TargetVersionError(
+                f"train {train} matched no unreleased versions in {project} — was it renamed "
+                f"or not yet created?")
+        resolved.extend(name for _, name in sorted(matched))
+    return list(dict.fromkeys(resolved + extra))
+
+
+def build_jql_from_config(config_path, project_versions=None):
+    """Build a JQL query string from pipeline-settings.yaml.
+
+    ``project_versions`` feeds resolve_target_versions; None fetches them when trains need it.
+    Raises TargetVersionError when trains are configured and ``project_versions`` is None and
+    JIRA_SERVER/JIRA_USER/JIRA_TOKEN are unset, or when a train matches no unreleased version.
+    """
     import yaml
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
@@ -227,7 +306,11 @@ def build_jql_from_config(config_path):
     project = jql_cfg.get("project", _TYPE.get("inputs.0.jira.project"))
     issue_type = jql_cfg.get("issue_type")  # a project two types share (RHAISTRAT: Features, Initiatives)
     required = jql_cfg.get("required_labels", [])
-    target_versions = jql_cfg.get("target_versions", [])
+    target_versions = resolve_target_versions(jql_cfg, project_versions)
+    if target_versions:
+        # A rename shows up in the job trace as the diff of this line between runs.
+        print(f"resolved target versions ({len(target_versions)}): {', '.join(target_versions)}",
+              file=sys.stderr)
     quality = jql_cfg.get("quality_labels", [])
     excluded_labels = jql_cfg.get("excluded_labels", [])
     excluded = jql_cfg.get("excluded_statuses", [])
@@ -266,11 +349,16 @@ def build_jql_from_config(config_path):
     return jql
 
 
-def build_jql_from_type(descriptor=None):
+def build_jql_from_type(descriptor=None, project_versions=None):
     """The intake JQL of ``descriptor`` (default rfe-strategy), from the settings file its
-    ``discovery.settings`` names."""
+    ``discovery.settings`` names.
+
+    When that file configures ``target_version_trains`` and ``project_versions`` is None, the
+    live versions are fetched, so JIRA_SERVER/JIRA_USER/JIRA_TOKEN are required; without them,
+    or when a train matches no unreleased version, TargetVersionError is raised. Only list a
+    train once its Jira versions exist."""
     d = descriptor or _TYPE
-    return build_jql_from_config(os.path.join(_REPO, d.get("discovery.settings")))
+    return build_jql_from_config(os.path.join(_REPO, d.get("discovery.settings")), project_versions)
 
 
 def _linked_input_key(link, desc=None):

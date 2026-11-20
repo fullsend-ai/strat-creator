@@ -116,8 +116,12 @@ def main():
         print(f"JQL returned {len(ids)} RFE(s)", file=sys.stderr)
 
     elif args.jql_default is not None:
-        from jira_utils import build_jql_from_config
-        jql = build_jql_from_config(settings_path)
+        from jira_utils import TargetVersionError, build_jql_from_config
+        try:
+            jql = build_jql_from_config(settings_path)
+        except TargetVersionError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(2)
         print(f"JQL: {jql}", file=sys.stderr)
         ids = ids_from_jql(jql)
         print(f"JQL returned {len(ids)} RFE(s)", file=sys.stderr)

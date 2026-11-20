@@ -116,6 +116,16 @@ def jira(jira_emu):
         f"{jira_emu}/api/admin/reset", method="POST", data=b"")
     urllib.request.urlopen(req)
 
+    # Live Jira always holds versions for the active release trains, which
+    # list-rfe-ids.py and prepare_run.py resolve at runtime; seed one
+    # unreleased version per train config/pipeline-settings.yaml names.
+    import yaml
+    with open(os.path.join(SCRIPTS_DIR, "..", "config", "pipeline-settings.yaml")) as f:
+        intake = yaml.safe_load(f)["jql"]
+    for train in intake.get("target_version_trains") or []:
+        _jira_request(jira_emu, "POST", "/rest/api/3/version",
+                      {"project": intake["project"], "name": f"{train} GA RHOAI RELEASE"})
+
     class JiraHelper:
         url = jira_emu
 
@@ -176,6 +186,12 @@ def jira(jira_emu):
         def request(method, path, body=None):
             """Make an arbitrary API request to the emulator."""
             return _jira_request(jira_emu, method, path, body)
+
+        @staticmethod
+        def create_version(project, name, released=False):
+            """Create a project version (GET /project/{key} lists it), idempotently."""
+            return _jira_request(jira_emu, "POST", "/rest/api/3/version",
+                                 {"project": project, "name": name, "released": released})
 
     return JiraHelper()
 

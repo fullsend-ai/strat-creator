@@ -120,15 +120,30 @@ class TestMissingConfig:
 
 
 class TestTypeMode:
-    """--jql-default renders the work type's settings file before it needs Jira."""
+    """--jql-default renders the work type's settings file before it searches Jira; release trains
+    (jql.target_version_trains) are resolved from Jira's live versions first."""
 
     def test_jql_default_renders_the_type_settings(self):
         env = {k: v for k, v in os.environ.items() if not k.startswith("JIRA_")}
         result = _run(["--jql-default"], env=env)
-        assert result.returncode != 0  # no Jira credentials: stops after printing the JQL
-        assert 'JQL: project = RHAIRFE AND (labels = "strat-creator-3.5" OR' in result.stderr
-        assert result.stderr.count("ORDER BY key ASC") == 1
+        # No Jira credentials: the release trains cannot resolve, so it stops before any JQL.
+        assert result.returncode == 2
+        assert ("Error: JIRA_SERVER, JIRA_USER, JIRA_TOKEN are required to resolve "
+                "jql.target_version_trains") in result.stderr
+        assert "JQL:" not in result.stderr
         assert "TYPE RESOLVED" not in result.stderr  # no --type: the run prints what it did before
+
+    def test_static_target_versions_render_before_jira(self, tmp_path):
+        settings = tmp_path / "settings.yaml"
+        settings.write_text(yaml.safe_dump({"jql": {
+            "project": "RHAIRFE", "required_labels": ["strat-creator-3.7"],
+            "target_versions": ["3.7 GA RHOAI RELEASE"], "target_version_trains": ["9.9"]}}))
+        env = {k: v for k, v in os.environ.items() if not k.startswith("JIRA_")}
+        result = _run(["--jql-default", str(settings)], env=env)
+        assert result.returncode != 0  # no Jira credentials: stops after printing the JQL
+        assert "resolved target versions (1): 3.7 GA RHOAI RELEASE\n" in result.stderr
+        assert ('JQL: project = RHAIRFE AND (labels = "strat-creator-3.7" OR '
+                'cf[10855] in ("3.7 GA RHOAI RELEASE")) ORDER BY key ASC') in result.stderr
 
     def test_explicit_type_says_so_and_renders_the_same_gate(self):
         env = {k: v for k, v in os.environ.items() if not k.startswith("JIRA_")}
@@ -190,3 +205,35 @@ class TestSameTicketDiscovery:
         assert result.returncode == 0, result.stderr
         assert result.stdout.split() == ["RHAIRFE-4"]
         assert 'JQL: project = RHAIRFE AND (labels = "strat-creator-3.5" OR' in result.stderr
+
+
+class TestReleaseTrainDiscovery:
+    """--jql-default resolves rfe-strategy's release trains from RHAIRFE's live version list."""
+
+    def test_trains_select_live_unreleased_versions(self, jira, tmp_path):
+        # The emulator's JQL does not match multiselect cf[10855] values, so the RFE is selected by
+        # its label; the resolved version clause is checked in the rendered JQL.
+        jira.create("RHAIRFE-1", "Labelled", "d", labels=["strat-creator-3.7", "tech-reviewed"])
+        # conftest seeds "3.7 GA RHOAI RELEASE" and "3.8 GA RHOAI RELEASE".
+        for name in ("3.7 EA1 RHOAI RELEASE", "3.8 EA1 RHAII RELEASE", "3.7 [Fast-1] RHAII RELEASE"):
+            jira.create_version("RHAIRFE", name)
+        jira.create_version("RHAIRFE", "3.7 EA2 RHOAI RELEASE", released=True)
+        env = dict(os.environ, JIRA_SERVER=jira.url, JIRA_USER="admin", JIRA_TOKEN="admin")
+
+        result = _run(["--jql-default", "--include-processed"], env=env)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.split() == ["RHAIRFE-1"]
+        resolved = ('"3.7 EA1 RHOAI RELEASE", "3.7 GA RHOAI RELEASE", "3.8 EA1 RHAII RELEASE", '
+                    '"3.8 GA RHOAI RELEASE", "rhai-3.7", "rhai-3.8", "3.7 EA RHELAI RELEASE"')
+        assert f"resolved target versions (7): {resolved.replace(chr(34), '')}\n" in result.stderr
+        assert f'OR cf[10855] in ({resolved}))' in result.stderr  # the released 3.7 EA2 is left out
+        assert "warning: skipping target version '3.7 [Fast-1] RHAII RELEASE' of train 3.7" in result.stderr
+        assert result.stderr.index("resolved target versions") < result.stderr.index("JQL: ")
+
+        settings = tmp_path / "settings.yaml"
+        settings.write_text(yaml.safe_dump({"jql": {"project": "RHAIRFE", "target_version_trains": ["3.7", "3.9"]}}))
+        result = _run(["--jql-default", str(settings), "--include-processed"], env=env)
+        assert result.returncode == 2
+        assert ("Error: train 3.9 matched no unreleased versions in RHAIRFE — was it renamed or not yet "
+                "created?") in result.stderr
+        assert "JQL:" not in result.stderr and result.stdout == ""

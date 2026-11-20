@@ -55,7 +55,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from find_strat_for_rfe import find_strat_clones  # noqa: E402
-from jira_utils import get_issue, require_env  # noqa: E402
+from jira_utils import get_issue, require_env, resolve_target_versions  # noqa: E402
 from lock_issues import BLOCKING_LABELS  # noqa: E402
 from strat_freshness import initialize, reusable  # noqa: E402
 from strat_history import ACTIVE_STATUSES  # noqa: E402
@@ -182,7 +182,7 @@ def resume_point(rfe, previous, desc):
     return "refine", None
 
 
-def expected_create_skip(rfe, settings, desc):
+def expected_create_skip(rfe, settings, desc, targets=None):
     """The reason strategy-create will skip this RFE, or None.
 
     Reproduces the skill's gates from Jira fields (its Step 2a status, release
@@ -190,6 +190,8 @@ def expected_create_skip(rfe, settings, desc):
     pipeline-settings.yaml values the skill reads. The validator accepts a
     create skip only when it is listed here. strategy-create's reconstruction
     failure cannot be predicted from fields, so it is never expected.
+    ``targets`` is the resolved target version set (resolve_target_versions),
+    resolved here when None.
     """
     server, user, token = require_env()
     fields = get_issue(server, user, token, rfe,
@@ -204,7 +206,8 @@ def expected_create_skip(rfe, settings, desc):
         return f"RFE status: {status}"
     labels = set(fields.get("labels") or [])
     versions = {v.get("name", "") for v in fields.get(TARGET_VERSION_FIELD) or [] if isinstance(v, dict)}
-    required, targets = set(jql.get("required_labels", [])), set(jql.get("target_versions", []))
+    required = set(jql.get("required_labels", []))
+    targets = set(resolve_target_versions(jql) if targets is None else targets)
     # A same-ticket type checks release scope only when its settings name one (strategy-create's rule).
     if (required or targets or not desc.same_ticket) and not (labels & required or versions & targets):
         return "release scope: no required label or target version"
@@ -378,7 +381,11 @@ def main(argv, env):
         settings = yaml.safe_load((ROOT / desc.get("discovery.settings")).read_text()) or {}
         # An explicit STRAT request imports that existing strategy directly;
         # it does not rediscover an RFE or authorize a new clone.
-        gate_skips = {} if reprocess else {k: r for k in lockable if (r := expected_create_skip(k, settings, desc))}
+        gate_skips = {}
+        if lockable and not reprocess:
+            # Resolved once (one Jira read for release trains), the same list discovery used.
+            targets = set(resolve_target_versions(settings.get("jql", {})))
+            gate_skips = {k: r for k in lockable if (r := expected_create_skip(k, settings, desc, targets))}
     except Exception as exc:
         print(f"prepare-run: could not compute expected create skips, no RFE was locked: {exc}",
               file=sys.stderr)

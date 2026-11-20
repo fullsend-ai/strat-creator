@@ -1106,6 +1106,33 @@ def test_expected_skip_mirrors_the_path_a_label_gate(monkeypatch):
     assert prepare_run.expected_create_skip("RHAIRFE-1", settings, rfe) is None
 
 
+def test_expected_skip_checks_the_resolved_release_trains(monkeypatch):
+    """The release-scope gate uses the target versions discovery resolved, not the settings keys."""
+    sys.path.insert(0, str(SHARED))
+    import jira_utils
+    import prepare_run
+
+    versions = [{"name": "3.7 EA1 RHOAI RELEASE"}]
+    monkeypatch.setattr(prepare_run, "require_env", lambda: ("s", "u", "t"))
+    monkeypatch.setattr(prepare_run, "get_issue", lambda *a, **k: {"fields": {
+        "status": {"name": "New"}, "labels": ["tech-reviewed"], "customfield_10855": versions}})
+    monkeypatch.setattr(prepare_run, "find_strat_clones", lambda *a: [])
+    monkeypatch.setattr(jira_utils, "require_env", lambda: ("s", "u", "t"))
+    monkeypatch.setattr(jira_utils, "get_project_versions", lambda *a: [
+        {"name": "3.7 EA1 RHOAI RELEASE"}, {"name": "3.7 GA RHOAI RELEASE", "released": True}])
+    settings = {"jql": {"project": "RHAIRFE", "required_labels": ["strat-creator-3.7"],
+                        "quality_labels": ["tech-reviewed"], "target_version_trains": ["3.7"]}}
+    rfe = prepare_run.load_types().get("rfe-strategy")
+    assert prepare_run.expected_create_skip("RHAIRFE-1", settings, rfe) is None
+    assert prepare_run.expected_create_skip("RHAIRFE-1", settings, rfe, {"3.7 EA1 RHOAI RELEASE"}) is None
+    versions[:] = [{"name": "3.7 GA RHOAI RELEASE"}]  # released: no longer in the train
+    assert prepare_run.expected_create_skip("RHAIRFE-1", settings, rfe) == \
+        "release scope: no required label or target version"
+    monkeypatch.setattr(jira_utils, "get_project_versions", lambda *a: [])
+    with pytest.raises(jira_utils.TargetVersionError, match=r"train 3\.7"):
+        prepare_run.expected_create_skip("RHAIRFE-1", settings, rfe)
+
+
 def test_same_ticket_gates_read_the_initiative_itself(monkeypatch):
     sys.path.insert(0, str(SHARED))
     import prepare_run

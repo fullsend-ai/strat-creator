@@ -29,9 +29,11 @@ def handoff_gaps(desc):
     labels = desc.get("conventions.labels")
     if {labels["rubric_pass"], labels["human_sign_off"]} != set(CONTRACT["labels_all"]):
         gaps.add("labels")
-    # A settings file's target_versions render as the Target Version field (jira_utils.build_jql_from_config).
+    # A settings file's target versions render as the Target Version field (jira_utils.build_jql_from_config).
     settings = yaml.safe_load((REPO / desc.get("discovery.settings")).read_text(encoding="utf-8"))
-    if CONTRACT["target_version_field"] != "customfield_10855" or not settings["jql"].get("target_versions"):
+    version_keys = ("target_versions", "target_version_trains", "extra_target_versions")
+    if CONTRACT["target_version_field"] != "customfield_10855" or not any(
+            settings["jql"].get(k) for k in version_keys):
         gaps.add("target_version")
     key = desc.get("identity.jira.key_prefixes")[0] + "1"
     if not re.fullmatch(CONTRACT["id_pattern"], key):
