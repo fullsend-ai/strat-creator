@@ -501,10 +501,11 @@ def _mark(args, progress, data):
     elif args.step == "push":
         # push_refined_strategies.py pushes every artifacts/strat-tasks/<tracker key>.md
         # whose frontmatter says status Refined with that jira_key, skips the rest,
-        # and stops with a nonzero exit at the first unrelated failure. In a
-        # prepared run it saves each strategy's outcome as it completes; only
-        # those pushed and labelled are covered, so a partial batch keeps the
-        # coverage it earned. Verified review-only imports are never pushed.
+        # and exits nonzero when any push fails (a write-guard violation also
+        # stops its loop). In a prepared run it saves each strategy's outcome
+        # as it completes; only those pushed and labelled are covered, so a
+        # partial batch keeps the coverage it earned. Verified review-only
+        # imports are never pushed.
         # A strategy refined later (a retried create) needs a push of its own.
         # A dry run pushes nothing.
         if args.skipped and args.partial:

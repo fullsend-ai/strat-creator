@@ -4,11 +4,13 @@
 Runs as a CI step after /strategy-refine to guarantee all refined strategies
 reach Jira, regardless of whether the LLM skill called push_strategy.py.
 
-A push failure that is not a verified input-change deferral stops the loop:
-the run fails, so no further tickets are written. In a prepared run each
-strategy's outcome is saved to tmp/strat-push-outcomes.json as it completes,
-so `strat_pipeline_state.py mark push` can record coverage for the strategies
-that were pushed and labelled before the failure.
+A rejected push (for example a Jira 4xx on one ticket's update) fails that
+ticket; the loop continues and the run fails. A write-guard violation while
+labelling (ownership, links, shared source, unreadable Jira) also stops the
+loop: the run is going to fail, so no further tickets are written. In a
+prepared run each strategy's outcome is saved to tmp/strat-push-outcomes.json
+as it completes, so `strat_pipeline_state.py mark push` can record coverage
+for the strategies that were pushed and labelled.
 
 Usage:
     python3 scripts/push_refined_strategies.py [--artifacts-dir DIR]
@@ -152,12 +154,15 @@ def main():
 
         print(f"[PUSH] {jira_key} — pushing strategy to Jira...")
         error = None
+        stops_run = False
         if not push_strategy(jira_key, filepath):
             # An edit during this loop can defer one target without hiding an
             # unrelated push failure. Recompute from live inputs, not stderr.
             if jira_key in excluded_strategies():
                 skipped += 1
                 continue
+            # This ticket's push was rejected (for example a Jira 4xx on its
+            # update): fail the ticket and keep pushing the rest.
             error = "push failed"
         else:
             from strat_freshness import StaleTicket
@@ -169,18 +174,25 @@ def main():
                     skipped += 1
                     continue
                 error = f"adding {REFINED_LABEL} failed: {exc}"
+                stops_run = True
             except Exception as exc:
                 error = f"adding {REFINED_LABEL} failed: {exc}"
+                stops_run = True
 
         if error:
-            # An unrelated failure fails the run: stop writing to Jira. The
-            # outcomes saved so far still record what was pushed before it.
+            # The outcomes saved so far still record what was pushed. A
+            # write-guard violation while labelling (ownership, links, shared
+            # source, unreadable Jira) also stops the loop: the run is going
+            # to fail, so no further tickets are written.
             record_outcome(outcomes, jira_key, "failed")
             failed += 1
-            not_attempted = len(files) - index - 1
-            print(f"[STOP] {jira_key} — {error}; {not_attempted} remaining not attempted",
-                  file=sys.stderr)
-            break
+            if stops_run:
+                not_attempted = len(files) - index - 1
+                print(f"[STOP] {jira_key} — {error}; {not_attempted} remaining not attempted",
+                      file=sys.stderr)
+                break
+            print(f"[FAIL] {jira_key} — {error}", file=sys.stderr)
+            continue
 
         print(f"[LABEL] {REFINED_LABEL} added to {jira_key}")
         record_outcome(outcomes, jira_key, "pushed")

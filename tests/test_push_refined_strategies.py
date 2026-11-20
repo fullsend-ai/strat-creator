@@ -262,20 +262,34 @@ class TestPushOutcomes:
         push, root, calls, faults = prepared
         faults["RHAISTRAT-2102"] = fault
         assert push.main() == 1
-        # The third ticket is not written once the run is known to fail.
-        assert calls["pushed"] == PREPARED_KEYS[:2]
-        assert calls["labelled"] == ["RHAISTRAT-2101"]
-        assert _saved_outcomes(root) == {"run_id": "r1", "outcomes": {
-            "RHAISTRAT-2101": "pushed", "RHAISTRAT-2102": "failed"}}
-        captured = capsys.readouterr()
-        assert "[STOP] RHAISTRAT-2102" in captured.err
-        assert "1 failed, 1 not attempted" in captured.out
+        if fault == "push":
+            # A rejected push fails its ticket; the rest are still pushed.
+            assert calls["pushed"] == PREPARED_KEYS
+            assert calls["labelled"] == ["RHAISTRAT-2101", "RHAISTRAT-2103"]
+            assert _saved_outcomes(root) == {"run_id": "r1", "outcomes": {
+                "RHAISTRAT-2101": "pushed", "RHAISTRAT-2102": "failed",
+                "RHAISTRAT-2103": "pushed"}}
+            captured = capsys.readouterr()
+            assert "[FAIL] RHAISTRAT-2102" in captured.err
+            assert "1 failed" in captured.out and "not attempted" not in captured.out
+        else:
+            # A write-guard violation stops the loop: no further tickets are
+            # written once the run is known to fail.
+            assert calls["pushed"] == PREPARED_KEYS[:2]
+            assert calls["labelled"] == ["RHAISTRAT-2101"]
+            assert _saved_outcomes(root) == {"run_id": "r1", "outcomes": {
+                "RHAISTRAT-2101": "pushed", "RHAISTRAT-2102": "failed"}}
+            captured = capsys.readouterr()
+            assert "[STOP] RHAISTRAT-2102" in captured.err
+            assert "1 failed, 1 not attempted" in captured.out
 
     def test_a_rerun_resets_earlier_outcomes(self, prepared):
         push, root, _, faults = prepared
         faults["RHAISTRAT-2101"] = "push"
         assert push.main() == 1
-        assert _saved_outcomes(root)["outcomes"] == {"RHAISTRAT-2101": "failed"}
+        assert _saved_outcomes(root)["outcomes"] == {
+            "RHAISTRAT-2101": "failed", "RHAISTRAT-2102": "pushed",
+            "RHAISTRAT-2103": "pushed"}
         faults.clear()
         assert push.main() == 0
         assert _saved_outcomes(root)["outcomes"] == dict.fromkeys(PREPARED_KEYS, "pushed")
