@@ -1,9 +1,141 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
-from jira_utils import build_jql_from_config
+import jira_utils  # noqa: E402
+from jira_utils import TargetVersionError, build_jql_from_config, resolve_target_versions  # noqa: E402
+
+
+def _versions(*names, **flags):
+    return [{"name": n, **flags} for n in names]
+
+
+class TestResolveTargetVersions:
+    """jql.target_version_trains resolves to RHAIRFE's live, unreleased version names."""
+
+    TRAINS = {"project": "RHAIRFE", "target_version_trains": ["3.7", "3.8"]}
+
+    def test_deterministic_order_train_then_event_then_product(self):
+        live = _versions("3.8 GA RHAII RELEASE", "3.7 GA RHELAI RELEASE", "3.7 EA2 RHOAI RELEASE",
+                         "3.7 EA1 RHELAI RELEASE", "3.7 GA RHAII RELEASE", "3.7 EA RHOAI RELEASE",
+                         "3.7 EA1 RHAII RELEASE", "3.8 EA1 RHOAI RELEASE")
+        assert resolve_target_versions(self.TRAINS, live) == [
+            "3.7 EA RHOAI RELEASE", "3.7 EA1 RHAII RELEASE", "3.7 EA1 RHELAI RELEASE",
+            "3.7 EA2 RHOAI RELEASE", "3.7 GA RHAII RELEASE", "3.7 GA RHELAI RELEASE",
+            "3.8 EA1 RHOAI RELEASE", "3.8 GA RHAII RELEASE"]
+        cfg = {**self.TRAINS, "target_version_trains": ["3.8", "3.7"]}
+        assert resolve_target_versions(cfg, live)[:2] == ["3.8 EA1 RHOAI RELEASE", "3.8 GA RHAII RELEASE"]
+
+    def test_released_and_archived_versions_are_excluded(self):
+        live = (_versions("3.7 EA1 RHOAI RELEASE", released=True)
+                + _versions("3.7 EA2 RHOAI RELEASE", archived=True)
+                + _versions("3.7 GA RHOAI RELEASE", released=False, archived=False)
+                + _versions("3.8 GA RHOAI RELEASE"))
+        assert resolve_target_versions(self.TRAINS, live) == ["3.7 GA RHOAI RELEASE", "3.8 GA RHOAI RELEASE"]
+
+    def test_a_train_with_no_live_version_fails_loudly(self):
+        live = _versions("3.7 GA RHOAI RELEASE") + _versions("3.8 GA RHOAI RELEASE", released=True)
+        with pytest.raises(TargetVersionError, match=r"train 3\.8 matched no unreleased versions in RHAIRFE"):
+            resolve_target_versions(self.TRAINS, live)
+
+    def test_only_off_pattern_versions_fail_loudly_too(self, capsys):
+        live = _versions("3.7 GA RHOAI RELEASE", "3.8 GA RHOAI RELEASE - [SUMMIT]")
+        with pytest.raises(TargetVersionError, match=r"train 3\.8"):
+            resolve_target_versions(self.TRAINS, live)
+        assert "'3.8 GA RHOAI RELEASE - [SUMMIT]'" in capsys.readouterr().err
+
+    def test_off_pattern_train_versions_are_skipped_with_a_warning(self, capsys):
+        live = _versions("3.7 [Fast-1] RHAII RELEASE", "3.7 GA RHOAI RELEASE", "3.8 GA RHOAI RELEASE",
+                         "3.8 GA RHOAI RELEASE - [SUMMIT]", "3.6 [Fast-1] RHAII RELEASE",
+                         "rhai-3.7", "3.70 GA RHOAI RELEASE")
+        live += _versions("3.7 [Fast-2] RHAII RELEASE", released=True)
+        assert resolve_target_versions(self.TRAINS, live) == ["3.7 GA RHOAI RELEASE", "3.8 GA RHOAI RELEASE"]
+        err = capsys.readouterr().err
+        assert "warning: skipping target version '3.7 [Fast-1] RHAII RELEASE' of train 3.7" in err
+        assert "warning: skipping target version '3.8 GA RHOAI RELEASE - [SUMMIT]' of train 3.8" in err
+        # Other trains, released versions and other first tokens are not this config's drift.
+        assert "3.6 [Fast-1]" not in err and "Fast-2" not in err and "rhai-3.7" not in err and "3.70" not in err
+
+    def test_whitespace_drift_resolves_to_the_live_name(self):
+        live = _versions("3.7 GA  RHAII RELEASE", "3.8 GA RHOAI RELEASE")
+        assert resolve_target_versions(self.TRAINS, live) == ["3.7 GA  RHAII RELEASE", "3.8 GA RHOAI RELEASE"]
+
+    def test_extra_target_versions_are_appended_and_deduped(self):
+        cfg = {**self.TRAINS, "extra_target_versions": ["3.7 EA RHELAI RELEASE", "3.7 GA RHOAI RELEASE",
+                                                        "rhai-3.7", "rhai-3.7"]}
+        live = _versions("3.7 GA RHOAI RELEASE", "3.8 GA RHOAI RELEASE")
+        assert resolve_target_versions(cfg, live) == [
+            "3.7 GA RHOAI RELEASE", "3.8 GA RHOAI RELEASE", "3.7 EA RHELAI RELEASE", "rhai-3.7"]
+
+    def test_extra_target_versions_alone_need_no_jira(self, monkeypatch):
+        monkeypatch.setattr(jira_utils, "get_project_versions", lambda *a: pytest.fail("no train to resolve"))
+        assert resolve_target_versions({"extra_target_versions": ["a", "a", "b"]}) == ["a", "b"]
+
+    def test_static_target_versions_override_wins(self, monkeypatch):
+        monkeypatch.setattr(jira_utils, "get_project_versions", lambda *a: pytest.fail("the override needs no Jira"))
+        cfg = {**self.TRAINS, "target_versions": ["3.7 GA  RHAII RELEASE", "rhoai-3.6"],
+               "extra_target_versions": ["x"]}
+        assert resolve_target_versions(cfg) == ["3.7 GA  RHAII RELEASE", "rhoai-3.6"]
+
+    def test_no_version_settings_resolve_to_nothing(self):
+        assert resolve_target_versions({}) == []
+        assert resolve_target_versions({"target_versions": [], "target_version_trains": []}) == []
+
+    def test_an_unquoted_train_is_refused(self):
+        # YAML reads an unquoted 3.10 as the float 3.1: resolving "3.1" would be the wrong train.
+        with pytest.raises(TargetVersionError, match="must be a quoted string"):
+            resolve_target_versions({"target_version_trains": [3.1]}, [])
+
+    def test_trains_fetch_the_project_versions(self, monkeypatch):
+        monkeypatch.setattr(jira_utils, "require_env", lambda: ("https://jira", "u", "t"))
+        calls = []
+        monkeypatch.setattr(jira_utils, "get_project_versions",
+                            lambda s, u, t, project: calls.append((s, project)) or _versions(
+                                "3.7 GA RHOAI RELEASE", "3.8 GA RHOAI RELEASE"))
+        assert resolve_target_versions(self.TRAINS) == ["3.7 GA RHOAI RELEASE", "3.8 GA RHOAI RELEASE"]
+        assert calls == [("https://jira", "RHAIRFE")]
+
+    def test_trains_without_credentials_fail_loudly(self, monkeypatch):
+        monkeypatch.setattr(jira_utils, "require_env", lambda: (None, None, None))
+        with pytest.raises(TargetVersionError, match="JIRA_SERVER, JIRA_USER, JIRA_TOKEN"):
+            resolve_target_versions(self.TRAINS)
+
+
+class TestTrainRenames:
+    """The 2026-11-18 EA -> EA1 rename against a fixture: picked up, or a red run; never silent."""
+
+    CONFIG = """\
+jql:
+  project: RHAIRFE
+  required_labels:
+    - strat-creator-3.7
+  target_version_trains: ["3.7"]
+  quality_labels:
+    - tech-reviewed
+  order_by: key ASC
+"""
+
+    def _config(self, tmp_path):
+        path = tmp_path / "pipeline-settings.yaml"
+        path.write_text(self.CONFIG)
+        return str(path)
+
+    def test_a_rename_inside_the_pattern_is_picked_up(self, tmp_path, capsys):
+        before = build_jql_from_config(self._config(tmp_path), _versions("3.7 EA RHOAI RELEASE"))
+        after = build_jql_from_config(self._config(tmp_path), _versions("3.7 EA1 RHOAI RELEASE"))
+        assert before == ('project = RHAIRFE AND (labels = "strat-creator-3.7" OR cf[10855] in '
+                          '("3.7 EA RHOAI RELEASE")) AND (labels = "tech-reviewed") ORDER BY key ASC')
+        assert after == before.replace("3.7 EA RHOAI", "3.7 EA1 RHOAI")
+        err = capsys.readouterr().err
+        assert "resolved target versions (1): 3.7 EA RHOAI RELEASE\n" in err
+        assert "resolved target versions (1): 3.7 EA1 RHOAI RELEASE\n" in err
+
+    def test_a_rename_outside_the_pattern_fails_the_run(self, tmp_path):
+        with pytest.raises(TargetVersionError, match=r"train 3\.7 matched no unreleased versions"):
+            build_jql_from_config(self._config(tmp_path), _versions("3.7 Early Access RHOAI RELEASE"))
 
 
 class TestBuildJqlFromConfig:

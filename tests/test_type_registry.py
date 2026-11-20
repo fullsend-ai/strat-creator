@@ -350,29 +350,39 @@ def test_jira_utils_derives_the_4c6ae1c_literals(monkeypatch):
 
 # ── the intake gate ───────────────────────────────────────────────────────────────────────
 
-# What build_jql_from_config produced from config/pipeline-settings.yaml on main at b396172.
+# RHAIRFE's live version list, shuffled, after the 2026-11-18 renames: "3.7 EA RHOAI RELEASE" is now
+# "3.7 EA1 RHOAI RELEASE" and "3.7 GA  RHAII RELEASE" lost its double space.
+INTAKE_VERSIONS = [
+    {"name": "3.8 GA RHELAI RELEASE"}, {"name": "3.7 GA RHAII RELEASE"},
+    {"name": "3.6 GA RHOAI RELEASE", "released": True}, {"name": "3.7 EA1 RHOAI RELEASE"},
+    {"name": "3.8 EA2 RHOAI RELEASE"}, {"name": "3.7 EA RHAII RELEASE"}, {"name": "3.7 GA RHELAI RELEASE"},
+    {"name": "3.8 EA1 RHELAI RELEASE"}, {"name": "3.7 [Fast-1] RHAII RELEASE"},
+    {"name": "3.8 GA RHOAI RELEASE - [SUMMIT]"}, {"name": "3.8 EA1 RHAII RELEASE"},
+    {"name": "3.7 EA1 RHAII RELEASE", "archived": True}, {"name": "3.8 EA2 RHAII RELEASE"},
+    {"name": "3.8 GA RHAII RELEASE"}, {"name": "3.7 GA RHOAI RELEASE"}, {"name": "3.8 EA1 RHOAI RELEASE"},
+    {"name": "3.8 EA2 RHELAI RELEASE"}, {"name": "3.8 GA RHOAI RELEASE"},
+]
+
+# What build_jql_from_config produces from config/pipeline-settings.yaml (trains 3.7, 3.8) and
+# INTAKE_VERSIONS: the b396172 text with the version list resolved from Jira instead of curated.
 FROZEN_INTAKE_JQL = (
     'project = RHAIRFE AND (labels = "strat-creator-3.5" OR labels = "strat-creator-3.6" OR labels = "str'
-    'at-creator-3.7" OR labels = "strat-creator-3.8" OR cf[10855] in ("rhoai-3.5", "rhoai-3.5.EA1", "rhoa'
-    'i-3.5.EA2", "rhoai-3.6", "rhoai-3.6.EA1", "rhoai-3.6.EA2", "rhai-3.6", "rhai-3.7", "rhai-3.8", "3.5 '
-    'EA1 RHAII RELEASE", "3.5 EA1 RHOAI RELEASE", "3.5 EA1 RHELAI RELEASE", "3.5 EA2 RHAII RELEASE", "3.5'
-    ' EA2 RHOAI RELEASE", "3.5 EA2 RHELAI RELEASE", "3.5 GA RHAII RELEASE", "3.5 GA RHOAI RELEASE", "3.5 '
-    'GA RHELAI RELEASE", "3.6 EA1 RHAII RELEASE", "3.6 EA1 RHOAI RELEASE", "3.6 EA1 RHELAI RELEASE", "3.6'
-    ' EA2 RHAII RELEASE", "3.6 EA2 RHOAI RELEASE", "3.6 EA2 RHELAI RELEASE", "3.6 GA RHAII RELEASE", "3.6'
-    ' GA RHOAI RELEASE", "3.6 GA RHELAI RELEASE", "3.7 EA RHAII RELEASE", "3.7 EA RHOAI RELEASE", "3.7'
-    ' EA1 RHOAI RELEASE", "3.7 EA RHELAI RELEASE", "3.7 GA  RHAII RELEASE", "3.7 GA RHOAI RELEASE",'
-    ' "3.7 GA RHELAI RELEASE", "3.8 EA1'
-    ' RHAII RELEASE", "3.8 EA1 RHOAI RELEASE", "3.8 EA1 RHELAI RELEASE", "3.8 EA2 RHAII RELEASE", "3.8 EA'
-    '2 RHOAI RELEASE", "3.8 EA2 RHELAI RELEASE", "3.8 GA RHAII RELEASE", "3.8 GA RHOAI RELEASE", "3.8 GA '
-    'RHELAI RELEASE")) AND (labels = "rfe-creator-autofix-rubric-pass" OR labels = "tech-reviewed") AND ('
-    'labels NOT IN ("strat-creator-processing") OR labels IS EMPTY) AND status NOT IN ("Closed", "Resolve'
-    'd", "Draft") ORDER BY key ASC'
+    'at-creator-3.7" OR labels = "strat-creator-3.8" OR cf[10855] in ("3.7 EA RHAII RELEASE", "3.7 EA1 RH'
+    'OAI RELEASE", "3.7 GA RHAII RELEASE", "3.7 GA RHOAI RELEASE", "3.7 GA RHELAI RELEASE", "3.8 EA1 RHAI'
+    'I RELEASE", "3.8 EA1 RHOAI RELEASE", "3.8 EA1 RHELAI RELEASE", "3.8 EA2 RHAII RELEASE", "3.8 EA2 RHO'
+    'AI RELEASE", "3.8 EA2 RHELAI RELEASE", "3.8 GA RHAII RELEASE", "3.8 GA RHOAI RELEASE", "3.8 GA RHELA'
+    'I RELEASE", "rhai-3.7", "rhai-3.8", "3.7 EA RHELAI RELEASE")) AND (labels = "rfe-creator-autofix-rub'
+    'ric-pass" OR labels = "tech-reviewed") AND (labels NOT IN ("strat-creator-processing") OR labels IS '
+    'EMPTY) AND status NOT IN ("Closed", "Resolved", "Draft") ORDER BY key ASC'
 )
 
 
-def test_intake_jql_is_the_b396172_text():
-    assert jira_utils.build_jql_from_type(REG.get(SHIPPED)) == FROZEN_INTAKE_JQL
-    assert jira_utils.build_jql_from_type() == FROZEN_INTAKE_JQL
+def test_intake_jql_derives_target_versions_from_live_jira_versions(capsys):
+    assert jira_utils.build_jql_from_type(REG.get(SHIPPED), INTAKE_VERSIONS) == FROZEN_INTAKE_JQL
+    assert jira_utils.build_jql_from_type(project_versions=INTAKE_VERSIONS) == FROZEN_INTAKE_JQL
+    err = capsys.readouterr().err
+    assert "resolved target versions (17): 3.7 EA RHAII RELEASE, 3.7 EA1 RHOAI RELEASE," in err
+    assert "'3.7 [Fast-1] RHAII RELEASE'" in err and "'3.8 GA RHOAI RELEASE - [SUMMIT]'" in err
 
 
 def test_each_type_names_its_settings_file():

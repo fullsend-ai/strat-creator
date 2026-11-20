@@ -14,7 +14,7 @@ Not every RHAIRFE issue gets a strategy. The pipeline selects RFEs that pass two
 
 1. **Scope gate** — the RFE is tagged for the current release cycle:
    - Has any label listed in `jql.required_labels`, **OR**
-   - Has a Target Version listed in `jql.target_versions`
+   - Has a Target Version from an active release train (`jql.target_version_trains`, resolved from Jira's live unreleased versions) or listed in `jql.extra_target_versions`
 2. **Quality gate** — the RFE has been validated:
    - If `jql.quality_labels` is non-empty, has at least one label from that list
 
