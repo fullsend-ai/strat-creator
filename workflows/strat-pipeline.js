@@ -86,6 +86,7 @@ const RECORDED = {
   properties: {
     recorded: { type: 'string' },
     strategies: { type: 'array', items: { type: 'string', pattern: STRAT } },
+    partial: { type: 'boolean' },
   },
 }
 const refineReceipt = (key) => ({
@@ -258,14 +259,18 @@ if (strategies.some((p) => refined.has(p.strat) && !pushed.has(p.strat))) {
     ? 'This is a dry run, so nothing is pushed to Jira. Run ' +
       '`python3 scripts/strat_pipeline_state.py mark push --skipped` once and return what it prints, ' +
       'including its strategies list.'
-    : 'Run `python3 scripts/push_refined_strategies.py` once. If it exits 0, run ' +
-      '`python3 scripts/strat_pipeline_state.py mark push` and return what it prints, including its ' +
-      'strategies list; otherwise ' +
-      'return {"recorded": "none"} and do not retry.'
+    : 'Run `python3 scripts/push_refined_strategies.py` once and do not retry it. If it exits 0, run ' +
+      '`python3 scripts/strat_pipeline_state.py mark push`; if it exits nonzero, run ' +
+      '`python3 scripts/strat_pipeline_state.py mark push --partial` instead. Return what that ' +
+      'command prints, including its strategies list and partial flag. If that command exits ' +
+      'nonzero, return {"recorded": "none"}.'
   const push = await agent(HEADLESS + pushPrompt, { label: 'push', phase: 'Push', schema: RECORDED, effort: 'low' })
   // Coverage is what `mark push` recorded: only strategies the push script
   // actually pushed (status Refined, matching jira_key, valid frontmatter).
-  if (push && push.recorded === 'push') (push.strategies || []).forEach((k) => pushed.add(k))
+  // A partial push saves coverage for the strategies pushed before the
+  // failure, so the next prepared run resumes them at review instead of
+  // refining again; this run fails and holds back every refined review.
+  if (push && push.recorded === 'push' && push.partial !== true) (push.strategies || []).forEach((k) => pushed.add(k))
   else fail('push')
 }
 

@@ -298,7 +298,7 @@ def test_late_human_gate_isolates_its_ticket(batch, monkeypatch, gate, new_strat
 
 @pytest.mark.parametrize("batch", ["before-push"], indirect=True)
 @pytest.mark.parametrize("fault", ["owner", "links", "source", "unreadable", "unrelated"])
-def test_late_gate_does_not_hide_unrelated_failure(batch, monkeypatch, fault):
+def test_late_gate_does_not_hide_unrelated_failure(batch, monkeypatch, capsys, fault):
     import jira_utils
     import push_refined_strategies as publisher
     from strat_side_effects import owner_label
@@ -333,6 +333,14 @@ def test_late_gate_does_not_hide_unrelated_failure(batch, monkeypatch, fault):
     monkeypatch.setattr(sys, "argv", ["push_refined_strategies.py"])
     match = {"owner":"ownership", "links":"unique source RFE", "source":"source/instructions",
              "unreadable":"unreadable owner", "unrelated":"Unrelated label failure"}[fault]
-    with pytest.raises((ValueError, RuntimeError, OSError), match=match):
-        publisher.main()
+    # An unrelated failure stays fatal without hiding behind the human gate:
+    # the loop stops at the failing ticket and reports the reason. The source
+    # fault is detected while re-checking deferral inside the handler, so it
+    # still raises; every other fault is recorded as that ticket failing.
+    if fault == "source":
+        with pytest.raises((ValueError, RuntimeError, OSError), match=match):
+            publisher.main()
+    else:
+        assert publisher.main() == 1
+        assert match in capsys.readouterr().err
     assert "strat-creator-auto-refined" not in jira.get("RHAISTRAT-8902")["fields"]["labels"]

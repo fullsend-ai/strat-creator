@@ -51,6 +51,29 @@ def test_gate_during_first_push_snapshot_retains_other_ticket(batch, monkeypatch
     assert checked.returncode == 0, checked.stdout + checked.stderr
 
 
+@pytest.mark.parametrize("batch", ["before-push"], indirect=True)
+def test_partial_push_records_coverage_for_strategies_pushed_before_the_failure(batch, monkeypatch):
+    import push_refined_strategies as push
+
+    root, _, jira = batch
+    original = push.push_strategy
+    monkeypatch.setattr(push, "push_strategy",
+                        lambda key, path: key != "RHAISTRAT-8902" and original(key, path))
+    monkeypatch.setattr(sys, "argv", ["push_refined_strategies.py"])
+    assert push.main() == 1
+    assert "strat-creator-auto-refined" in jira.get("RHAISTRAT-8901")["fields"]["labels"]
+    assert "strat-creator-auto-refined" not in jira.get("RHAISTRAT-8902")["fields"]["labels"]
+    marked = json.loads(command(root, "mark", "push", "--partial").stdout)
+    assert marked == {"recorded": "push", "strategies": ["RHAISTRAT-8901"], "partial": True}
+    saved = json.loads((root / "tmp/strat-progress.json").read_text())
+    assert saved["push"]["strategies"] == ["RHAISTRAT-8901"] and not saved["push"]["skipped"]
+    assert set(saved["freshness"]["pushed"]) == {"RHAISTRAT-8901"}
+    command(root, "result")
+    errors = json.loads((root / "output/agent-result.json").read_text())["errors"]
+    assert "push: RHAISTRAT-8902 not recorded" in errors
+    assert "push: RHAISTRAT-8901 not recorded" not in errors
+
+
 def proof_fixture(monkeypatch, actual_key):
     import jira_utils
     import strat_history

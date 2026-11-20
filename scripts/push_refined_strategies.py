@@ -4,6 +4,14 @@
 Runs as a CI step after /strategy-refine to guarantee all refined strategies
 reach Jira, regardless of whether the LLM skill called push_strategy.py.
 
+A rejected push (for example a Jira 4xx on one ticket's update) fails that
+ticket; the loop continues and the run fails. A write-guard violation while
+labelling (ownership, links, shared source, unreadable Jira) also stops the
+loop: the run is going to fail, so no further tickets are written. In a
+prepared run each strategy's outcome is saved to tmp/strat-push-outcomes.json
+as it completes, so `strat_pipeline_state.py mark push` can record coverage
+for the strategies that were pushed and labelled.
+
 Usage:
     python3 scripts/push_refined_strategies.py [--artifacts-dir DIR]
 
@@ -16,6 +24,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -24,11 +33,36 @@ import type_registry
 from jira_utils import add_labels, require_env
 
 REFINED_LABEL = "strat-creator-auto-refined"
+INPUT = Path("tmp/strat-input.json")
+OUTCOMES = Path("tmp/strat-push-outcomes.json")
+
+
+def save_outcomes(record):
+    fd, tmp = tempfile.mkstemp(dir=OUTCOMES.parent, prefix=".strat-push-outcomes.", suffix=".tmp")
+    with os.fdopen(fd, "w") as stream:
+        stream.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, OUTCOMES)
+
+
+def start_outcomes():
+    """Reset this prepared run's per-strategy push outcomes; None outside a prepared run."""
+    if not INPUT.exists():
+        return None
+    record = {"run_id": json.loads(INPUT.read_text()).get("run_id"), "outcomes": {}}
+    save_outcomes(record)
+    return record
+
+
+def record_outcome(record, jira_key, outcome):
+    """Save one strategy's outcome before the next ticket is touched."""
+    if record is not None:
+        record["outcomes"][jira_key] = outcome
+        save_outcomes(record)
 
 
 def excluded_strategies():
     """Do not repush review-only imports or tickets with verified input drift."""
-    if not Path("tmp/strat-input.json").exists():
+    if not INPUT.exists():
         return {}
     from strat_pipeline_state import load_state, progress_lock, review_only
     with progress_lock():
@@ -76,6 +110,7 @@ def main():
                         help="Directory containing strategy files")
     args = parser.parse_args()
 
+    outcomes = start_outcomes()
     server, user, token = require_env()
     if not all([server, user, token]):
         print("Error: JIRA_SERVER, JIRA_USER, JIRA_TOKEN required.",
@@ -96,7 +131,7 @@ def main():
     failed = 0
     excluded = excluded_strategies()
 
-    for filepath in files:
+    for index, filepath in enumerate(files):
         basename = os.path.basename(filepath)
         fm = read_frontmatter(filepath)
         if fm is None:
@@ -118,30 +153,56 @@ def main():
             continue
 
         print(f"[PUSH] {jira_key} — pushing strategy to Jira...")
+        error = None
+        stops_run = False
         if not push_strategy(jira_key, filepath):
             # An edit during this loop can defer one target without hiding an
             # unrelated push failure. Recompute from live inputs, not stderr.
             if jira_key in excluded_strategies():
                 skipped += 1
                 continue
+            # This ticket's push was rejected (for example a Jira 4xx on its
+            # update): fail the ticket and keep pushing the rest.
+            error = "push failed"
+        else:
+            from strat_freshness import StaleTicket
+            from strat_side_effects import HumanGateChanged
+            try:
+                add_labels(server, user, token, jira_key, [REFINED_LABEL])
+            except (StaleTicket, HumanGateChanged) as exc:
+                if jira_key in excluded_strategies():
+                    skipped += 1
+                    continue
+                error = f"adding {REFINED_LABEL} failed: {exc}"
+                stops_run = True
+            except Exception as exc:
+                error = f"adding {REFINED_LABEL} failed: {exc}"
+                stops_run = True
+
+        if error:
+            # The outcomes saved so far still record what was pushed. A
+            # write-guard violation while labelling (ownership, links, shared
+            # source, unreadable Jira) also stops the loop: the run is going
+            # to fail, so no further tickets are written.
+            record_outcome(outcomes, jira_key, "failed")
             failed += 1
+            if stops_run:
+                not_attempted = len(files) - index - 1
+                print(f"[STOP] {jira_key} — {error}; {not_attempted} remaining not attempted",
+                      file=sys.stderr)
+                break
+            print(f"[FAIL] {jira_key} — {error}", file=sys.stderr)
             continue
 
-        from strat_freshness import StaleTicket
-        from strat_side_effects import HumanGateChanged
-        try:
-            add_labels(server, user, token, jira_key, [REFINED_LABEL])
-        except (StaleTicket, HumanGateChanged):
-            if jira_key not in excluded_strategies():
-                raise
-            skipped += 1
-            continue
         print(f"[LABEL] {REFINED_LABEL} added to {jira_key}")
+        record_outcome(outcomes, jira_key, "pushed")
         pushed += 1
 
     total = pushed + skipped + failed
+    not_attempted = len(files) - total
     print(f"\nPushed {pushed}/{total} strategies to Jira"
-          f" ({skipped} skipped, {failed} failed)")
+          f" ({skipped} skipped, {failed} failed"
+          + (f", {not_attempted} not attempted" if not_attempted else "") + ")")
 
     return 1 if failed > 0 else 0
 
