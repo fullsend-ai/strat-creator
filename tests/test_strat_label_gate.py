@@ -155,3 +155,19 @@ class TestMainFetch:
         self._stub(monkeypatch, {})
         assert strat_label_gate.main(["RHAISTRAT-3115"]) == 1
         assert capsys.readouterr().out == ""
+
+
+class TestStrategyKeys:
+    """Every registered strategy type's keys reach the gate: a Shop RFE's Story is its own strategy."""
+
+    def test_a_tstapp_story_is_a_strategy_key(self):
+        result = _run(["TSTAPP-6", "--labels", f"rsc-creator-autofix-rubric-pass,{RUBRIC_PASS}"], _no_jira_env())
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {
+            "key": "TSTAPP-6", "eligible": False, "gate_label": RUBRIC_PASS,
+            "gate_labels_present": [RUBRIC_PASS]}
+
+    def test_an_input_key_is_still_refused(self):
+        result = _run(["RHAIRFE-1", "--labels", "foo"], _no_jira_env())
+        assert result.returncode == 1
+        assert "not a strategy key" in result.stderr

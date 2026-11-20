@@ -199,10 +199,11 @@ def jira_rfe(key, work_type=None):
 
 
 def live_staff(env, key, fields, work_type):
-    """The live SME input of strategy ``key``: its description on a clone; on a same-ticket
+    """The live SME input of strategy ``key``: its description on a clone or on a same-ticket type
+    that keeps its strategy there (``pipeline.strategy_home: description``); on any other same-ticket
     strategy, whose description is its owner's, the newest strategy attachment ("" when none)."""
     from jira_utils import adf_to_markdown, attachment_sort_key, download_attachment
-    if not work_type.same_ticket:
+    if work_type.strategy_in_description:
         return staff(adf_to_markdown(fields.get("description")))
     name = work_type.get("pipeline.body_overflow.attachment").format(issue_key=key)
     candidates = [a for a in fields.get("attachment") or [] if a.get("filename") == name]

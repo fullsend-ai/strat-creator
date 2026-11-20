@@ -1,0 +1,27 @@
+# Settings for JQL-based Shop RFE discovery: the file types/react-shopping-cart-strategy/type.yaml names
+# (discovery.settings), in config/pipeline-settings.yaml's shape. A Shop RFE is a TSTAPP Story written by
+# rfe-creator's react-shopping-cart type; its strategy is written on the same Story.
+jql:
+  project: TSTAPP
+  issue_type: Story                    # TSTAPP may hold hand-written Stories too: only rfe-creator's pass the quality gate
+  quality_labels:
+    - rsc-creator-autofix-rubric-pass  # rfe-creator's react-shopping-cart rubric-pass label, its published contract
+  excluded_labels:
+    - strat-creator-processing         # the lock, same label as RFEs
+    - rsc-creator-needs-attention      # rfe-creator asked a human to look: it can sit next to rubric-pass
+    - rsc-creator-ignore               # rfe-creator's opt-out
+  excluded_statuses:                   # TSTAPP Story workflow: New, Refinement, In Progress, Closed (no Approved)
+    - In Progress
+    - Closed
+  order_by: key ASC
+
+batch_size: 10
+
+# The strategy is written on the Story itself, so these labels on it mean "already processed"
+skip_labels:
+  - strat-creator-rubric-pass
+  - strat-creator-needs-attention
+  - strat-creator-processing
+
+# A Story's own status is already filtered by excluded_statuses above
+excluded_strat_statuses: []
