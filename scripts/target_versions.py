@@ -16,7 +16,6 @@ Usage:
 import argparse
 import os
 import sys
-from pathlib import Path
 
 import yaml
 
@@ -24,8 +23,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import type_registry  # noqa: E402
 from jira_utils import TargetVersionError, resolve_target_versions  # noqa: E402
-
-REPO = Path(__file__).resolve().parent.parent
 
 
 def main(argv=None):
@@ -39,7 +36,7 @@ def main(argv=None):
     if args.settings and args.type:
         parser.error("pass a settings file or --type, not both")
     desc = types.get(args.type or type_registry.LEGACY_DEFAULT_TYPE)
-    path = args.settings or str(REPO / desc.get("discovery.settings"))
+    path = args.settings or str(type_registry.PLUGIN_ROOT / desc.get("discovery.settings"))
     with open(path) as f:
         settings = yaml.safe_load(f) or {}
     try:

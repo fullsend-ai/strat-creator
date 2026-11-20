@@ -218,7 +218,7 @@ def query_label_counts(server, user, token, labels):
     return counts
 
 
-# ─── Intake target versions ──────────────────────────────────────────────────
+# --- Intake target versions ---
 # A release train's live Target Versions are named "<train> <event> <product> RELEASE" (e.g.
 # "3.7 EA1 RHOAI RELEASE"). Whitespace runs are tolerated so a name Jira spells with a double
 # space still resolves; the JQL quotes the live name verbatim.
@@ -296,6 +296,8 @@ def build_jql_from_config(config_path, project_versions=None):
     """Build a JQL query string from pipeline-settings.yaml.
 
     ``project_versions`` feeds resolve_target_versions; None fetches them when trains need it.
+    Raises TargetVersionError when trains are configured and ``project_versions`` is None and
+    JIRA_SERVER/JIRA_USER/JIRA_TOKEN are unset, or when a train matches no unreleased version.
     """
     import yaml
     with open(config_path) as f:
@@ -349,7 +351,12 @@ def build_jql_from_config(config_path, project_versions=None):
 
 def build_jql_from_type(descriptor=None, project_versions=None):
     """The intake JQL of ``descriptor`` (default rfe-strategy), from the settings file its
-    ``discovery.settings`` names."""
+    ``discovery.settings`` names.
+
+    When that file configures ``target_version_trains`` and ``project_versions`` is None, the
+    live versions are fetched, so JIRA_SERVER/JIRA_USER/JIRA_TOKEN are required; without them,
+    or when a train matches no unreleased version, TargetVersionError is raised. Only list a
+    train once its Jira versions exist."""
     d = descriptor or _TYPE
     return build_jql_from_config(os.path.join(_REPO, d.get("discovery.settings")), project_versions)
 

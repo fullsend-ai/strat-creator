@@ -1,5 +1,6 @@
 """Tests for target_versions.py: the resolved intake Target Versions strategy-create's gate compares."""
 import os
+import shutil
 import subprocess
 import sys
 
@@ -33,6 +34,23 @@ def test_release_trains_without_jira_fail_loudly():
     assert result.returncode == 2
     assert "Error: JIRA_SERVER, JIRA_USER, JIRA_TOKEN are required" in result.stderr
     assert result.stdout == ""
+
+
+def test_vendored_skill_copy_resolves_the_type_settings(tmp_path):
+    # vendor.py dereferences a skill's scripts symlink into regular files under
+    # .claude/skills/<skill>/scripts/, with types/ and config/ at the repo root.
+    root = os.path.join(os.path.dirname(__file__), "..")
+    scripts = tmp_path / ".claude" / "skills" / "strategy-create" / "scripts"
+    shutil.copytree(os.path.join(root, "scripts"), scripts, ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(os.path.join(root, "types"), tmp_path / "types")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "initiative-settings.yaml").write_text(
+        yaml.safe_dump({"jql": {"target_versions": ["3.7 GA RHAII RELEASE"]}}))
+    env = {k: v for k, v in os.environ.items() if not k.startswith("JIRA_")}
+    result = subprocess.run([sys.executable, str(scripts / "target_versions.py"), "--type", "initiative-strategy"],
+                            capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "3.7 GA RHAII RELEASE\n"
 
 
 def test_settings_and_type_are_exclusive(tmp_path):
