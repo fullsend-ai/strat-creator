@@ -8,7 +8,9 @@
 #      (handoff.py) into the target's artifacts/, with the progress record a
 #      later strat-resume run reads (artifacts/strat-progress.json);
 #   2. build the HTML report and pipeline data with the trusted scripts;
-#   3. when RESULTS_REPO_URL is set, push the run to the results repository,
+#   3. add the run's telemetry/ folder (agentic-telemetry/v1: usage.json and the
+#      gzipped Fullsend metrics/spans), built once, secret-scanned and sealed;
+#   4. when RESULTS_REPO_URL is set, push the run to the results repository,
 #      and to Org Pulse when ORG_PULSE_URL and ORG_PULSE_API_TOKEN are set.
 # Lock release is not done here: the CI cleanup (release-locks.sh) runs
 # whether or not this script runs.
@@ -72,12 +74,57 @@ if [[ -n "${RESULTS_REPO_URL:-}" ]]; then
   export GIT_CONFIG_VALUE_0="Authorization: Basic ${auth}"
   unset auth
   bash "${SHARED}/publish/clone-data-repo.sh" "${RESULTS_REPO_URL}" "${RESULTS}"
-  for dir in strat-tasks strat-reviews strat-originals reports; do rm -rf -- "${RESULTS:?}/${dir}"; done
+  for dir in strat-tasks strat-reviews strat-originals reports telemetry; do rm -rf -- "${RESULTS:?}/${dir}"; done
   rm -f -- "${RESULTS}/strat-skipped.md" "${RESULTS}/strat-tickets.md" "${RESULTS}/pipeline-data.json"
 else
   mkdir -p "${RESULTS}"
 fi
 cp -R "${BUNDLE}/." "${RESULTS}/"
+
+# Telemetry: the same telemetry/ folder epic-decomposer and rfe-autofixer
+# publish; its run_id is the run directory's name (run-<run id>). The run
+# directory is immutable, so the telemetry outcome is decided once and sealed in
+# $PUBLISH_DIR/telemetry-sealed (the folder, or the explicit "no telemetry"
+# outcome); every attempt, retries included, republishes exactly that outcome.
+# Fullsend wrote metrics.json before this post-script started; its span log may
+# still grow, which the seal also absorbs. Publication refuses binary files
+# because it cannot scan them: the uncompressed inputs are scanned before they
+# are gzipped, and usage.json after it is written. Building telemetry never
+# blocks the results: a failure seals "no telemetry" and publication goes on.
+# (A GitLab job retry is a new job, so a new run id and run directory.)
+TELEMETRY_SEALED="${PUBLISH_DIR}/telemetry-sealed"
+seal_telemetry() {
+  # Runs as an `if` condition, where set -e does not apply: return on any failure.
+  local inputs="${PUBLISH_DIR}/telemetry-inputs" build="${PUBLISH_DIR}/telemetry-build" name
+  rm -rf -- "${inputs}" "${build}" "${TELEMETRY_SEALED}" || return 1
+  mkdir -p -- "${inputs}" "${build}" "${TELEMETRY_SEALED}" || return 1
+  for name in metrics.json run-telemetry.jsonl; do
+    if [[ -n "${FULLSEND_RUN_DIR:-}" && -f "${FULLSEND_RUN_DIR}/${name}" ]]; then
+      cp -- "${FULLSEND_RUN_DIR}/${name}" "${inputs}/${name}" || return 1
+    fi
+  done
+  if ! python3 "${CLONE}/.fullsend/ci/fullsend-redact.py" check "${inputs}"; then
+    echo "WARNING: telemetry inputs failed the secret scan; publishing usage.json only" >&2
+    find "${inputs}" -type f -delete || return 1
+  fi
+  python3 "${SHARED}/publish/telemetry_bundle.py" --out "${build}/telemetry" \
+    --pipeline strat-pipeline --run-id "run-$(field run_id)" --fullsend-run-dir "${inputs}" \
+    || return 1
+  python3 "${CLONE}/.fullsend/ci/fullsend-redact.py" check "${build}/telemetry/usage.json" \
+    || return 1
+  mv -- "${build}/telemetry" "${TELEMETRY_SEALED}/telemetry" || return 1
+  touch "${TELEMETRY_SEALED}/.sealed"
+}
+if [[ ! -f "${TELEMETRY_SEALED}/.sealed" ]] && ! seal_telemetry; then
+  echo "WARNING: telemetry could not be built; this run publishes no telemetry" >&2
+  { rm -rf -- "${TELEMETRY_SEALED}" && mkdir -p -- "${TELEMETRY_SEALED}" \
+      && touch "${TELEMETRY_SEALED}/.sealed"; } || true
+fi
+# Publishing the sealed outcome is part of the publication, like the files above.
+rm -rf -- "${RESULTS:?}/telemetry"
+if [[ -d "${TELEMETRY_SEALED}/telemetry" ]]; then
+  cp -R -- "${TELEMETRY_SEALED}/telemetry" "${RESULTS}/telemetry"
+fi
 
 if [[ -z "${RESULTS_REPO_URL:-}" ]]; then
   echo "INFO: RESULTS_REPO_URL not set; results assembled at ${RESULTS}, nothing pushed"

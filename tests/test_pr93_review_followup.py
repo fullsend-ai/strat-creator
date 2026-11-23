@@ -282,7 +282,7 @@ def test_bookkeeping_history_cannot_authorize_a_forged_deferral(batch):
 
 @pytest.mark.parametrize("batch", ["before-push"], indirect=True)
 @pytest.mark.parametrize("fault", ["shared", "unreadable", "ownership", "unproven-ticket"])
-def test_label_failures_without_independent_deferral_remain_fatal(batch, monkeypatch, fault):
+def test_label_failures_without_independent_deferral_remain_fatal(batch, monkeypatch, capsys, fault):
     import push_refined_strategies as publisher
     from strat_freshness import StaleTicket
     from strat_side_effects import UncertainWrite
@@ -299,5 +299,7 @@ def test_label_failures_without_independent_deferral_remain_fatal(batch, monkeyp
 
     monkeypatch.setattr(publisher, "add_labels", fail)
     monkeypatch.setattr(sys, "argv", ["push_refined_strategies.py"])
-    with pytest.raises(type(errors[fault]), match=str(errors[fault])):
-        publisher.main()
+    # Without independent deferral evidence the failure stays fatal: it is
+    # recorded as that ticket failing, the loop stops and the run exits 1.
+    assert publisher.main() == 1
+    assert str(errors[fault]) in capsys.readouterr().err

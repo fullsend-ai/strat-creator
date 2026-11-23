@@ -45,7 +45,8 @@ rubric the pipeline itself uses (Feasibility / Testability / Scope / Architectur
   must prefix-match a rule, or the call is silently denied.
 - **One case = one RFE** (`execution.mode: case`) — the natural repeated-measures
   unit for `/eval-anova`.
-- **Model under test** is `models.skill` (default `claude-opus-4-6`, the prod model;
+- **Model under test** is `models.skill` (default `claude-opus-4-6`, pinned for
+  run-to-run comparability; prod CI now runs `claude-opus-5-5`;
   override with `--model`). The **judge** (`models.judge`, default `claude-opus-4-8`)
   is held constant across candidates to avoid self-preference bias.
 
@@ -116,7 +117,7 @@ curated RFE key list lives in `eval/scripts/build_dataset.py` (`CURATED`).
 /eval-run --config eval/strat-refine.yaml --model claude-opus-4-6 \
   --cases RHAIRFE-912-configuration-persistence-for-gen-ai-studio
 
-# Full run against the prod model (all 24 cases)
+# Full run pinned to claude-opus-4-6 for comparability (all 24 cases; prod runs 5-5)
 /eval-run --config eval/strat-refine.yaml --model claude-opus-4-6
 ```
 

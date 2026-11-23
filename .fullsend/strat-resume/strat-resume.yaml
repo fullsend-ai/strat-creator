@@ -5,7 +5,7 @@
 # ../README.md.
 agent: strat-resume/prompt.md
 description: Resume the pipeline for one STRAT from a /fs-strat resume comment on its Jira issue.
-model: claude-opus-4-6
+model: claude-opus-5-5
 effort: high
 # fullsend v0.47.1 sandbox image (multi-arch index digest); pins Claude Code 2.1.296.
 image: ghcr.io/fullsend-ai/fullsend-sandbox@sha256:2fc886b02c280ccf11f317662d182a56cefa6f9299ca9cbd54e780fced743ca7
@@ -69,11 +69,11 @@ env:
     DISABLE_AUTOUPDATER: "1"
     CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS: "10"
     CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "5400000"
-    ANTHROPIC_DEFAULT_SONNET_MODEL: claude-opus-4-6
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: claude-opus-4-6
-    ANTHROPIC_DEFAULT_FABLE_MODEL: claude-opus-4-6
-    ANTHROPIC_DEFAULT_OPUS_MODEL: claude-opus-4-6
-    CLAUDE_CODE_SUBAGENT_MODEL: claude-opus-4-6
+    ANTHROPIC_DEFAULT_SONNET_MODEL: claude-opus-5-5
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: claude-opus-5-5
+    ANTHROPIC_DEFAULT_FABLE_MODEL: claude-opus-5-5
+    ANTHROPIC_DEFAULT_OPUS_MODEL: claude-opus-5-5
+    CLAUDE_CODE_SUBAGENT_MODEL: claude-opus-5-5
   runner:
     STRAT_MODE: resume
     # The work-item type (types/<type>/type.yaml); empty is rfe-strategy.

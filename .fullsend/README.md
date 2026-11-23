@@ -347,7 +347,14 @@ skip stays incomplete. A later verified run can select those RFEs again. A push 
 `push_refined_strategies.py` pushes: status `Refined`, with a matching
 `jira_key`. A strategy
 refined later, by a retried create, gets a push of its own before its review,
-and a refined strategy no push covers is never reviewed.
+and a refined strategy no push covers is never reviewed. The push script
+fails a ticket whose push is rejected and keeps pushing the rest; a
+write-guard violation while labelling stops its loop. Either way it exits
+nonzero and saves each strategy's outcome to `tmp/strat-push-outcomes.json`
+as it completes. After a nonzero exit, `mark push --partial` records coverage
+only for the strategies pushed and labelled. The run still fails and
+reviews nothing it refined, but a later prepared run resumes those strategies
+at review instead of refining them again.
 
 The agent cannot skip work by claiming it was skipped. Before the run,
 `prepare_run.py` evaluates `strategy-create`'s gates for every locked RFE:
@@ -693,9 +700,11 @@ are resolved to that snapshot's commit and calculated hashes only in the private
 runtime config; the consumer's committed file stays unchanged. `source.json`
 records branch/commit/hash provenance. New jobs follow branch updates; a prepared
 job never refreshes its source. The released Fullsend 0.47.1 binary
-looks for some remote harness companions in its local configuration directory;
-a config-only native lock check reproduced the missing-plugin failure. Runtime
-materialization supplies those files without maintaining copies in the pipeline.
+looked for some remote harness companions in its local configuration directory;
+a config-only native lock check reproduced the missing-plugin failure. That
+behavior has not been re-checked with the pinned 0.55.0 binary, so runtime
+materialization still supplies those files without maintaining copies in the
+pipeline.
 
 The shared launcher uses direct Vertex, a job-owned Podman/OpenShell gateway,
 and `FULLSEND_SANDBOX_IMAGE` for the dependency image. Host preflight checks

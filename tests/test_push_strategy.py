@@ -454,6 +454,64 @@ class TestAttachmentPush:
 
         assert description_updates == []
 
+    def test_refuses_sme_sections_differing_only_in_code_indentation(
+            self, monkeypatch, capsys):
+        """The stub keeps one SME section, so a second one that differs only in
+        fenced-code indentation counts as dropped and nothing is written."""
+        writes = []
+        monkeypatch.setattr(
+            push_strategy, "add_attachment", lambda *a, **k: writes.append(a))
+        monkeypatch.setattr(
+            push_strategy, "update_description", lambda *a: writes.append(a))
+        first = ("## Staff Engineer / SME Input\n\n"
+                 "Config:\n\n```yaml\nkey: value\n```")
+        second = ("## Staff Engineer / SME Input\n\n"
+                  "Config:\n\n```yaml\n    key: value\n```")
+        existing = f"## Business Need (from RFE)\n\nNeed.\n\n{first}\n\n{second}\n"
+
+        with pytest.raises(SystemExit):
+            push_strategy._push_via_attachment(
+                "https://jira", "user", "token", "RHAISTRAT-1000", existing,
+                f"{STRATEGY_HEADING}\n\nStrategy.", first, [])
+
+        assert "would drop 1 SME section(s)" in capsys.readouterr().err
+        assert writes == []
+
+    def test_refuses_exact_duplicate_sme_sections(self, monkeypatch, capsys):
+        writes = []
+        monkeypatch.setattr(
+            push_strategy, "add_attachment", lambda *a, **k: writes.append(a))
+        monkeypatch.setattr(
+            push_strategy, "update_description", lambda *a: writes.append(a))
+        sme = "## Staff Engineer / SME Input\n\nUse DCGM."
+        existing = f"## Business Need (from RFE)\n\nNeed.\n\n{sme}\n\n{sme}\n"
+
+        with pytest.raises(SystemExit):
+            push_strategy._push_via_attachment(
+                "https://jira", "user", "token", "RHAISTRAT-1000", existing,
+                f"{STRATEGY_HEADING}\n\nStrategy.", sme, [])
+
+        assert "would drop 1 SME section(s)" in capsys.readouterr().err
+        assert writes == []
+
+
+class TestAnchoredSmeSections:
+
+    def test_equivalent_markdown_representations_compare_equal(self):
+        split = "## Staff Engineer / SME Input\n\nUse **DCGM ****exporters** here.\n"
+        joined = "## Staff Engineer / SME Input\n\nUse **DCGM exporters** here.\n"
+        assert (push_strategy._anchored_sme_sections(split)
+                == push_strategy._anchored_sme_sections(joined))
+
+    def test_code_indentation_and_multiplicity_are_kept(self):
+        base = "## Staff Engineer / SME Input\n\nConfig:\n\n```yaml\n{}\n```\n"
+        flat = push_strategy._anchored_sme_sections(base.format("key: value"))
+        indented = push_strategy._anchored_sme_sections(base.format("    key: value"))
+        assert flat != indented
+        doubled = push_strategy._anchored_sme_sections(
+            base.format("key: value") + "\n" + base.format("key: value"))
+        assert sum(doubled.values()) == 2
+
 
 class TestAttachmentLockDirectory:
 

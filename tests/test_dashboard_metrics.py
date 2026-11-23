@@ -140,11 +140,12 @@ class TestExtractStrategyFields:
         assert s["reviewers"]["uxresearch"] == "revise"
         assert s["scores"] is None, "an unscored reviewer must not create scores"
 
-    def test_absent_informational_reviewer_is_blank(self):
+    def test_absent_informational_reviewer_is_omitted(self):
         review = {"meta": {"reviewers": {"feasibility": "approve", "testability": "approve",
                                          "scope": "approve", "architecture": "approve"}}}
         s = extract.extract_strategy("STRAT-001", _make_task("body"), review, "")
-        assert s["reviewers"]["uxresearch"] == ""
+        # The export mirrors composed frontmatter: no invented blank verdict.
+        assert "uxresearch" not in s["reviewers"]
 
     def test_has_sme_input_true(self):
         task = _make_task(SME_BOILERPLATE + "\nReal SME guidance.\n")

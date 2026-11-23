@@ -820,6 +820,20 @@ def test_reporting_recovery_keeps_completed_work_and_host_validation(validated_r
 
 # ── post-script ─────────────────────────────────────────────────────────────────
 
+FULLSEND_METRICS = {"num_turns": 4, "total_cost_usd": 7.72, "tool_calls": 6,
+                    "token_usage": {"input": 246, "output": 122385, "reasoning": 54968,
+                                    "cache_creation": 788344, "cache_read": 6649249}}
+
+
+def _fullsend_run_dir(host):
+    """What Fullsend leaves in FULLSEND_RUN_DIR before it starts the post-script."""
+    run = host["tmp"] / "run"
+    run.mkdir(exist_ok=True)
+    (run / "metrics.json").write_text(json.dumps(FULLSEND_METRICS))
+    (run / "run-telemetry.jsonl").write_text('{"resourceSpans": []}\n')
+    return run
+
+
 def test_post_script_hands_off_regular_files_and_builds_the_report(host, jira, validated_run):
     jira.create("RHAIRFE-7201", "RFE", "Need.")
     assert _pre(host, "single", RFE_KEY="RHAIRFE-7201").returncode == 0
@@ -829,6 +843,7 @@ def test_post_script_hands_off_regular_files_and_builds_the_report(host, jira, v
     iteration = host["tmp"] / "iteration"
     iteration.mkdir()
     shutil.copy(repo / "output" / "agent-result.json", iteration / "agent-result.json")
+    _fullsend_run_dir(host)
     env = {**host["env"], "REPO_DIR": str(repo), "FULLSEND_VALIDATED_ITERATION_DIR": str(iteration),
            "FULLSEND_RUN_DIR": str(host["tmp"] / "run"), "RESULTS_REPO_URL": "", "RESULTS_PUSH_TOKEN": "",
            "ORG_PULSE_URL": "", "ORG_PULSE_API_TOKEN": "", "STRAT_PUBLISH_DIR": ""}
@@ -846,6 +861,116 @@ def test_post_script_hands_off_regular_files_and_builds_the_report(host, jira, v
     assert (results / "pipeline-data.json").is_file()
     assert not (results / "agent-result.json").exists()
     assert "RESULTS_REPO_URL not set" in result.stdout
+    usage = json.loads((results / "telemetry" / "usage.json").read_text())
+    assert (usage["schema"], usage["pipeline"], usage["run_id"], usage["source"]) == (
+        "agentic-telemetry/v1", "strat-pipeline", "run-run-2", "fullsend-metrics")
+    assert usage["totals"]["cost_usd"] == 7.72
+    assert sorted(p.name for p in (results / "telemetry" / "raw").iterdir()) == [
+        "fullsend-metrics.json.gz", "fullsend-telemetry.jsonl.gz"]
+
+
+def test_post_script_publishes_usage_only_when_telemetry_fails_the_secret_scan(host, jira, validated_run):
+    jira.create("RHAIRFE-7202", "RFE", "Need.")
+    assert _pre(host, "single", RFE_KEY="RHAIRFE-7202").returncode == 0
+    repo, _, _ = validated_run
+    iteration = host["tmp"] / "iteration"
+    iteration.mkdir()
+    shutil.copy(repo / "output" / "agent-result.json", iteration / "agent-result.json")
+    run = _fullsend_run_dir(host)
+    secret = "telemetry-secret-value-1234567890"
+    (run / "run-telemetry.jsonl").write_text(json.dumps({"leak": secret}) + "\n")
+    env = {**host["env"], "REPO_DIR": str(repo), "FULLSEND_VALIDATED_ITERATION_DIR": str(iteration),
+           "FULLSEND_RUN_DIR": str(run), "RESULTS_REPO_URL": "", "RESULTS_PUSH_TOKEN": secret,
+           "ORG_PULSE_URL": "", "ORG_PULSE_API_TOKEN": "", "STRAT_PUBLISH_DIR": ""}
+    result = subprocess.run(["bash", str(SHARED / "post-strategy.sh")], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "failed the secret scan" in result.stderr
+    telemetry = run / "publish" / "results" / "telemetry"
+    assert [p.name for p in telemetry.iterdir()] == ["usage.json"]
+    assert json.loads((telemetry / "usage.json").read_text())["source"] is None
+    assert secret not in (telemetry / "usage.json").read_text()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read a mode-000 file")
+def test_post_script_publishes_when_telemetry_inputs_cannot_be_copied(host, jira, validated_run):
+    jira.create("RHAIRFE-7203", "RFE", "Need.")
+    assert _pre(host, "single", RFE_KEY="RHAIRFE-7203").returncode == 0
+    repo, _, _ = validated_run
+    iteration = host["tmp"] / "iteration"
+    iteration.mkdir()
+    shutil.copy(repo / "output" / "agent-result.json", iteration / "agent-result.json")
+    run = _fullsend_run_dir(host)
+    (run / "metrics.json").chmod(0)  # exists, cannot be copied
+    env = {**host["env"], "REPO_DIR": str(repo), "FULLSEND_VALIDATED_ITERATION_DIR": str(iteration),
+           "FULLSEND_RUN_DIR": str(run), "RESULTS_REPO_URL": "", "RESULTS_PUSH_TOKEN": "",
+           "ORG_PULSE_URL": "", "ORG_PULSE_API_TOKEN": "", "STRAT_PUBLISH_DIR": ""}
+    try:
+        result = subprocess.run(["bash", str(SHARED / "post-strategy.sh")], env=env,
+                                capture_output=True, text=True)
+    finally:
+        (run / "metrics.json").chmod(0o644)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "telemetry could not be built" in result.stderr
+    results = run / "publish" / "results"
+    assert (results / "pipeline-data.json").is_file()  # the results are still assembled
+    assert not (results / "telemetry").exists()  # the sealed "no telemetry" outcome
+    sealed = run / "publish" / "telemetry-sealed"
+    assert (sealed / ".sealed").is_file() and not (sealed / "telemetry").exists()
+
+
+def test_retry_republishes_the_sealed_telemetry_outcome(host, jira, validated_run):
+    """A telemetry build failure on the first attempt seals "no telemetry". The run is
+    published, then the attempt fails later (here: the summary push). On retry the failure
+    is gone and telemetry would build, but the retry must republish the sealed outcome: the
+    immutable run directory would otherwise reject it and block recovery."""
+    jira.create("RHAIRFE-7204", "RFE", "Need.")
+    assert _pre(host, "single", RFE_KEY="RHAIRFE-7204").returncode == 0
+    repo, _, _ = validated_run
+    remote, initial = host["tmp"] / "results.git", host["tmp"] / "initial"
+    remote.mkdir()
+    _git(remote, "init", "--bare", "--initial-branch=main")
+    _git(host["tmp"], "clone", str(remote), str(initial))
+    (initial / "README.md").write_text("Isolated result publication.\n")
+    _git(initial, "add", "README.md")
+    _git(initial, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-m", "initial")
+    _git(initial, "push", "origin", "main")
+    iteration = host["tmp"] / "iteration"
+    iteration.mkdir()
+    shutil.copy(repo / "output/agent-result.json", iteration / "agent-result.json")
+    run = _fullsend_run_dir(host)
+    env = {**host["env"], "REPO_DIR": str(repo), "FULLSEND_VALIDATED_ITERATION_DIR": str(iteration),
+           "FULLSEND_RUN_DIR": str(run), "RESULTS_REPO_URL": str(remote),
+           "RESULTS_PUSH_TOKEN": "isolated-local-placeholder", "ORG_PULSE_URL": "", "ORG_PULSE_API_TOKEN": ""}
+    # First attempt: the telemetry build fails (a CI secret value that usage.json would
+    # contain: its run id), and the summary push (the second push) fails.
+    binary = host["tmp"] / "bin"
+    binary.mkdir()
+    (binary / "git").write_text('''#!/usr/bin/env bash
+if [[ "${1:-}" == push && -f "$FAIL_SECOND_PUSH" ]]; then
+  count=$(cat "$FAIL_SECOND_PUSH"); echo $((count + 1)) > "$FAIL_SECOND_PUSH"
+  if [[ "$count" -ge 1 ]]; then echo "simulated push failure" >&2; exit 1; fi
+fi
+exec "$REAL_GIT" "$@"
+''')
+    (binary / "git").chmod(0o755)
+    marker = host["tmp"] / "pushes"
+    marker.write_text("0")
+    failing = {**env, "REAL_GIT": shutil.which("git"), "FAIL_SECOND_PUSH": str(marker),
+               "PATH": str(binary) + os.pathsep + env["PATH"], "TELEMETRY_TEST_TOKEN": "run-run-2"}
+    first = subprocess.run(["bash", str(SHARED / "post-strategy.sh")], env=failing,
+                           capture_output=True, text=True)
+    assert first.returncode != 0, first.stdout + first.stderr  # failed after the run was pushed
+    published = set(_git(remote, "ls-tree", "-r", "--name-only", "main").split())
+    assert "RHAISTRAT/run-run-2/.publication.json" in published
+    assert not any("/telemetry/" in p for p in published)
+    # Retry: everything works now, and telemetry could be built from the readable inputs.
+    second = subprocess.run(["bash", str(SHARED / "post-strategy.sh")], env=env,
+                            capture_output=True, text=True)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "immutable run already published" not in second.stdout + second.stderr
+    published = set(_git(remote, "ls-tree", "-r", "--name-only", "main").split())
+    assert not any("/telemetry/" in p for p in published)  # still the sealed outcome
+    assert "RHAISTRAT/summary.json" in published
 
 
 @pytest.mark.parametrize("concurrent", [False, True])
@@ -864,6 +989,7 @@ def test_post_script_retry_does_not_duplicate_remote_run_or_summary(host, jira, 
     iteration = host["tmp"] / "iteration"
     iteration.mkdir()
     shutil.copy(repo / "output/agent-result.json", iteration / "agent-result.json")
+    run = _fullsend_run_dir(host)
     env = {**host["env"], "REPO_DIR": str(repo), "FULLSEND_VALIDATED_ITERATION_DIR": str(iteration),
            "FULLSEND_RUN_DIR": str(host["tmp"] / "run"), "RESULTS_REPO_URL": str(remote),
            "RESULTS_PUSH_TOKEN": "isolated-local-placeholder", "ORG_PULSE_URL": "", "ORG_PULSE_API_TOKEN": ""}
@@ -914,6 +1040,10 @@ exec "$REAL_GIT" "$@"
     assert first.returncode == 0, first.stdout + first.stderr
     accepted = _git(remote, "rev-parse", "main")
     sealed = (host["tmp"] / "run/publish/bundle.json").read_bytes()
+    # Fullsend keeps appending spans after the post-script starts; a retry must
+    # still republish the frozen, byte-identical telemetry.
+    with open(run / "run-telemetry.jsonl", "a") as spans:
+        spans.write('{"resourceSpans": [{"late": true}]}\n')
     second = subprocess.run(["bash", str(SHARED / "post-strategy.sh")], env=env, capture_output=True, text=True)
     assert second.returncode == 0, second.stdout + second.stderr
     assert _git(remote, "rev-parse", "main") == accepted
@@ -926,6 +1056,11 @@ exec "$REAL_GIT" "$@"
     assert {s["run_id"] for s in summary["summary"]["strategies"]} == {
         "run-concurrent" if concurrent else "run-run-2"}
     assert {p.name for p in results.iterdir() if p.is_dir() and not p.is_symlink()} == expected_runs
+    published = set(_git(remote, "ls-tree", "-r", "--name-only", "main").split())
+    assert {"RHAISTRAT/run-run-2/telemetry/usage.json",
+            "RHAISTRAT/run-run-2/telemetry/raw/fullsend-metrics.json.gz",
+            "RHAISTRAT/run-run-2/telemetry/raw/fullsend-telemetry.jsonl.gz"} <= published
+    assert not any(p.startswith("telemetry/") for p in published)
     if concurrent:
         assert (host["tmp"] / "raced").exists()
         assert "Summary push failed" in first.stdout

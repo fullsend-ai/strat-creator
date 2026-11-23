@@ -140,3 +140,17 @@ def test_source_directory_symlink_is_rejected_before_reading_or_copying(tmp_path
     assert not (results / ".git/strat-publication.json").exists()
     assert not (results / "RHAISTRAT").exists()
     assert (outside / "STRAT-1.md").read_text() == "Outside source must stay untouched.\n"
+
+
+@pytest.mark.parametrize("identified", [True, False])
+def test_a_stray_root_otel_log_is_never_published(tmp_path, identified):
+    """The plain claude-otel.jsonl is not published any more (its cleaned copy is in
+    telemetry/raw/): a root-level copy is removed before `git add -A` can stage it."""
+    inputs(tmp_path)
+    (tmp_path / "claude-otel.jsonl").write_text('{"prompt": "uncleaned"}\n')
+    publisher = module(".fullsend/shared/publish/push-results.py", f"stray_{identified}")
+    run = (publisher.organize_identified_run(tmp_path, "copy-run") if identified
+           else publisher.organize_run(tmp_path))
+    assert not (tmp_path / "claude-otel.jsonl").exists()
+    assert not (run / "claude-otel.jsonl").exists()
+

@@ -22,6 +22,15 @@ ROLES = ("feasibility", "testability", "scope", "architecture")
 INFORMATIONAL = ("uxresearch",)
 ALL_ROLES = ROLES + INFORMATIONAL
 POLICY = "numeric-only-v1"
+VERDICTS = ("approve", "revise", "reject", "skipped")
+_VERDICT_LINE = re.compile(r"^\*\*Recommendation\*\*:[ \t]*([^\r\n]*)", re.M)
+# One verdict token, optionally elaborated in a single parenthetical
+# ("revise (escalation plus targeted edits)"), with optional trailing
+# punctuation. Anything else (empty, the template placeholder, two
+# competing tokens, uppercase) remains a hard error.
+_VERDICT_VALUE = re.compile(r"(approve|revise|reject|skipped)"
+                            r"(?:[ \t]+\([^()\r\n]*\))?[ \t]*[.!]?[ \t]*")
+_VERDICT_WORDS = re.compile(r"\b(approve|revise|reject|skipped)\b")
 
 
 def digest(content):
@@ -71,10 +80,18 @@ def report_verdict(scope, role, report):
         raise ValueError("A scope error is not a delivered assessment")
     # Keep every source byte; repeated agreeing fields express one decision.
     # Read every field so an invalid value cannot hide beside a valid one.
-    values = re.findall(r"^\*\*Recommendation\*\*:[ \t]*([^\r\n]*)", report, re.M)
-    verdicts = {value.strip() for value in values}
+    # A field is one bare verdict, optionally elaborated in one parenthetical
+    # after it; the elaboration never changes or hides the leading verdict,
+    # and a parenthetical naming a different verdict is still a conflict.
+    verdicts = set()
+    for value in _VERDICT_LINE.findall(report):
+        match = _VERDICT_VALUE.fullmatch(value)
+        if match is None or set(_VERDICT_WORDS.findall(value)) - {match.group(1)}:
+            verdicts.add(value.strip())  # not an allowed token; rejected below
+        else:
+            verdicts.add(match.group(1))
     may_skip = role == "architecture" or role in INFORMATIONAL
-    if (len(verdicts) != 1 or not verdicts <= {"approve", "revise", "reject", "skipped"}
+    if (len(verdicts) != 1 or not verdicts <= set(VERDICTS)
             or (verdicts == {"skipped"} and not may_skip)):
         raise ValueError("Report must contain one consistent Recommendation: approve, revise, reject "
                          "(architecture and informational roles may be skipped)")

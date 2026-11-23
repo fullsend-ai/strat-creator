@@ -455,6 +455,13 @@ def canonical_adf(value):
     """
     if isinstance(value, list):
         items = [canonical_adf(item) for item in value]
+        # Jira strips empty text nodes on storage (an empty table cell is
+        # written as a paragraph with a lone empty text node and comes back
+        # as a paragraph with no content); drop them so a landed write still
+        # verifies instead of raising UncertainWrite on every push.
+        items = [item for item in items
+                 if not (isinstance(item, dict) and item.get("type") == "text"
+                         and item.get("text") == "")]
         merged = []
         for item in items:
             if (merged and isinstance(item, dict) and item.get("type") == "text"
