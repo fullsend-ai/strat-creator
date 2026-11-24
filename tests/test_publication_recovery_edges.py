@@ -23,6 +23,19 @@ def task(root, key, rfe):
                     "## Strategy\nUse bounded request queues.\n")
 
 
+def test_informational_review_is_not_reported_as_dissent(tmp_path):
+    key, rfe = "STRAT-9702", "RHAIRFE-9702"
+    task(tmp_path, key, rfe)
+    prepare(tmp_path, key, rfe, (2, 2, 2, 2),
+            {**dict.fromkeys(("feasibility", "testability", "scope", "architecture"), "approve")},
+            informational={"uxresearch": "revise"})
+    comment = review_comment(tmp_path / f"artifacts/strat-reviews/{key}-review.md",
+                            {"key": key, "recommendation": "approve", "needs_attention": False})
+    dissent = comment.split("**Specialist dissent or skip:**")[1].splitlines()[0].strip()
+    assert dissent == "none", dissent
+    assert "uxresearch" not in comment.split("**Action:**")[0].split("| Criterion")[1]
+
+
 @pytest.mark.parametrize("existing", [False, True])
 def test_interrupted_summary_write_preserves_destination_and_allows_retry(tmp_path, existing):
     key, rfe = "STRAT-9701", "RHAIRFE-9701"
