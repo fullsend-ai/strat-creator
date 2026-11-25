@@ -449,7 +449,7 @@ def main():
 
     staff_input_section = extract_staff_input_section(local_content)
 
-    if desc and desc.get("inputs.0.relation.kind") == "self":
+    if desc and desc.same_ticket and not desc.strategy_in_description:
         _push_same_ticket(server, user, token, args.issue_key,
                           strategy_section, staff_input_section, local_content, desc)
         return
@@ -459,7 +459,11 @@ def main():
     # An unstamped file must never rewrite an Initiative's description, which is its owner's.
     issue_type = (issue.get("fields", {}).get("issuetype") or {}).get("name")
     owner = _TYPES.detect(args.issue_key, issue_type=lambda: issue_type)
-    if owner and owner.get("inputs.0.relation.kind") == "self":
+    if desc and desc.same_ticket and not (owner and owner.name == desc.name):
+        print(f"Error: {args.local_file} is stamped 'type: {desc.name}', but {args.issue_key} is an "
+              f"{issue_type}, not one of its tickets.", file=sys.stderr)
+        sys.exit(1)
+    if owner and owner.same_ticket and not (desc and desc.name == owner.name):
         print(f"Error: {args.issue_key} is an {issue_type}, but {args.local_file} has no "
               f"'type: {owner.name}' stamp. Pull it again with pull_strategy.py.", file=sys.stderr)
         sys.exit(1)
@@ -527,7 +531,12 @@ def main():
     elif not re.search(STAFF_INPUT_PATTERN, updated_md):
         updated_md = updated_md.rstrip() + "\n\n" + STAFF_INPUT_TEMPLATE
 
-    if source_rfe and STRATEGY_HEADING in updated_md:
+    # A clone's description above the Strategy is a reference to its source RFE. A same-ticket
+    # type that keeps its strategy in the description (strategy_home: description) IS its source:
+    # the sections above the Strategy heading are its owner's and stay verbatim.
+    # (Its files carry no source_rfe, so source_rfe is None for them today; the guard keeps the
+    # rewrite off regardless.)
+    if source_rfe and STRATEGY_HEADING in updated_md and not (desc and desc.same_ticket):
         rfe_ref = build_rfe_reference(source_rfe, server)
         idx = updated_md.index(STRATEGY_HEADING)
         updated_md = rfe_ref + "\n\n" + updated_md[idx:]

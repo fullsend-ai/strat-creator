@@ -1,6 +1,6 @@
 ---
 name: strategy-push
-description: Push a locally-refined strategy back to Jira and resubmit to CI. Works for both needs-attention and rubric-pass strategies.
+description: Push a locally-refined strategy back to Jira and resubmit to CI. Works for both needs-attention and rubric-pass strategies, and for a Shop RFE's first local draft.
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
@@ -10,7 +10,8 @@ You are pushing an improved strategy back to Jira so CI can re-evaluate it. This
 ## Input
 
 `$ARGUMENTS` must contain a strategy key: a RHAISTRAT key (e.g., `RHAISTRAT-1520`), either a Feature cloned from
-an RFE or an Initiative whose strategy lives on the Initiative itself; the scripts tell them apart by issue type. If no key is provided, ask the
+an RFE or an Initiative whose strategy lives on the Initiative itself (the scripts tell them apart by issue type), or a
+TSTAPP Story whose Shop strategy lives in its description (`react-shopping-cart-strategy`). If no key is provided, ask the
 user for one. `RHAISTRAT-NNNN` below stands for whichever key you were given.
 
 ## Step 1: Validate Pre-Conditions
@@ -26,7 +27,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_issue.py RHAISTRAT-NNNN --fields label
 **Guard checks:**
 
 - If the local file does not exist: tell the user to run `/strategy-pull RHAISTRAT-NNNN` first. **Stop here.**
-- If the issue has NEITHER `strat-creator-needs-attention` NOR `strat-creator-rubric-pass`: tell the user this strategy hasn't been through CI review yet and cannot be pushed. **Stop here.**
+- If the issue has NEITHER `strat-creator-needs-attention` NOR `strat-creator-rubric-pass`: tell the user this strategy hasn't been through CI review yet and cannot be pushed. **Stop here.** One exception, a **first local draft**: the local file's `type:` is a same-ticket type whose `pipeline.strategy_home` is `description` (`react-shopping-cart-strategy`), pulled before any CI run. Then run Step 2 only (the push writes the Strategy and Staff Engineer / SME Input sections into the ticket's description, below its owner's sections), skip Step 3 (there is no CI label to remove), and print `[PUSH] <KEY> — first local draft written to the description`.
 
 Determine which label is present (`strat-creator-needs-attention` or `strat-creator-rubric-pass`) — this determines which label to remove in Step 3.
 
@@ -66,11 +67,16 @@ remove_labels(s, u, t, 'RHAISTRAT-NNNN', ['strat-creator-rubric-pass'])
 "
 ```
 
-Print `[LABEL] strat-creator-rubric-pass removed from RHAISTRAT-NNNN — CI will re-evaluate.`
+Print `[LABEL] strat-creator-rubric-pass removed from RHAISTRAT-NNNN — CI will re-evaluate.` (for `react-shopping-cart-strategy`: `— the verdict is stale; re-run /strategy-review`).
 
 ## Step 4: Advise the User
 
-Tell the user:
+For `react-shopping-cart-strategy` no CI processes the Story, so the removed label is not a resubmission: tell the
+user the strategy is in the Story description, that the old verdict was removed because the edits made it stale, and
+to run `/strategy-review <KEY>` for a fresh verdict before typing `/fs-code` on the Story (the sign-off: this type has
+no `/strategy-signoff`). Skip the rest of this step.
+
+Otherwise, tell the user:
 
 - "Strategy pushed and resubmitted to CI. The pipeline will re-evaluate on the next run."
 - "Once CI approves (adds `strat-creator-rubric-pass`), use `/strategy-pull RHAISTRAT-NNNN` again and `/strategy-signoff RHAISTRAT-NNNN` to complete the review."

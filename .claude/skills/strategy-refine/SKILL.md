@@ -34,6 +34,8 @@ If both `local/strat-tasks/` and `artifacts/strat-tasks/` have files, prefer `lo
 
 ## Local Architecture Context
 
+For a type with its own architecture source, follow **Type-Owned Architecture Context** instead of this section.
+
 If `--architecture-context <path>` is in `$ARGUMENTS`, link the local path before reading:
 
 ```bash
@@ -67,14 +69,27 @@ The work-item type is `types/<type>/type.yaml`, `<type>` being the `--type` valu
 | frontmatter `source_rfe` (`RHAIRFE-NNNN`) | `inputs[0].source_ref_field` |
 | the marker `[RFE Creator]` and the phrase after it | `inputs[0].removed_context_marker`: `comment_prefix`, then `phrase` |
 | `## Business Need (from RFE)` | `pipeline.section_ownership[0].heading` |
+| `${CLAUDE_SKILL_DIR}/strat-template.md` | `pipeline.prompts.template` (a repository path) |
+| `.context/architecture-context/` and its RHOAI steps | the type's own architecture source, when it has one (see **Type-Owned Architecture Context**) |
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py get <type> inputs.0.removed_context_marker --json
 ```
 
-If the type's `inputs[0].relation.kind` is `self`, the strategy's `jira_key` is the input ticket itself, whose summary and description stay its owner's: skip **Push Strategy to Jira** (the push and the label) and print `[SKIP] Jira push for <jira_key> — same-ticket type`.
+If the type's `inputs[0].relation.kind` is `self`, the strategy's `jira_key` is the input ticket itself. Read the type's `pipeline.strategy_home`:
 
-<!-- For now: no in-skill Jira push for a same-ticket type. push_strategy.py writes such a ticket only as a new append-only pipeline.body_overflow.attachment, and the batch job's push_refined_strategies.py pushes every refined file after this skill, so a push here would add a second attachment per run. A local refine of such a ticket reaches Jira only through that job; push here, as for rfe-strategy, once a local refine must reach Jira on its own. -->
+- `description` (`react-shopping-cart-strategy`): the Strategy and Staff Engineer / SME Input sections live in the ticket's description, below its owner's sections, which `push_strategy.py` keeps verbatim. Run **Push Strategy to Jira** as written, with `<jira_key>` in place of `RHAISTRAT-NNNN`.
+- otherwise (`initiative-strategy`): the summary and description stay its owner's: skip **Push Strategy to Jira** (the push and the label) and print `[SKIP] Jira push for <jira_key> — same-ticket type`.
+
+<!-- For now: no in-skill Jira push for an attachment-home same-ticket type. push_strategy.py writes such a ticket only as a new append-only pipeline.body_overflow.attachment, and the batch job's push_refined_strategies.py pushes every refined file after this skill, so a push here would add a second attachment per run. A local refine of such a ticket reaches Jira only through that job; push here, as for rfe-strategy, once a local refine must reach Jira on its own. A description-home type replaces its sections in place, so a second push is idempotent. -->
+
+## Type-Owned Architecture Context
+
+A type whose `pipeline.context_sources` entry named `architecture-context` has `args` (`--repo`, `--path`, `--dest`) has its own architecture source: `react-shopping-cart-strategy` reads the storefront's `docs/architecture` from its application repository. `python3 ${CLAUDE_SKILL_DIR}/scripts/type_registry.py arch-source <type>` prints `ARCH_DIR=<dir>` and `ARCH_FETCH_ARGS=<args>` (already shell-quoted; empty for a type that uses the shared RHOAI checkout). For a type with non-empty `ARCH_FETCH_ARGS`:
+
+- Its docs are in `ARCH_DIR` (`.context/react-shopping-cart-architecture/docs/architecture/`). If that directory does not exist, fetch it with `bash ${CLAUDE_SKILL_DIR}/scripts/fetch-architecture-context.sh <ARCH_FETCH_ARGS>`, pasting the args as printed. With `--architecture-context <path>` in `$ARGUMENTS`, `<path>` is a clone of that repository: pass `--repo <path>` in place of the entry's `--repo`, plus `--ref <branch>` when `$ARGUMENTS` has `--architecture-ref <branch>`. If the fetch fails, continue without the docs and say so, as below.
+- Read `ARCHITECTURE.md` there first (overview, where-to-change table, validation commands), then `constraints.md`, `delivery.md`, the `components/*.md` the change touches and every `decisions/*.md`. Cite them by file name.
+- The RHOAI steps do not apply: no `.context/architecture-context/`, no `rhoai-*` version or `PLATFORM.md`, no overlays (Source 3).
 
 ## Pipeline Label Gate
 
@@ -83,6 +98,8 @@ Read the strategy's frontmatter to get the `jira_key`. If `jira_key` is not null
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/strat_label_gate.py RHAISTRAT-NNNN
 ```
+
+`RHAISTRAT-NNNN` is the `jira_key`: for a same-ticket type it is the input ticket itself (an Initiative, or the Shop RFE's TSTAPP Story for `react-shopping-cart-strategy`), which the script accepts.
 
 It prints `{"key": ..., "eligible": ..., "gate_label": ..., "gate_labels_present": [...]}`.
 Act only on this JSON — do NOT read or interpret the label list yourself. The
@@ -126,6 +143,8 @@ If no review files exist, this is initial refinement — generate the strategy f
 **CRITICAL: Never skip refinement.** On **initial refinement** (no review file exists), generate the full `## Strategy (AI Generated by Agentic SDLC Pipeline)` section from scratch — do NOT skip because content already exists. On **revision runs** (review file exists), only rewrite subsections that review feedback or new Staff Engineer input addresses. Leave untouched subsections byte-for-byte identical to preserve meaningful diffs for staff engineers reviewing iterations.
 
 ## Architecture Context
+
+For a type with its own architecture source, read it as **Type-Owned Architecture Context** says, and skip the rest of this paragraph and Source 3 (overlays).
 
 Check for architecture context in `.context/architecture-context/architecture/`. Find the `rhoai-*` version directory. If found, read `PLATFORM.md` to understand the platform structure, then read component docs relevant to the strategy.
 
@@ -204,7 +223,7 @@ If no overlays directory exists or no overlays match, proceed without them.
 
 ## What to Produce
 
-Use the unified template in `${CLAUDE_SKILL_DIR}/strat-template.md`. All sizes produce all sections — scale depth, not section count. Fill in:
+Use the unified template in `${CLAUDE_SKILL_DIR}/strat-template.md` (the type's `pipeline.prompts.template`). For a type whose template is not this one, produce that template's sections, following its comments, in place of the numbered list below. All sizes produce all sections — scale depth, not section count. Fill in:
 
 1. **Technical Approach** — How do we deliver this business need? What components are involved? What's the high-level design? Reference specific personas and scenarios from the RFE to ground technical decisions in user outcomes. If the RFE lacks personas or scenarios, flag this in Open Questions. If removed implementation context or Staff Engineer / SME Input is available (see HOW Context Sources above), use it as primary input for this section.
 2. **Affected Components** — Which platform components are touched? Reference actual component names from the architecture context.

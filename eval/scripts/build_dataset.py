@@ -309,6 +309,8 @@ def main():
                     help="Override the key list (rfe-strategy: the curated list; else every key found)")
     args = ap.parse_args()
     desc = type_registry.load().get(args.type)
+    if desc.get("eval", None) is None:
+        sys.exit(f"ERROR: type {desc.name} has no eval block in its descriptor: it has no eval dataset")
     legacy = desc.name == type_registry.LEGACY_DEFAULT_TYPE
     args.data_repo = args.data_repo or f"/tmp/strat-pipeline-data/{'RHAISTRAT' if legacy else desc.name}"
     args.out = args.out or os.path.join(REPO_ROOT, desc.get("eval.dataset"))

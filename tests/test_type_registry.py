@@ -29,7 +29,8 @@ import validate_types  # noqa: E402
 REG = type_registry.load(extra_roots=[], env={})
 SHIPPED = "rfe-strategy"
 TWIN = "initiative-strategy"
-SHIPPED_ALL = [TWIN, SHIPPED]  # directory order
+SHOP = "react-shopping-cart-strategy"
+SHIPPED_ALL = [TWIN, SHOP, SHIPPED]  # directory order
 
 
 def _dropin(root, name, mutate=None):
@@ -49,7 +50,7 @@ def _dropin(root, name, mutate=None):
 def test_shipped_types():
     assert REG.names() == SHIPPED_ALL
     assert SHIPPED in REG and TWIN in REG
-    assert len(REG) == 2
+    assert len(REG) == 3
     assert [d.name for d in REG] == SHIPPED_ALL
 
 
@@ -268,7 +269,7 @@ def test_resolve_cli(capsys, monkeypatch):
 
 def test_gate1_passes_on_the_shipped_types(capsys):
     assert validate_types.main([]) == 0
-    assert f"OK: 2 descriptor(s) valid: {', '.join(SHIPPED_ALL)}" in capsys.readouterr().out
+    assert f"OK: 3 descriptor(s) valid: {', '.join(SHIPPED_ALL)}" in capsys.readouterr().out
 
 
 def test_gate1_findings(tmp_path, capsys):
@@ -408,7 +409,8 @@ def test_review_consumers_equal_the_4c6ae1c_values():
         assert artifact_utils.SCHEMAS[name] == frozen[name], name
         assert list(artifact_utils.SCHEMAS[name]) == frozen["order"][name], f"{name} field order"
     assert list(artifact_utils.SCHEMAS) == [
-        "rfe-task", "rfe-review", "strat-task", "strat-review", f"{TWIN}-task", f"{TWIN}-review"]
+        "rfe-task", "rfe-review", "strat-task", "strat-review", f"{TWIN}-task", f"{TWIN}-review",
+        f"{SHOP}-task", f"{SHOP}-review"]
     assert artifact_utils.LABEL_CATEGORIES == {
         "strat-creator-auto-created": "provenance",
         "strat-creator-auto-refined": "provenance",
@@ -626,3 +628,55 @@ def test_signoff_resolves_the_type_from_the_local_file(tmp_path):
         process = subprocess.run([sys.executable, str(REPO / "scripts/type_registry.py"), "resolve",
                                   "--artifact", str(path), path.stem], capture_output=True, text=True)
         assert process.returncode == 0 and f"TYPE RESOLVED: {name}" in process.stdout, process.stdout
+
+
+def test_where_each_type_keeps_its_strategy_and_reads_its_architecture():
+    """pipeline.strategy_home and the architecture-context source args, per shipped type: the Shop
+    strategy lives in the Story description and reads the storefront's own docs."""
+    assert {d.name: (d.same_ticket, d.strategy_in_description, d.architecture_dir) for d in REG} == {
+        SHIPPED: (False, True, ".context/architecture-context"),
+        TWIN: (True, False, ".context/architecture-context"),
+        SHOP: (True, True, ".context/react-shopping-cart-architecture/docs/architecture"),
+    }
+    shop = REG.get(SHOP)
+    assert "signoff" not in shop.get("pipeline.stages") and "summary_prefix" not in shop.get("conventions")
+    assert shop.get("pipeline.dimensions.3.condition.context_exists") == shop.architecture_dir
+
+
+def test_gate1_eval_is_optional_and_context_args_are_plain_words(tmp_path, capsys):
+    """A descriptor without an eval block is valid (the demo type has none); a context-source arg
+    that is not one plain word (whitespace, shell metacharacters, '..') is refused."""
+    def drop_eval(data):
+        del data["eval"]
+
+    def unsafe_args(data):
+        data["pipeline"]["context_sources"][0]["args"] = [
+            "--repo", "https://example.invalid/x;touch pwned", "--path", "../up", "--dest", ".context/x"]
+
+    assert validate_types.main(["--root", str(_dropin(tmp_path / "a", "no-eval-strategy", drop_eval))]) == 0
+    capsys.readouterr()
+    assert validate_types.main(["--root", str(_dropin(tmp_path / "b", "unsafe-args-strategy", unsafe_args))]) == 1
+    out = capsys.readouterr().out
+    assert "x;touch pwned' does not match" in out and "'../up' does not match" in out
+
+
+def test_arch_source_prints_the_docs_dir_and_shell_quoted_fetch_args():
+    """The skills build the fetch command from `type_registry.py arch-source`, never by joining the
+    descriptor's args themselves."""
+    def arch_source(name):
+        process = subprocess.run([sys.executable, str(REPO / "scripts/type_registry.py"), "arch-source", name],
+                                 capture_output=True, text=True, check=True)
+        return process.stdout.splitlines()
+
+    assert arch_source(SHIPPED) == ["ARCH_DIR=.context/architecture-context", "ARCH_FETCH_ARGS="]
+    assert arch_source(SHOP) == [
+        "ARCH_DIR=.context/react-shopping-cart-architecture/docs/architecture",
+        "ARCH_FETCH_ARGS=--repo https://github.com/fullsend-ai/react-shopping-cart --path docs/architecture"
+        " --dest .context/react-shopping-cart-architecture"]
+
+
+def test_build_dataset_refuses_a_type_without_an_eval_block():
+    assert REG.get(SHOP).get("eval", None) is None
+    process = subprocess.run([sys.executable, str(REPO / "eval/scripts/build_dataset.py"), "--type", SHOP],
+                             capture_output=True, text=True)
+    assert process.returncode == 1 and f"type {SHOP} has no eval block" in process.stderr

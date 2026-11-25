@@ -5,6 +5,7 @@
       "Bash(python3 scripts/fetch_issue.py *)",
       "Bash(python3 scripts/state.py *)",
       "Bash(bash scripts/fetch-architecture-context.sh)",
+      "Bash(bash scripts/fetch-architecture-context.sh *)",
       "Bash(python3 *skills/*/scripts/frontmatter.py *)",
       "Bash(python3 *skills/*/scripts/fetch_issue.py *)",
       "Bash(python3 *skills/*/scripts/state.py *)",

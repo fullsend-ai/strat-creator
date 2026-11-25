@@ -1121,3 +1121,64 @@ class TestPushSameTicket:
             assert result.returncode == 0, result.stderr
             assert (result.stdout == f"[IMPORT] {key}-strategy.md\n") is imported and dest.exists() is imported
         assert "Use the shared scheduler." in (art_dir / "RHAISTRAT-1201-strategy.md").read_text()
+
+
+SHOP_RFE = ("## Summary\n\nAdd the bottle.\n\n## Owner Decisions\n\n- **Price:** $34.95.\n\n"
+            "## Scope\n\n### In Scope\n\n- The bottle.\n\n## Open Questions\n\nNone.")
+
+
+class TestPushDescriptionHome:
+    """react-shopping-cart-strategy runs on the Shop RFE's Story (relation self) but keeps its strategy in
+    the description (pipeline.strategy_home: description), where fullsend's code agent reads it: push
+    adds or replaces the Strategy and SME sections below the Shop RFE's own, which stay verbatim."""
+
+    @staticmethod
+    def _local(art_dir, strategy, staff=""):
+        local_file = art_dir / "artifacts" / "strat-tasks" / "TSTAPP-90.md"
+        local_file.write_text(
+            "---\ntype: react-shopping-cart-strategy\nstrat_id: TSTAPP-90\nsource_shop_rfe: TSTAPP-90\n"
+            "jira_key: TSTAPP-90\n---\n\n"
+            f"## Business Need (from Shop RFE)\n\n{SHOP_RFE}\n\n"
+            f"{STRATEGY_HEADING}\n\n### TL;DR\n\n{strategy}\n\n### Catalog Entry\n\nid 18.\n\n{staff}")
+        return local_file
+
+    def test_two_pushes_write_the_strategy_below_the_shop_rfe(self, jira, art_dir):
+        jira.create("TSTAPP-90", "Add the bottle", SHOP_RFE, issue_type="Story")
+        summary = jira.get("TSTAPP-90")["fields"]["summary"]
+        source = SHOP_RFE  # the emulator stores the seed as text; the first push writes it back as ADF
+
+        first = _run(jira, "TSTAPP-90", self._local(art_dir, "First how."))
+        assert first.returncode == 0, first.stderr
+        once = _get_description_markdown(jira, "TSTAPP-90")
+        assert once.startswith(source + "\n\n" + STRATEGY_HEADING), once
+        assert "First how." in once and push_strategy.STAFF_INPUT_TEMPLATE.split("\n")[0] in once
+        assert RFE_REFERENCE_MARKER not in once
+
+        staff = f"{STAFF_INPUT_HEADING}\n\nUse decision 0004."
+        second = _run(jira, "TSTAPP-90", self._local(art_dir, "Second how.", staff))
+        assert second.returncode == 0, second.stderr
+        twice = _get_description_markdown(jira, "TSTAPP-90")
+        assert twice.startswith(source + "\n\n" + STRATEGY_HEADING), twice
+        assert "Second how." in twice and "First how." not in twice
+        assert twice.count(STRATEGY_HEADING) == 1 and twice.count(STAFF_INPUT_HEADING) == 1
+        assert twice.rstrip().endswith("Use decision 0004.")
+        fields = jira.get("TSTAPP-90")["fields"]
+        assert fields["summary"] == summary  # no [DRAFT]: the Story keeps its owner's summary
+        assert not fields.get("attachment")
+        assert "Business Need (from Shop RFE)" not in twice
+
+    def test_an_unstamped_file_never_rewrites_a_shop_rfe(self, jira, art_dir):
+        jira.create("TSTAPP-91", "Add the bottle", SHOP_RFE, issue_type="Story")
+        local_file = art_dir / "artifacts" / "strat-tasks" / "TSTAPP-91.md"
+        local_file.write_text(f"{STRATEGY_HEADING}\n\nA strategy.\n")
+        result = _run(jira, "TSTAPP-91", local_file)
+        assert result.returncode == 1 and "type: react-shopping-cart-strategy" in result.stderr, result.stderr
+        assert "A strategy." not in _get_description_markdown(jira, "TSTAPP-91")
+
+    def test_a_shop_strategy_never_lands_on_another_types_ticket(self, jira, art_dir):
+        """A file stamped react-shopping-cart-strategy pushed to an RHAISTRAT Feature is refused, so a
+        Shop strategy never rewrites a clone's description."""
+        jira.create("RHAISTRAT-1700", "A Feature", "Business need.", issue_type="Feature")
+        result = _run(jira, "RHAISTRAT-1700", self._local(art_dir, "A shop how."))
+        assert result.returncode == 1 and "stamped 'type: react-shopping-cart-strategy'" in result.stderr
+        assert "A shop how." not in _get_description_markdown(jira, "RHAISTRAT-1700")
